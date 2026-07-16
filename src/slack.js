@@ -41,21 +41,26 @@ export function formatKst(ts) {
 export function buildAlertBlocks(target, comment, managedCategories = ['온드미디어', '위성채널'], assignees = {}) {
   const value = JSON.stringify({ row: target.row, commentId: comment.id, platform: comment.platform, url: target.url });
   const reason = comment.risk?.matchedTerms?.join(', ') || comment.risk?.reason || '부정 표현';
-  const category = comment.risk?.category || '부정';
-  // 한 라인: [채널분류] 채널명(업체명) / 작성자 / 댓글  — 채널명은 게시글 링크, 업체명은 바이럴만.
+  // 채널명(업체명) / 작성자 / 댓글 — 한 라인. 채널명은 게시글 링크, 업체명은 바이럴만.
   const isViral = /바이럴/.test(target.channelCategory || '');
   const company = esc(String(target.company || '').trim());
   const channel = esc(target.channelName || '-');
   const author = esc(comment.username || '-');
   const text = esc(String(comment.text || '').replace(/\s+/g, ' ').trim());
   const companyPart = (isViral && company) ? ` (${company})` : '';
-  const mainLine = `[${esc(target.channelCategory || '-')}] <${target.url}|${channel}>${companyPart} / ${author} / ${text}`;
+  const mainLine = `<${target.url}|${channel}>${companyPart} / ${author} / ${text}`;
   const assigneeId = assigneeForChannelCategory(target.channelCategory, assignees);
   return [
     { type: 'header', text: { type: 'plain_text', text: `🚨 부정댓글 감지 — ${comment.platform}` } },
+    { type: 'section', text: { type: 'mrkdwn', text: `*[${esc(target.channelCategory || '-')}]*` } },
     { type: 'section', text: { type: 'mrkdwn', text: mainLine } },
+    { type: 'section', fields: [
+      { type: 'mrkdwn', text: '*현재상태*\n미처리 ⏳' },
+      { type: 'mrkdwn', text: `*작성자*\n${author}` },
+      { type: 'mrkdwn', text: `*작성시간*\n${formatKst(comment.timestamp)}` },
+    ] },
+    { type: 'section', text: { type: 'mrkdwn', text: `*분류 근거*\n${esc(reason)}` } },
     ...(assigneeId ? [{ type: 'section', text: { type: 'mrkdwn', text: `*담당자*\n<@${assigneeId}>` } }] : []),
-    { type: 'context', elements: [{ type: 'mrkdwn', text: `분류 *${esc(category)}* (${esc(reason)}) · 작성 ${formatKst(comment.timestamp)} · 미처리 ⏳` }] },
     { type: 'actions', elements: actionDefinitions(target, managedCategories).map((definition) => button(definition, value)) },
   ];
 }
