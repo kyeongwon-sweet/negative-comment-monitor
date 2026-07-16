@@ -1,4 +1,5 @@
 name: Negative comment monitor
+run-name: Negative comment monitor (${{ github.event_name }})
 
 on:
   workflow_dispatch:
