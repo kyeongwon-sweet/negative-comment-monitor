@@ -39,9 +39,6 @@ test('excludes every channel category containing 무상시딩', () => {
   ]).map((item) => item.url), ['https://www.tiktok.com/@a/video/1']);
 });
 
-test('fails closed when GAS omits channel category', () => {
-  assert.throws(
-    () => isEligibleSponsorship({ url: 'https://instagram.com/p/a' }),
-    /missing channelCategory/,
-  );
+test('skips safely when GAS omits channel category', () => {
+  assert.equal(isEligibleSponsorship({ url: 'https://instagram.com/p/a' }), false);
 });

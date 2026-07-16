@@ -12,6 +12,14 @@ import { commentFingerprint, loadRecentlyAlertedPostKeys, loadSeenFingerprints, 
 export async function runMonitor(config = loadConfig()) {
   const runNow = Date.now();
   const rawTargets = await fetchTargets(config);
+  const missingCategoryTargets = rawTargets.filter((target) => {
+    const url = String(target.url || '').trim();
+    const category = String(target.channelCategory || target.channelClassification || '').trim();
+    return url && !category;
+  });
+  for (const target of missingCategoryTargets) {
+    console.warn(`::warning title=Skipped target with missing channel category::${target.url}`);
+  }
   const eligibleTargets = filterEligibleSponsorships(rawTargets, config.excludedChannelCategory);
   const eligibleMappedTargets = eligibleTargets.map((target) => ({
     ...target,
@@ -75,6 +83,7 @@ export async function runMonitor(config = loadConfig()) {
   const summary = {
     fetchedTargets: rawTargets.length,
     excludedTargets: rawTargets.length - eligibleMappedTargets.length,
+    missingCategoryTargets: missingCategoryTargets.length,
     windowedTargets: windowedTargets.length,
     dueTargets: dueTargets.length,
     deltaSkipped,

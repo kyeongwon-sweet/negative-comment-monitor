@@ -17,7 +17,9 @@ export function isEligibleSponsorship(target, excludedCategory = '무상시딩')
   const url = String(target.url || '').trim();
   const category = String(target.channelCategory || target.channelClassification || '').trim();
   if (!url) return false;
-  if (!category) throw new Error(`Target is missing channelCategory: ${url}`);
+  // A blank category cannot be proven to be outside the excluded category.
+  // Skip it safely instead of aborting monitoring for every other valid target.
+  if (!category) return false;
   return !category.toLowerCase().includes(String(excludedCategory).trim().toLowerCase());
 }
 
