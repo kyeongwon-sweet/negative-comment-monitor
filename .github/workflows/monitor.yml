@@ -4,8 +4,9 @@ run-name: Negative comment monitor (${{ github.event_name }})
 on:
   workflow_dispatch:
   schedule:
-    # GitHub cron is UTC. 00:10 UTC = 09:10 KST.
+    # 매일 09:10 KST 정기 확인 + 최근 부정댓글 대상의 15분 집중 확인.
     - cron: '10 0 * * *'
+    - cron: '*/15 * * * *'
 
 concurrency:
   group: negative-comment-monitor-production

@@ -6,13 +6,12 @@
 
 - 관리 계정의 Instagram 부스팅 게시물: Graph API 우선
 - Graph 웹훅 연결 대상: 폴링하지 않음
-- 게시 후 7일 이내 또는 부스팅 중: 1시간 간격
-- 게시 후 8~30일: 6시간 간격
-- 30일 초과: 하루 1회
+- 게시 후 7일 이내 또는 부스팅 중: 매일 오전 9:10 KST
 - 부정 댓글 발견 직후: 3시간 동안 15분 간격
+- 게시 후 7일 초과 일반 게시물: 집중 모니터링 제외
 - 나머지 Instagram·YouTube·TikTok: Apify 배치 수집
 
-실행기를 자주 호출해도 `lastCollectedAt`을 기준으로 도래한 게시물만 수집합니다. GAS의 `sponsoredTargets` 응답에 `publishedAt`, `lastCollectedAt`, `recentNegativeDetectedAt`을 포함해야 적응형 주기가 적용됩니다.
+실행기는 15분마다 깨어나지만 Supabase의 마지막 확인·부정댓글 알림 시각을 기준으로 도래한 게시물만 수집합니다. Graph/Webhook 연결 게시물은 폴링하지 않습니다.
 
 ## Slack 버튼
 

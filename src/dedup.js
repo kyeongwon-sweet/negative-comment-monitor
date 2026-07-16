@@ -32,6 +32,22 @@ export async function loadSeenFingerprints(config, fingerprints, fetchImpl = fet
   return new Set((await response.json()).map((row) => row.fingerprint));
 }
 
+export async function loadRecentlyAlertedPostKeys(config, sinceMs = 3 * 60 * 60 * 1000, fetchImpl = fetch, now = Date.now()) {
+  if (!config.supabaseUrl || !config.supabaseKey) return new Map();
+  const cutoff = encodeURIComponent(new Date(now - sinceMs).toISOString());
+  const response = await fetchImpl(
+    `${config.supabaseUrl}/rest/v1/negative_comment_alerts?select=post_url,alerted_at&alerted_at=gte.${cutoff}&order=alerted_at.desc`,
+    { headers: headers(config) },
+  );
+  if (!response.ok) throw new Error(`Recent alerts GET ${response.status}: ${(await response.text()).slice(0, 200)}`);
+  const result = new Map();
+  for (const row of await response.json()) {
+    const key = extractPostKey(row.post_url);
+    if (key && !result.has(key)) result.set(key, row.alerted_at);
+  }
+  return result;
+}
+
 export async function recordAlert(config, target, comment, fingerprint, slackTs = '', fetchImpl = fetch) {
   const response = await fetchImpl(`${config.supabaseUrl}/rest/v1/negative_comment_alerts?on_conflict=fingerprint`, {
     method: 'POST',

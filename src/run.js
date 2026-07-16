@@ -8,9 +8,10 @@ import { classifyCommentsLLM } from './llm.js';
 import { sendAlert } from './slack.js';
 import { filterDueTargets } from './schedule.js';
 import { loadCommentCounts, filterChangedTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
-import { commentFingerprint, loadSeenFingerprints, recordAlert } from './dedup.js';
+import { commentFingerprint, loadRecentlyAlertedPostKeys, loadSeenFingerprints, recordAlert } from './dedup.js';
 
 export async function runMonitor(config = loadConfig()) {
+  const runNow = Date.now();
   const rawTargets = await fetchTargets(config);
   const eligibleTargets = filterEligibleSponsorships(rawTargets, config.excludedChannelCategory);
   const eligibleMappedTargets = eligibleTargets.map((target) => ({
@@ -20,25 +21,46 @@ export async function runMonitor(config = loadConfig()) {
     // 제품 관련 부정댓글을 entity 게이트가 놓치지 않게 함). brandName은 classify가 postContext로 읽음.
     brandName: target.brandName || config.brandContext,
   }));
-  // 업로드 7일 초과 게시물은 트래킹 중단(사용자 지시). uploadedAt 없으면 보수적으로 포함.
-  const windowCutoff = Date.now() - config.trackingDays * 864e5;
+  // 일반 게시물은 업로드 7일 후 제외. 부스팅 게시물은 기간과 무관하게 일일 확인.
+  const windowCutoff = runNow - config.trackingDays * 864e5;
   const windowedTargets = eligibleMappedTargets.filter((t) => {
     const d = Date.parse(t.uploadedAt || t.publishedAt || t.postedAt || '');
-    return !Number.isFinite(d) || d >= windowCutoff;
+    return Boolean(t.isBoosted) || !Number.isFinite(d) || d >= windowCutoff;
   });
-  const dueTargets = filterDueTargets(windowedTargets);
 
-  // 델타 스킵: 댓글 수가 늘어난 게시물만 스크레이프(Apify 과금 최소화). 실패 시 전량 유지(안전).
+  // Supabase의 마지막 확인·최근 알림 이력을 스케줄 입력으로 연결한다.
   let counts = {};
+  let scheduledTargets = windowedTargets;
+  if (config.supabaseUrl && config.supabaseKey) {
+    try {
+      counts = await loadCommentCounts(config, windowedTargets);
+      const recentAlerts = await loadRecentlyAlertedPostKeys(config, 3 * 60 * 60 * 1000, fetch, runNow);
+      scheduledTargets = windowedTargets.map((target) => ({
+        ...target,
+        lastCollectedAt: target.lastCollectedAt || counts[target.url]?.lastCheckedAt || '',
+        recentNegativeDetectedAt: recentAlerts.get(extractPostKey(target.url)) || target.recentNegativeDetectedAt || '',
+      }));
+    } catch (error) {
+      console.error('[schedule] Supabase 이력 조회 실패 — GAS 시각 정보로 진행:', error.message);
+    }
+  }
+  const dueTargets = filterDueTargets(scheduledTargets, runNow);
+
+  // 정기 확인은 댓글 수 증가분만 과금한다. 최근 부정댓글이 있는 집중 대상은
+  // 대시보드 댓글 수 갱신을 기다리지 않고 15분마다 직접 수집한다.
   let targets = dueTargets;
   let deltaSkipped = 0;
   let summary_deltaBreakdown = null;
   if (config.deltaEnabled && config.supabaseUrl && config.supabaseKey) {
     try {
-      counts = await loadCommentCounts(config, dueTargets);
+      if (!Object.keys(counts).length) counts = await loadCommentCounts(config, dueTargets);
       const changed = filterChangedTargets(dueTargets, counts);
-      deltaSkipped = dueTargets.length - changed.length;
-      targets = changed;
+      const intensive = dueTargets.filter((target) => {
+        const detected = Date.parse(target.recentNegativeDetectedAt || '');
+        return Number.isFinite(detected) && runNow - detected <= 3 * 60 * 60 * 1000;
+      });
+      targets = [...new Map([...changed, ...intensive].map((target) => [target.url, target])).values()];
+      deltaSkipped = dueTargets.length - targets.length;
       summary_deltaBreakdown = summarizeDelta(dueTargets, counts);
       if (summary_deltaBreakdown.noSignal) {
         console.error(`[delta] 댓글 수 신호 없어 스킵된 대상 ${summary_deltaBreakdown.noSignal}건 — 커버리지 갭(대시보드 comments_count 미수집/URL 미매칭)`);

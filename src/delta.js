@@ -47,8 +47,8 @@ export async function loadCommentCounts(config, targets, fetchImpl = fetch, now 
   // 3) post_comment_checks last_count
   const checks = {};
   for (let off = 0; ; off += 1000) {
-    const rows = await sbGet(config, `post_comment_checks?select=post_id,last_count&offset=${off}&limit=1000`, fetchImpl);
-    for (const r of rows) checks[r.post_id] = r.last_count;
+    const rows = await sbGet(config, `post_comment_checks?select=post_id,last_count,last_checked_at&offset=${off}&limit=1000`, fetchImpl);
+    for (const r of rows) checks[r.post_id] = { lastCount: r.last_count, lastCheckedAt: r.last_checked_at || '' };
     if (rows.length < 1000) break;
   }
   const out = {};
@@ -58,7 +58,8 @@ export async function loadCommentCounts(config, targets, fetchImpl = fetch, now 
     out[t.url] = {
       postId: id,
       current: id != null ? (latest[id] ?? null) : null,
-      last: id != null ? (checks[id] ?? null) : null,
+      last: id != null ? (checks[id]?.lastCount ?? null) : null,
+      lastCheckedAt: id != null ? (checks[id]?.lastCheckedAt || '') : '',
       caption: k ? (keyToCaption[k] || '') : '',
     };
   }
