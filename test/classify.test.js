@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyNegativeComment } from '../src/classify.js';
+import { classifyNegativeComment, needsContextualReview } from '../src/classify.js';
 
 test('detects requested discovery keywords in relevant product context', () => {
   const target = { productName: '라라스윗 쫀득바' };
@@ -44,4 +44,13 @@ test('does not alert when contextual keywords appear in an overall positive sent
   );
   assert.equal(result.alert, false);
   assert.equal(result.reason, '긍정 문맥 예외');
+});
+
+test('sends only ambiguous marketing, dissatisfaction, and competitor terms to contextual review', () => {
+  const target = { brandName: '라라스윗' };
+  assert.equal(needsContextualReview({ text: '이거 광고인가요?' }, target), true);
+  assert.equal(needsContextualReview({ text: '맛이 별로' }, target), true);
+  assert.equal(needsContextualReview({ text: '그냥 메로나 맛인가' }, target), true);
+  assert.equal(needsContextualReview({ text: 'ㅅㅂ 진짜 노맛' }, target), false);
+  assert.equal(needsContextualReview({ text: '맛있어요' }, target), false);
 });

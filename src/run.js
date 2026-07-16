@@ -3,8 +3,7 @@ import { runActor } from './apify.js';
 import { fetchTargets, submitResult } from './gas.js';
 import { normalizeDataset } from './normalize.js';
 import { detectPlatform, filterEligibleSponsorships, groupApifyTargets } from './routing.js';
-import { classifyNegativeComment } from './classify.js';
-import { classifyCommentsLLM } from './llm.js';
+import { classifyCommentsHybrid } from './hybrid-classify.js';
 import { sendAlert } from './slack.js';
 import { filterDueTargets } from './schedule.js';
 import { loadCommentCounts, filterChangedTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
@@ -102,13 +101,9 @@ export async function runMonitor(config = loadConfig()) {
           if (single) return true;                              // 단일 대상 배치 예외
           return comment.url && comment.url === target.url;     // 그 외 정확 URL 일치만
         });
-        // 1순위 LLM(의미 판단), 없거나 실패 시 키워드 분류로 폴백.
-        const llm = await classifyCommentsLLM(targetComments, config);
-        const classified = targetComments.map((comment, idx) => ({
-          ...comment,
-          risk: (llm && llm[idx]) ? { ...llm[idx], entity: { matched: true }, engine: 'llm' }
-                                  : { ...classifyNegativeComment(comment, target), engine: 'keyword' },
-        }));
+        // 욕설·명백한 불만은 무료 규칙으로 처리하고, 문맥 후보만 Anthropic에 전달한다.
+        const risks = await classifyCommentsHybrid(targetComments, target, config);
+        const classified = targetComments.map((comment, idx) => ({ ...comment, risk: risks[idx] }));
         const alerts = classified.filter((comment) => comment.risk.alert);
         const fingerprints = alerts.map((comment) => commentFingerprint(target, comment));
         const seenFingerprints = config.dryRun ? new Set() : await loadSeenFingerprints(config, fingerprints);

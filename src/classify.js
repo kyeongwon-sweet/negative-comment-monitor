@@ -107,3 +107,18 @@ export function classifyNegativeComment(comment, target = {}) {
     reason: `${category}: ${matches.join(', ')}`,
   };
 }
+
+export function needsContextualReview(comment, target = {}) {
+  const text = String(comment?.text || comment || '').trim();
+  const entity = findEntityContext(comment, target);
+  if (!text || !entity.matched) return false;
+  const profanity = findMatches(text, PROFANITY_KEYWORDS);
+  const hardDissatisfaction = findMatches(text, HARD_DISSATISFACTION);
+  const sales = findMatches(text, DISCOVERY_KEYWORDS.salesComplaint);
+  const authenticity = findMatches(text, DISCOVERY_KEYWORDS.authenticityDoubt || []);
+  if (profanity.length || hardDissatisfaction.length || sales.length || authenticity.length) return false;
+  const marketing = findMatches(text, DISCOVERY_KEYWORDS.marketingDistrust);
+  const dissatisfaction = findMatches(text, DISCOVERY_KEYWORDS.dissatisfaction);
+  const competitor = findMatches(text, DISCOVERY_KEYWORDS.competitorMention || []);
+  return marketing.length > 0 || dissatisfaction.length > 0 || competitor.length > 0;
+}
