@@ -124,6 +124,12 @@ export async function runMonitor(config = loadConfig()) {
       console.error('[delta] last_count 갱신 실패:', error.message);
     }
   }
+  const failedPlatforms = Object.entries(summary.platforms)
+    .filter(([, result]) => result.ok === false)
+    .map(([platform]) => platform);
+  if (failedPlatforms.length) {
+    throw new Error(`Platform collection failed: ${failedPlatforms.join(', ')}`);
+  }
   return summary;
 }
 

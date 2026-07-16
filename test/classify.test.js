@@ -30,3 +30,18 @@ test('does not treat neutral brand mentions as negative', () => {
   assert.equal(classifyNegativeComment({ text: '라라스윗 쫀득바 맛있어요' }).alert, false);
 });
 
+test('keeps explicit profanity and product dissatisfaction as immediate alerts', () => {
+  const target = { brandName: '라라스윗' };
+  assert.equal(classifyNegativeComment({ text: 'ㅅㅂ 이거 진짜 노맛' }, target).alert, true);
+  assert.equal(classifyNegativeComment({ text: '이거 맛없고 돈 아까움' }, target).alert, true);
+});
+
+test('does not alert when contextual keywords appear in an overall positive sentence', () => {
+  const target = { brandName: '라라스윗' };
+  const result = classifyNegativeComment(
+    { text: '다른 광고는 별로 안 사먹고 싶었는데 이건 너무 사먹고 싶은 영상' },
+    target,
+  );
+  assert.equal(result.alert, false);
+  assert.equal(result.reason, '긍정 문맥 예외');
+});

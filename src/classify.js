@@ -22,6 +22,20 @@ function flattenGroups(groups) {
   return Object.values(groups).flat();
 }
 
+const POSITIVE_CONTEXT = [
+  '맛있', '존맛', '사먹고싶', '사고싶', '먹고싶', '먹어보고싶', '좋아', '좋음', '최고',
+  '추천', '기대', '대박', '인정', '궁금', '주문하고싶', '구매하고싶',
+];
+
+const HARD_DISSATISFACTION = [
+  '비추천', '비추', '맛없', '노맛', '실망', '최악', '돈아깝', '돈 아깝', '역겨',
+  '기대이하', '먹기싫', '환불', '사지마', '사지 마', '거르세요',
+];
+
+function hasPositiveContext(text) {
+  return findMatches(text, POSITIVE_CONTEXT).length > 0;
+}
+
 export function findEntityContext(comment, target = {}) {
   const commentText = String(comment?.text || comment || '');
   const postContext = [
@@ -57,6 +71,23 @@ export function classifyNegativeComment(comment, target = {}) {
   const matches = [...new Set([...profanity, ...marketing, ...dissatisfaction, ...sales, ...competitor, ...authenticity])];
   if (!matches.length) {
     return { alert: false, category: '정상댓글', priority: 'none', entity, matches: [] };
+  }
+
+  // 광고·바이럴·별로·경쟁제품은 문맥에 따라 긍정 문장에도 등장한다.
+  // 명백한 욕설/제품 불만/판매·성분 문제는 즉시 탐지하되, 그 외에는 긍정 의도가
+  // 함께 있으면 키워드 오탐으로 보고 정상 처리한다. Anthropic이 설정된 환경에서는
+  // run.js의 의미 분류가 이 규칙보다 우선한다.
+  const hardDissatisfaction = findMatches(text, HARD_DISSATISFACTION);
+  const immediateNegative = profanity.length || hardDissatisfaction.length || sales.length || authenticity.length;
+  if (!immediateNegative && hasPositiveContext(text)) {
+    return {
+      alert: false,
+      category: '정상댓글',
+      priority: 'none',
+      entity,
+      matches,
+      reason: '긍정 문맥 예외',
+    };
   }
 
   let category = '부정언급';

@@ -55,3 +55,12 @@ jobs:
           TRACKING_DAYS: ${{ vars.TRACKING_DAYS }}
           DELTA_ENABLED: 'true'
           DRY_RUN: 'false'
+      - name: Notify Slack on failure
+        if: ${{ failure() }}
+        continue-on-error: true
+        run: node src/notify-failure.js
+        env:
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          FAILURE_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
