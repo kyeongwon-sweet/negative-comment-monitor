@@ -1,0 +1,51 @@
+name: Negative comment monitor
+
+on:
+  workflow_dispatch:
+  schedule:
+    # GitHub cron is UTC. 00:10 UTC = 09:10 KST.
+    - cron: '10 0 * * *'
+
+concurrency:
+  group: negative-comment-monitor-production
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts
+      - run: npm test
+      - run: npm start
+        env:
+          GAS_WEB_APP_URL: ${{ secrets.GAS_WEB_APP_URL }}
+          GAS_VERIFY_TOKEN: ${{ secrets.GAS_VERIFY_TOKEN }}
+          APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          APIFY_INSTAGRAM_ACTOR_ID: ${{ vars.APIFY_INSTAGRAM_ACTOR_ID }}
+          APIFY_YOUTUBE_ACTOR_ID: ${{ vars.APIFY_YOUTUBE_ACTOR_ID }}
+          APIFY_TIKTOK_ACTOR_ID: ${{ vars.APIFY_TIKTOK_ACTOR_ID }}
+          APIFY_TWITTER_ACTOR_ID: ${{ vars.APIFY_TWITTER_ACTOR_ID }}
+          APIFY_INSTAGRAM_INPUT_JSON: ${{ vars.APIFY_INSTAGRAM_INPUT_JSON }}
+          APIFY_YOUTUBE_INPUT_JSON: ${{ vars.APIFY_YOUTUBE_INPUT_JSON }}
+          APIFY_TIKTOK_INPUT_JSON: ${{ vars.APIFY_TIKTOK_INPUT_JSON }}
+          APIFY_TWITTER_INPUT_JSON: ${{ vars.APIFY_TWITTER_INPUT_JSON }}
+          SOURCE_SPREADSHEET_ID: ${{ vars.SOURCE_SPREADSHEET_ID }}
+          SOURCE_SHEET_NAME: ${{ vars.SOURCE_SHEET_NAME }}
+          EXCLUDED_CHANNEL_CATEGORY: ${{ vars.EXCLUDED_CHANNEL_CATEGORY }}
+          MANAGED_CHANNEL_CATEGORIES: ${{ vars.MANAGED_CHANNEL_CATEGORIES }}
+          TARGET_BATCH_SIZE: ${{ vars.TARGET_BATCH_SIZE }}
+          TRACKING_DAYS: ${{ vars.TRACKING_DAYS }}
+          DELTA_ENABLED: 'true'
+          DRY_RUN: 'false'
