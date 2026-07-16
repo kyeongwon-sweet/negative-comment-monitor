@@ -3,6 +3,12 @@ run-name: Negative comment monitor (${{ github.event_name }})
 
 on:
   workflow_dispatch:
+    inputs:
+      verify_anthropic:
+        description: Verify Anthropic API key before monitoring
+        required: false
+        type: boolean
+        default: false
   schedule:
     # 매일 09:10 KST 정기 확인 + 최근 부정댓글 대상의 15분 집중 확인.
     - cron: '10 0 * * *'
@@ -25,6 +31,12 @@ jobs:
           node-version: 20
       - run: npm install --ignore-scripts
       - run: npm test
+      - name: Verify Anthropic API key
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_anthropic }}
+        run: node src/verify-anthropic.js
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: claude-haiku-4-5-20251001
       - run: npm start
         env:
           GAS_WEB_APP_URL: ${{ secrets.GAS_WEB_APP_URL }}
