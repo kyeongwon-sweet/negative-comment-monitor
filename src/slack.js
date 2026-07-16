@@ -12,6 +12,17 @@ export function actionDefinitions(target, managedCategories) {
   return isManagedChannel(target, managedCategories) ? managedActions : externalActions;
 }
 
+export function assigneeForChannelCategory(channelCategory, assignees = {}) {
+  const category = String(channelCategory || '').trim().toLowerCase();
+  if (category.includes('위성채널')) return assignees.satellite || '';
+  if (category.includes('바이럴') && category.includes('배너')) return assignees.viralBanner || '';
+  if ((category.includes('바이럴') && category.includes('영상')) || category.includes('온드미디어')) {
+    return assignees.viralVideoOwned || '';
+  }
+  if (category.includes('협찬')) return assignees.sponsorship || '';
+  return assignees.other || '';
+}
+
 function esc(text) {
   return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -27,16 +38,18 @@ export function formatKst(ts) {
   return k.toISOString().slice(0, 16).replace('T', ' ') + ' KST';
 }
 
-export function buildAlertBlocks(target, comment, managedCategories = ['온드미디어', '위성채널']) {
+export function buildAlertBlocks(target, comment, managedCategories = ['온드미디어', '위성채널'], assignees = {}) {
   const value = JSON.stringify({ row: target.row, commentId: comment.id, platform: comment.platform, url: target.url });
   const reason = comment.risk?.matchedTerms?.join(', ') || comment.risk?.reason || '부정 표현';
   // 채널 유형 = [채널분류] 계정명 - 캡션 (게시글로 하이퍼링크)
   const account = esc(target.channelName || '-');
   const caption = esc(String(target.caption || '').replace(/\s+/g, ' ').trim().slice(0, 50));
   const channelLine = `<${target.url}|[${esc(target.channelCategory || '-')}] ${account}${caption ? ` - ${caption}` : ''}>`;
+  const assigneeId = assigneeForChannelCategory(target.channelCategory, assignees);
   return [
     { type: 'header', text: { type: 'plain_text', text: `🚨 부정댓글 감지 — ${comment.platform}` } },
     { type: 'section', text: { type: 'mrkdwn', text: `*채널 유형*\n${channelLine}` } },
+    ...(assigneeId ? [{ type: 'section', text: { type: 'mrkdwn', text: `*담당자*\n<@${assigneeId}>` } }] : []),
     { type: 'section', fields: [
       { type: 'mrkdwn', text: '*현재상태*\n미처리 ⏳' },
       { type: 'mrkdwn', text: `*작성자*\n${esc(comment.username) || '-'}` },
@@ -49,7 +62,7 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
 
 export async function sendAlert(config, target, comment, fetchImpl = fetch) {
   if (!config.slackBotToken) throw new Error('Missing environment variable: SLACK_BOT_TOKEN');
-  const blocks = buildAlertBlocks(target, comment, config.managedChannelCategories);
+  const blocks = buildAlertBlocks(target, comment, config.managedChannelCategories, config.slackAssignees);
   const response = await fetchImpl('https://slack.com/api/chat.postMessage', {
     method: 'POST', headers: { authorization: `Bearer ${config.slackBotToken}`, 'content-type': 'application/json' },
     body: JSON.stringify({ channel: config.slackChannelId, text: `부정댓글 감지: ${comment.text}`, blocks }),

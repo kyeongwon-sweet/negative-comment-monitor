@@ -18,6 +18,13 @@ export function loadConfig(env = process.env) {
     slackChannelId: String(env.SLACK_CHANNEL_ID || 'C0BHD9S69JA').trim(),
     slackBotToken: String(env.SLACK_BOT_TOKEN || '').trim(),
     slackSigningSecret: String(env.SLACK_SIGNING_SECRET || '').trim(),
+    slackAssignees: {
+      satellite: String(env.SLACK_ASSIGNEE_SATELLITE || '').trim(),
+      viralBanner: String(env.SLACK_ASSIGNEE_VIRAL_BANNER || '').trim(),
+      viralVideoOwned: String(env.SLACK_ASSIGNEE_VIRAL_VIDEO_OWNED || '').trim(),
+      other: String(env.SLACK_ASSIGNEE_OTHER || '').trim(),
+      sponsorship: String(env.SLACK_ASSIGNEE_SPONSORSHIP || '').trim(),
+    },
     supabaseUrl: String(env.SUPABASE_URL || '').trim().replace(/\/$/, ''),
     supabaseKey: String(env.SUPABASE_SERVICE_ROLE_KEY || '').trim(),
     deltaEnabled: String(env.DELTA_ENABLED || 'true').toLowerCase() !== 'false',
