@@ -23,7 +23,7 @@ const PROMPT_HEAD =
 const PROMPT_TAIL =
   '\n\nJSON 배열로만 답하세요: [{"i":번호,"alert":true|false,' +
   '"category":"제품 불만|광고/바이럴 의심|성분/진위 의혹|경쟁품 비교|판매방식 불만|욕설/비속어|정상",' +
-  '"reason":"한줄 근거(정상이면 빈 문자열)"}]';
+  '"reason":"한줄 근거, 한자 쓰지 말고 순우리말로(예: 貶下→깎아내림, 是非→시비) (정상이면 빈 문자열)"}]';
 
 // comments: [{text}], 반환: [{alert, category, reason, priority}] (입력 순서) 또는 null(폴백).
 export async function classifyCommentsLLM(comments, config, fetchImpl = fetch) {
