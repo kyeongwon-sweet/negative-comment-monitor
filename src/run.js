@@ -5,8 +5,7 @@ import { normalizeDataset } from './normalize.js';
 import { detectPlatform, filterEligibleSponsorships, groupApifyTargets } from './routing.js';
 import { classifyCommentsHybrid } from './hybrid-classify.js';
 import { sendAlert } from './slack.js';
-import { filterDueTargets, isPastDailyStart } from './schedule.js';
-import { updateHeartbeat, checkAndWarnStale } from './heartbeat.js';
+import { filterDueTargets } from './schedule.js';
 import { loadCommentCounts, filterChangedTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
 import { commentFingerprint, loadRecentlyAlertedPostKeys, loadSeenFingerprints, recordAlert } from './dedup.js';
 
@@ -154,14 +153,6 @@ export async function runMonitor(config = loadConfig()) {
   const failedPlatforms = Object.entries(summary.platforms)
     .filter(([, result]) => result.ok === false)
     .map(([platform]) => platform);
-
-  // 헬스체크: 09:10 KST 이후 플랫폼 실패 없이 완료했으면 '오늘 일일 점검 완료'로 기록.
-  // 마감(13:00 KST)까지 오늘 점검이 없으면 Slack 경고(조용한 누락 방지). 실패해도 모니터링은 계속.
-  const dailyPassRan = isPastDailyStart(runNow) && failedPlatforms.length === 0;
-  await updateHeartbeat(config, { dailyPassRan }, runNow);
-  const staleWarning = await checkAndWarnStale(config, runNow);
-  if (staleWarning?.warned) summary.staleWarningSent = true;
-
   if (failedPlatforms.length) {
     throw new Error(`Platform collection failed: ${failedPlatforms.join(', ')}`);
   }

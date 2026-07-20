@@ -1,0 +1,34 @@
+name: Monitor heartbeat
+
+# monitor.yml이 오늘(KST) 09:10 이후 성공 실행됐는지 확인해, 없으면 Slack 경고.
+# GitHub 크론 지연/드롭으로 그날 점검이 '조용히' 누락되는 걸 잡는다(DB 불필요).
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 5 * * *'   # 14:00 KST — 09:10 이후 충분한 버퍼
+    - cron: '0 8 * * *'   # 17:00 KST — 첫 체크가 지연/드롭됐을 때 백업
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: negative-comment-monitor-heartbeat
+  cancel-in-progress: false
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node src/heartbeat-check.js
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}

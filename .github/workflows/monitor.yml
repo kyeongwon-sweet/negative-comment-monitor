@@ -70,8 +70,6 @@ jobs:
           TRACKING_DAYS: ${{ vars.TRACKING_DAYS }}
           DELTA_ENABLED: 'true'
           DRY_RUN: 'false'
-          HEARTBEAT_URL: ${{ vars.HEARTBEAT_URL }}
-          HEARTBEAT_STALE_DEADLINE_MIN: ${{ vars.HEARTBEAT_STALE_DEADLINE_MIN }}
       - name: Notify Slack on failure
         if: ${{ failure() }}
         continue-on-error: true
