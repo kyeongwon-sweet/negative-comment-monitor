@@ -8,6 +8,7 @@ test('extractPostKey: 플랫폼별 게시물 ID 추출', () => {
   assert.equal(extractPostKey('https://youtu.be/xObhZ0Ga7EQ'), 'yt:xObhZ0Ga7EQ');
   assert.equal(extractPostKey('https://www.youtube.com/shorts/ulySh-iHxek'), 'yt:ulySh-iHxek');
   assert.equal(extractPostKey('https://www.tiktok.com/@u/video/7656707663044185364'), 'tt:7656707663044185364');
+  assert.equal(extractPostKey('https://www.tiktok.com/@pyun_lab/photo/7530011122233445566'), 'tt:7530011122233445566');
   assert.equal(extractPostKey('https://x.com/u/status/123456'), 'x:123456');
   assert.equal(extractPostKey('https://naver.com/x'), null);
 });

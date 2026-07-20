@@ -39,6 +39,26 @@ test('alert blocks mention the category assignee', () => {
   );
   assert.ok(blocks.some((block) => block.text?.text === '*담당자*\n<@U_BANNER>'));
 });
+test('작성자는 메인 라인에만, 필드엔 중복 없음(B2)', () => {
+  const blocks = buildAlertBlocks(
+    { row: 1, url: 'https://example.com', channelCategory: '유상협찬' },
+    { id: 'c1', platform: 'instagram', username: 'hater123', text: '라라스윗 별로', risk: {} },
+  );
+  const mainLine = blocks[2].text.text;
+  assert.match(mainLine, /hater123/); // 메인 라인에 작성자 있음
+  const fieldsBlock = blocks.find((b) => Array.isArray(b.fields));
+  assert.ok(!fieldsBlock.fields.some((f) => f.text.includes('*작성자*'))); // 필드에 작성자 중복 없음
+  assert.equal(fieldsBlock.fields.length, 2); // 현재상태 + 작성시간
+});
+test('긴 댓글은 잘려서 블록 한도 방어(B3)', () => {
+  const long = '가'.repeat(2000);
+  const blocks = buildAlertBlocks(
+    { row: 1, url: 'https://example.com', channelCategory: '유상협찬' },
+    { id: 'c1', platform: 'instagram', username: 'u', text: long, risk: {} },
+  );
+  assert.ok(blocks[2].text.text.length < 700); // 500자 + 링크/작성자 오버헤드
+  assert.match(blocks[2].text.text, /…/);
+});
 test('verifies valid Slack signatures and rejects stale requests', () => {
   const secret = 'test-secret'; const timestamp = '1000'; const rawBody = 'payload=x';
   const signature = `v0=${createHmac('sha256', secret).update(`v0:${timestamp}:${rawBody}`).digest('hex')}`;

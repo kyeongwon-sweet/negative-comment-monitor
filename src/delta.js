@@ -10,7 +10,7 @@ export function extractPostKey(url) {
   let m;
   if (/instagram\.com/i.test(u)) { m = u.match(/\/(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/); return m ? 'ig:' + m[1] : null; }
   if (/youtube\.com|youtu\.be/i.test(u)) { m = u.match(/(?:shorts\/|watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{6,})/); return m ? 'yt:' + m[1] : null; }
-  if (/tiktok\.com/i.test(u)) { m = u.match(/\/video\/(\d+)/); return m ? 'tt:' + m[1] : null; }
+  if (/tiktok\.com/i.test(u)) { m = u.match(/\/(?:video|photo)\/(\d+)/); return m ? 'tt:' + m[1] : null; }
   if (/x\.com|twitter\.com/i.test(u)) { m = u.match(/\/status\/(\d+)/); return m ? 'x:' + m[1] : null; }
   return null;
 }

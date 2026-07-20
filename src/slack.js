@@ -27,6 +27,12 @@ function esc(text) {
   return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// Slack 블록/텍스트 길이 방어. 긴 댓글이 블록 한도(section text 3000자)를 넘기지 않게 자른다.
+function truncate(text, max = 500) {
+  const s = String(text || '');
+  return s.length > max ? s.slice(0, max - 1) + '…' : s;
+}
+
 // 작성시간을 KST 'YYYY-MM-DD HH:mm KST'로. epoch(초/밀리초)·ISO 모두 처리.
 export function formatKst(ts) {
   if (!ts && ts !== 0) return '-';
@@ -46,7 +52,7 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   const company = esc(String(target.company || '').trim());
   const channel = esc(target.channelName || '-');
   const author = esc(comment.username || '-');
-  const text = esc(String(comment.text || '').replace(/\s+/g, ' ').trim());
+  const text = esc(truncate(String(comment.text || '').replace(/\s+/g, ' ').trim()));
   const companyPart = (isViral && company) ? ` (${company})` : '';
   const mainLine = `<${target.url}|${channel}>${companyPart} / ${author} / ${text}`;
   const assigneeId = assigneeForChannelCategory(target.channelCategory, assignees);
@@ -56,7 +62,6 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
     { type: 'section', text: { type: 'mrkdwn', text: mainLine } },
     { type: 'section', fields: [
       { type: 'mrkdwn', text: '*현재상태*\n미처리 ⏳' },
-      { type: 'mrkdwn', text: `*작성자*\n${author}` },
       { type: 'mrkdwn', text: `*작성시간*\n${formatKst(comment.timestamp)}` },
     ] },
     { type: 'section', text: { type: 'mrkdwn', text: `*분류 근거*\n${esc(reason)}` } },
@@ -70,7 +75,7 @@ export async function sendAlert(config, target, comment, fetchImpl = fetch) {
   const blocks = buildAlertBlocks(target, comment, config.managedChannelCategories, config.slackAssignees);
   const response = await fetchImpl('https://slack.com/api/chat.postMessage', {
     method: 'POST', headers: { authorization: `Bearer ${config.slackBotToken}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ channel: config.slackChannelId, text: `부정댓글 감지: ${comment.text}`, blocks }),
+    body: JSON.stringify({ channel: config.slackChannelId, text: `부정댓글 감지: ${truncate(comment.text, 200)}`, blocks }),
   });
   const payload = await response.json();
   if (!payload.ok) throw new Error(`Slack API: ${payload.error || 'unknown_error'}`);
