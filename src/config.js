@@ -28,6 +28,10 @@ export function loadConfig(env = process.env) {
     supabaseUrl: String(env.SUPABASE_URL || '').trim().replace(/\/$/, ''),
     supabaseKey: String(env.SUPABASE_SERVICE_ROLE_KEY || '').trim(),
     deltaEnabled: String(env.DELTA_ENABLED || 'true').toLowerCase() !== 'false',
+    // 헬스체크: 마감(기본 13:00 KST=780분)까지 오늘 일일 점검 없으면 Slack 경고.
+    // HEARTBEAT_URL 설정 시 정상 점검마다 외부 dead-man's-switch로 ping(선택).
+    heartbeatStaleDeadlineMin: Number(env.HEARTBEAT_STALE_DEADLINE_MIN || 780),
+    heartbeatUrl: String(env.HEARTBEAT_URL || '').trim(),
     // 감시 대상은 전부 라라스윗 협찬 게시물이므로, 브랜드 컨텍스트를 부여해
     // classify의 entity 게이트가 브랜드 관련 부정댓글을 놓치지 않게 한다.
     brandContext: String(env.BRAND_CONTEXT || '라라스윗').trim(),

@@ -18,7 +18,7 @@ export function collectionIntervalMs(target, now = Date.now()) {
   return Infinity;
 }
 
-function kstDateKey(timestamp) {
+export function kstDateKey(timestamp) {
   return new Date(timestamp + 9 * HOUR).toISOString().slice(0, 10);
 }
 
@@ -29,7 +29,7 @@ const DAILY_START_MIN = 9 * 60 + 10; // 09:10 KST
 // 보장하지 않아(00시대 UTC 드롭 빈번) 창을 놓치면 그날 점검이 통째로 누락됐다.
 // 마감(deadline) 방식으로 바꿔 회차가 지연돼도 그날 첫 실행이 한 번 잡게 한다.
 // 하루 1회 보장은 kstDateKey(last) === kstDateKey(now) 멱등 가드가 담당한다.
-function isPastDailyStart(now) {
+export function isPastDailyStart(now) {
   const kst = new Date(now + 9 * HOUR);
   const minute = kst.getUTCHours() * 60 + kst.getUTCMinutes();
   return minute >= DAILY_START_MIN;
