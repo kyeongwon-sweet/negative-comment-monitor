@@ -7,6 +7,12 @@ function ageMs(target, now) {
   return Number.isFinite(published) ? Math.max(0, now - published) : Infinity;
 }
 
+// 온드미디어·위성채널은 우리 자체 채널(evergreen)이라 업로드 후 기간과 무관하게 상시 감시한다.
+export function isEvergreenCategory(channelCategory) {
+  const c = String(channelCategory || '');
+  return c.includes('온드') || c.includes('위성');
+}
+
 export function collectionIntervalMs(target, now = Date.now()) {
   if (target.collector === 'graph-webhook') return Infinity;
   if (target.recentNegativeDetectedAt) {
@@ -14,7 +20,7 @@ export function collectionIntervalMs(target, now = Date.now()) {
     if (Number.isFinite(detectedAge) && detectedAge <= 3 * HOUR) return 15 * MINUTE;
   }
   const age = ageMs(target, now);
-  if (target.isBoosted || age <= 7 * DAY) return DAY;
+  if (target.isBoosted || isEvergreenCategory(target.channelCategory) || age <= 7 * DAY) return DAY;
   return Infinity;
 }
 

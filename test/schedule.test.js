@@ -34,6 +34,17 @@ test('excludes ordinary posts older than seven days', () => {
   assert.equal(collectionIntervalMs({ publishedAt: '2026-07-01T00:00:00Z' }, dailyRun), Infinity);
 });
 
+test('온드미디어·위성채널은 오래돼도 상시 감시(evergreen)', () => {
+  // 6주 전 업로드라도 온드/위성이면 daily로 계속 감시, 09:10 이후 도래.
+  const oldOwned = { publishedAt: '2026-06-06T00:00:00Z', channelCategory: '온드미디어', lastCollectedAt: '2026-07-14T00:10:00Z' };
+  const oldSatellite = { publishedAt: '2026-06-06T00:00:00Z', channelCategory: '위성채널', lastCollectedAt: '2026-07-14T00:10:00Z' };
+  assert.equal(collectionIntervalMs(oldOwned, dailyRun), 24 * 60 * 60 * 1000);
+  assert.equal(collectionIntervalMs(oldSatellite, dailyRun), 24 * 60 * 60 * 1000);
+  assert.equal(isCollectionDue(oldOwned, dailyRun), true);
+  // 대조: 같은 나이의 일반 게시물은 여전히 제외.
+  assert.equal(collectionIntervalMs({ publishedAt: '2026-06-06T00:00:00Z', channelCategory: '바이럴 (배너)' }, dailyRun), Infinity);
+});
+
 test('temporarily checks every 15 minutes for three hours after a negative detection', () => {
   const now = Date.parse('2026-07-15T01:00:00Z');
   const base = { publishedAt: '2026-07-14T00:00:00Z', recentNegativeDetectedAt: '2026-07-15T00:00:00Z' };

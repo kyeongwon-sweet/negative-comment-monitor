@@ -5,7 +5,7 @@ import { normalizeDataset } from './normalize.js';
 import { detectPlatform, filterEligibleSponsorships, groupApifyTargets } from './routing.js';
 import { classifyCommentsHybrid } from './hybrid-classify.js';
 import { sendAlert } from './slack.js';
-import { filterDueTargets } from './schedule.js';
+import { filterDueTargets, isEvergreenCategory } from './schedule.js';
 import { loadCommentCounts, filterChangedTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
 import { commentFingerprint, loadRecentlyAlertedPostKeys, loadSeenFingerprints, recordAlert } from './dedup.js';
 
@@ -32,7 +32,8 @@ export async function runMonitor(config = loadConfig()) {
   const windowCutoff = runNow - config.trackingDays * 864e5;
   const windowedTargets = eligibleMappedTargets.filter((t) => {
     const d = Date.parse(t.uploadedAt || t.publishedAt || t.postedAt || '');
-    return Boolean(t.isBoosted) || !Number.isFinite(d) || d >= windowCutoff;
+    // 부스팅·온드/위성(evergreen)은 기간 무관, 그 외 일반글만 업로드 7일 이내.
+    return Boolean(t.isBoosted) || isEvergreenCategory(t.channelCategory) || !Number.isFinite(d) || d >= windowCutoff;
   });
 
   // Supabase의 마지막 확인·최근 알림 이력을 스케줄 입력으로 연결한다.
