@@ -73,12 +73,12 @@ export function classifyNegativeComment(comment, target = {}) {
     return { alert: false, category: '정상댓글', priority: 'none', entity, matches: [] };
   }
 
-  // 광고·바이럴·별로·경쟁제품은 문맥에 따라 긍정 문장에도 등장한다.
-  // 명백한 욕설/제품 불만/판매·성분 문제는 즉시 탐지하되, 그 외에는 긍정 의도가
-  // 함께 있으면 키워드 오탐으로 보고 정상 처리한다. Anthropic이 설정된 환경에서는
-  // run.js의 의미 분류가 이 규칙보다 우선한다.
+  // 광고·바이럴·별로·경쟁제품·성분의혹은 문맥에 따라 긍정 문장에도 등장한다
+  // (예: "편의점에 없던데 먹고싶어요"의 '없던데'). 명백한 욕설/제품 불만/판매 문제만
+  // 즉시 탐지하고, 그 외에는 긍정 의도가 함께 있으면 키워드 오탐으로 보고 정상 처리한다.
+  // Anthropic이 설정된 환경에서는 run.js의 의미 분류(LLM)가 이 규칙보다 우선한다.
   const hardDissatisfaction = findMatches(text, HARD_DISSATISFACTION);
-  const immediateNegative = profanity.length || hardDissatisfaction.length || sales.length || authenticity.length;
+  const immediateNegative = profanity.length || hardDissatisfaction.length || sales.length;
   if (!immediateNegative && hasPositiveContext(text)) {
     return {
       alert: false,
@@ -116,9 +116,10 @@ export function needsContextualReview(comment, target = {}) {
   const hardDissatisfaction = findMatches(text, HARD_DISSATISFACTION);
   const sales = findMatches(text, DISCOVERY_KEYWORDS.salesComplaint);
   const authenticity = findMatches(text, DISCOVERY_KEYWORDS.authenticityDoubt || []);
-  if (profanity.length || hardDissatisfaction.length || sales.length || authenticity.length) return false;
+  if (profanity.length || hardDissatisfaction.length || sales.length) return false;
   const marketing = findMatches(text, DISCOVERY_KEYWORDS.marketingDistrust);
   const dissatisfaction = findMatches(text, DISCOVERY_KEYWORDS.dissatisfaction);
   const competitor = findMatches(text, DISCOVERY_KEYWORDS.competitorMention || []);
-  return marketing.length > 0 || dissatisfaction.length > 0 || competitor.length > 0;
+  // 성분/진위 의혹도 문맥 판단 대상 → LLM으로 보내 긍정/부정 가린다(즉시 하드판정 금지).
+  return marketing.length > 0 || dissatisfaction.length > 0 || competitor.length > 0 || authenticity.length > 0;
 }

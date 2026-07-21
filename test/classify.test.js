@@ -9,6 +9,20 @@ test('detects requested discovery keywords in relevant product context', () => {
   }
 });
 
+test('가용성 표현이 섞인 긍정 댓글은 오탐 안 함(편의점에 없던데 먹고싶어요)', () => {
+  const target = { brandName: '라라스윗', productName: '쫀득바' };
+  const text = '이거 애들이 맛있다고 해서 너무 먹고싶어요ㅠㅠ 진짜 쫀득해보이고 편의점에서 찾아봐도 없던데 진짜 한번 먹어보고싶어요ㅠ';
+  const r = classifyNegativeComment({ text }, target);
+  assert.equal(r.alert, false, '긍정 문맥이면 정상이어야'); // '없던데'가 즉시 부정 트리거였던 회귀 방지
+  assert.equal(needsContextualReview({ text }, target), false); // 긍정 문맥이라 LLM 검토도 불필요
+});
+
+test('성분/진위 의혹은 즉시 하드판정 대신 LLM 검토로 보낸다', () => {
+  const target = { brandName: '라라스윗', productName: '쫀득바' };
+  // 긍정 문맥 없는 성분 의혹 → 키워드는 알림이지만 needsContextualReview로 LLM 검토 대상.
+  assert.equal(needsContextualReview({ text: '쫀득바 성분표에 멜론이 없어서 가짜 아닌가' }, target), true);
+});
+
 test('automatically detects common profanity variants', () => {
   const target = { brandName: '라라스윗' };
   assert.equal(classifyNegativeComment({ text: '이거 ㅅㅂ 너무 별로' }, target).category, '욕설/비속어');
