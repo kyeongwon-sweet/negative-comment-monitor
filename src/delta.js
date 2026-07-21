@@ -2,7 +2,8 @@
 // 현재 댓글 수 신호는 대시보드가 매일 수집하는 Supabase post_daily_stats.comments_count를 재사용(무상).
 // 마지막 확인 시점의 댓글 수는 post_comment_checks.last_count에 저장.
 //   - 체크 이력이 없으면(처음) 스크레이프해 기존 댓글까지 1회 스캔한다.
-//   - 이후에는 current_count > last_count 인 글만 스크레이프한다.
+//   - 이후에는 current_count가 last_count와 달라진(증가·감소 모두) 글을 스크레이프한다.
+//     (댓글 삭제로 카운트가 줄어도 그 사이 새 댓글이 달렸을 수 있어 재스캔; 중복 알림은 fingerprint로 방지)
 //   - 현재 댓글 수를 모르면(매칭 실패/미수집) 재과금 방지로 건너뛴다.
 
 export function extractPostKey(url) {
@@ -74,21 +75,21 @@ export function filterChangedTargets(targets, counts) {
     const c = counts[t.url] || {};
     if (c.current == null) return false;   // 댓글 수 신호 없음 → skip(비용 안전)
     if (c.last == null) return true;        // 첫 확인(신호 있음) → 최근 댓글 1회 스캔
-    return c.current > c.last;              // 이후엔 댓글 수 증가분만
+    return c.current !== c.last;            // 증가·감소 모두 재스캔(삭제로 카운트 줄어도 새 댓글 있을 수 있음; 중복 알림은 fingerprint dedup이 방지)
   });
 }
 
 // 델타 스킵 사유별 집계(로그·요약용).
 export function summarizeDelta(targets, counts) {
-  let noSignal = 0, unchanged = 0, firstScan = 0, increased = 0;
+  let noSignal = 0, unchanged = 0, firstScan = 0, changed = 0;
   for (const t of targets) {
     const c = counts[t.url] || {};
     if (c.current == null) noSignal++;
     else if (c.last == null) firstScan++;
-    else if (c.current > c.last) increased++;
+    else if (c.current !== c.last) changed++;
     else unchanged++;
   }
-  return { noSignal, unchanged, firstScan, increased, scrape: firstScan + increased };
+  return { noSignal, unchanged, firstScan, changed, scrape: firstScan + changed };
 }
 
 // 스크레이프 성공한 대상의 last_count를 현재값으로 갱신(다음 실행부터 증가분만).
