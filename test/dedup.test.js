@@ -25,9 +25,11 @@ test('recordAlert writes a conflict-safe row', async () => {
   let request;
   const config = { supabaseUrl: 'https://db.test', supabaseKey: 'key', slackChannelId: 'C1' };
   const fetchImpl = async (url, options) => { request = { url, options }; return { ok: true }; };
-  await recordAlert(config, { url: 'https://x.com/u/status/1' }, { id: 'c1', platform: 'twitter', text: 'bad' }, 'fp', '1.2', fetchImpl);
+  await recordAlert(config, { url: 'https://x.com/u/status/1' }, { id: 'c1', platform: 'twitter', text: 'bad' }, 'fp', '1.2', 'hash123', fetchImpl);
   assert.match(request.url, /on_conflict=fingerprint/);
-  assert.equal(JSON.parse(request.options.body).fingerprint, 'fp');
+  const body = JSON.parse(request.options.body);
+  assert.equal(body.fingerprint, 'fp');
+  assert.equal(body.classifier_hash, 'hash123'); // 알림 당시 해시 저장(#8 오탐률 집계용)
 });
 
 test('loads recently alerted post keys for intensive monitoring', async () => {

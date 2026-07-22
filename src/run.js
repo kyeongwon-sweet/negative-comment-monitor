@@ -9,7 +9,8 @@ import { filterDueTargets, isEvergreenCategory, kstDateKey } from './schedule.js
 import { loadCommentCounts, filterChangedTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
 import { commentFingerprint, loadRecentlyAlertedPostKeys, loadSeenFingerprints, recordAlert } from './dedup.js';
 import { estimateUsd } from './pricing.js';
-import { purgeCache } from './cache.js';
+import { computeClassifierHash, purgeCache } from './cache.js';
+import { falsePositiveStats } from './review.js';
 import { DEFAULT_COST_THRESHOLDS, estimateApifyUsd, maybeAlertCosts, postCostWarning, recordRunCost, runKey, sumDailyCost } from './cost.js';
 
 export async function runMonitor(config = loadConfig()) {
@@ -133,6 +134,10 @@ export async function runMonitor(config = loadConfig()) {
   // Phase 2: 실행 전체 문맥 후보를 25개 단위로 통합 분류(캐시 미스만 LLM). 결과는 entries와 동일 순서·귀속.
   const risksPerEntry = await classifyTargetsBatched(entries, config, undefined, llmStats);
 
+  // 알림 당시 classifier_hash 기록용(오탐률 집계·오탐 우선적용 감사). 계산 실패는 무해(null 저장).
+  let classifierHash = null;
+  try { classifierHash = computeClassifierHash(config); } catch { classifierHash = null; }
+
   // Phase 3: 게시물별 dedup + 알림 발송(injibot 버튼 포함). DRY_RUN이면 발송 없이 카운트/로그만.
   for (let e = 0; e < entries.length; e += 1) {
     const { target, comments } = entries[e];
@@ -151,7 +156,7 @@ export async function runMonitor(config = loadConfig()) {
       console.error(`[alert] ${target.platform} | ${comment.risk.category} | ${(comment.text || '').replace(/\s+/g, ' ').slice(0, 50)}`);
       if (!config.dryRun) {
         const slackResult = await sendAlert(config, target, comment);
-        await recordAlert(config, target, comment, fingerprint, slackResult.ts);
+        await recordAlert(config, target, comment, fingerprint, slackResult.ts, classifierHash);
       }
       sentAlerts += 1;
     }
@@ -184,6 +189,14 @@ export async function runMonitor(config = loadConfig()) {
       }
     } catch (error) {
       console.error('[cost] 비용 집계/경고 실패(무시):', error.message);
+    }
+
+    // #8 classifier_hash별 오탐률 집계(best-effort).
+    try {
+      const reviewStats = await falsePositiveStats(config);
+      if (reviewStats) summary.reviewStats = reviewStats;
+    } catch (error) {
+      console.error('[review] 오탐률 집계 실패(무시):', error.message);
     }
   }
 

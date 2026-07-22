@@ -2,6 +2,12 @@ import { classifyNegativeComment, needsContextualReview } from './classify.js';
 import { classifyCommentsLLM } from './llm.js';
 import { commentFingerprint } from './dedup.js';
 import { cacheEnabled, computeClassifierHash, lookupCache, storeCache } from './cache.js';
+import { loadFalsePositives } from './review.js';
+
+// 사람이 오탐(false_positive)으로 표시한 지문의 강제 정상 결과(분류기 해시와 무관하게 최우선).
+function humanFalsePositiveResult() {
+  return { alert: false, category: '정상댓글', priority: 'none', entity: { matched: true }, engine: 'human-fp', reason: '사람 오탐 판정(false_positive)' };
+}
 
 const LLM_BATCH = 25; // 실행 전체 문맥 후보를 25개 단위로 통합해 LLM 호출 수를 줄인다.
 
@@ -59,10 +65,32 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
     }
   }
 
-  // 실행 전체 pending 평탄화 — 원 게시물(entry)·댓글 인덱스 귀속을 슬롯에 보존.
-  const flat = [];
+  // 사람 오탐(false_positive) 지문은 분류기 해시와 무관하게 정상으로 강제(#3). 키워드 알림·LLM 후보
+  // 모두 대상. 한 번만 조회(실행 전체), 실패 시 억제 안 함(재알림은 dedup가 막음).
+  const kwAlertRefs = [];   // 키워드 단계 알림 위치
+  const pendingRefs = [];   // LLM 후보(캐시 미스)
   for (let e = 0; e < prepared.length; e += 1) {
-    for (const p of prepared[e].pending) flat.push({ entry: e, index: p.index, comment: p.comment, fingerprint: p.fingerprint });
+    for (const p of prepared[e].pending) pendingRefs.push({ entry: e, index: p.index, comment: p.comment, fingerprint: p.fingerprint });
+    prepared[e].out.forEach((risk, index) => {
+      if (risk.alert) kwAlertRefs.push({ entry: e, index, fingerprint: commentFingerprint(entries[e].target, entries[e].comments[index]) });
+    });
+  }
+  let fpSet = new Set();
+  if (cacheEnabled(config)) {
+    const fps = [...kwAlertRefs, ...pendingRefs].map((r) => r.fingerprint).filter(Boolean);
+    if (fps.length) {
+      try { fpSet = await loadFalsePositives(config, fps, fetchImpl); } catch { fpSet = new Set(); }
+    }
+  }
+  for (const ref of kwAlertRefs) {
+    if (ref.fingerprint && fpSet.has(ref.fingerprint)) prepared[ref.entry].out[ref.index] = humanFalsePositiveResult();
+  }
+
+  // 실행 전체 pending 평탄화 — 원 게시물(entry)·댓글 인덱스 귀속 보존. FP 지문은 LLM 제외(정상 강제).
+  const flat = [];
+  for (const ref of pendingRefs) {
+    if (ref.fingerprint && fpSet.has(ref.fingerprint)) { prepared[ref.entry].out[ref.index] = humanFalsePositiveResult(); continue; }
+    flat.push(ref);
   }
   const classifierHash = prepared.find((p) => p.classifierHash)?.classifierHash || null;
 

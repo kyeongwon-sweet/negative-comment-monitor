@@ -48,7 +48,7 @@ export async function loadRecentlyAlertedPostKeys(config, sinceMs = 3 * 60 * 60 
   return result;
 }
 
-export async function recordAlert(config, target, comment, fingerprint, slackTs = '', fetchImpl = fetch) {
+export async function recordAlert(config, target, comment, fingerprint, slackTs = '', classifierHash = null, fetchImpl = fetch) {
   const response = await fetchImpl(`${config.supabaseUrl}/rest/v1/negative_comment_alerts?on_conflict=fingerprint`, {
     method: 'POST',
     headers: headers(config, {
@@ -63,6 +63,7 @@ export async function recordAlert(config, target, comment, fingerprint, slackTs 
       comment_text: String(comment.text || ''),
       slack_channel_id: String(config.slackChannelId || ''),
       slack_ts: String(slackTs || '') || null,
+      classifier_hash: classifierHash || null,
     }),
   });
   if (!response.ok) throw new Error(`Dedup POST ${response.status}: ${(await response.text()).slice(0, 200)}`);

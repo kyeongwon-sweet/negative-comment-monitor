@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyTargetsBatched } from '../src/hybrid-classify.js';
 import { classifyCommentsLLM } from '../src/llm.js';
+import { commentFingerprint } from '../src/dedup.js';
 
 // 실제 classifyCommentsLLM을 배치 경로에 물려, Anthropic·Supabase 장애가 나도 모니터링이
 // 크래시 없이 키워드 안전경로로 계속되는지(누락 방지 우선) 검증한다.
@@ -66,6 +67,24 @@ test('캐시 조회 non-ok → 미스 취급 후 Anthropic로 분류, 저장 실
   try {
     const out = await classifyTargetsBatched([{ target: T, comments: [ambiguous(0)] }], cfg, classifyCommentsLLM);
     assert.equal(out[0][0].engine, 'llm'); // 조회 실패=미스 → 실시간 분류, 저장 실패는 삼킴
+  } finally { restore(); }
+});
+
+test('사람 false_positive 판정은 분류기 해시와 무관하게 정상으로 강제(키워드 알림도 억제)', async () => {
+  const cfg = { anthropicKey: 'k', supabaseUrl: 'https://db.example', supabaseKey: 'svc', anthropicModel: 'some-other-model' };
+  const target = { brandName: '라라스윗', productName: '쫀득바' };
+  const comment = { text: '라라스윗 노맛' }; // 키워드(HARD) 즉시 알림 대상
+  const fp = commentFingerprint(target, comment);
+  let anthropicCalled = false;
+  const restore = stubFetch({
+    anthropic: async () => { anthropicCalled = true; return { ok: true, json: async () => ({ content: [{ text: '[]' }] }) }; },
+    supabase: async (url) => (/negative_comment_alerts/.test(url) ? { ok: true, json: async () => [{ fingerprint: fp }] } : { ok: true, json: async () => [] }),
+  });
+  try {
+    const out = await classifyTargetsBatched([{ target, comments: [comment] }], cfg, classifyCommentsLLM);
+    assert.equal(out[0][0].engine, 'human-fp'); // 사람 판정 우선
+    assert.equal(out[0][0].alert, false);
+    assert.equal(anthropicCalled, false); // 하드 알림이라 LLM도 불필요, 오탐이라 억제
   } finally { restore(); }
 });
 
