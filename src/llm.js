@@ -27,7 +27,8 @@ const PROMPT_TAIL =
   '"reason":"한줄 근거, 한자 쓰지 말고 순우리말로(예: 貶下→깎아내림, 是非→시비) (정상이면 빈 문자열)"}]';
 
 // comments: [{text}], 반환: [{alert, category, reason, priority}] (입력 순서) 또는 null(폴백).
-export async function classifyCommentsLLM(comments, config, fetchImpl = fetch) {
+// stats(선택): 사용량 계측 누산기. 댓글 내용/키는 절대 기록하지 않고 호출수·토큰수만 누적.
+export async function classifyCommentsLLM(comments, config, fetchImpl = fetch, stats = null) {
   if (!config.anthropicKey || !comments.length) return null;
   const model = config.anthropicModel || 'claude-haiku-4-5-20251001';
   const out = [];
@@ -43,6 +44,15 @@ export async function classifyCommentsLLM(comments, config, fetchImpl = fetch) {
       });
       if (!res.ok) return null;
       const data = await res.json();
+      if (stats) {   // 사용량 누적(내용·키 미기록, 토큰수만)
+        const u = data.usage || {};
+        stats.calls += 1;
+        stats.reviewed += chunk.length;
+        stats.inputTokens += u.input_tokens || 0;
+        stats.outputTokens += u.output_tokens || 0;
+        stats.cacheRead += u.cache_read_input_tokens || 0;
+        stats.cacheCreate += u.cache_creation_input_tokens || 0;
+      }
       const txt = (data.content || []).map((b) => b.text || '').join('');
       const m = txt.match(/\[[\s\S]*\]/);
       const arr = m ? JSON.parse(m[0]) : [];

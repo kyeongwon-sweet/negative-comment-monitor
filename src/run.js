@@ -81,6 +81,8 @@ export async function runMonitor(config = loadConfig()) {
   const groups = groupApifyTargets(targets);
   const scrapedTargets = [];
   let sentAlerts = 0;
+  // LLM 사용량 계측(내용·키 미기록, 카운트/토큰만). 하루 이상 축적 후 캐시 도입 판단 근거.
+  const llmStats = { calls: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0 };
   const summary = {
     fetchedTargets: rawTargets.length,
     excludedTargets: rawTargets.length - eligibleMappedTargets.length,
@@ -112,7 +114,7 @@ export async function runMonitor(config = loadConfig()) {
           return comment.url && comment.url === target.url;     // 그 외 정확 URL 일치만
         });
         // 욕설·명백한 불만은 무료 규칙으로 처리하고, 문맥 후보만 Anthropic에 전달한다.
-        const risks = await classifyCommentsHybrid(targetComments, target, config);
+        const risks = await classifyCommentsHybrid(targetComments, target, config, undefined, llmStats);
         const classified = targetComments.map((comment, idx) => ({ ...comment, risk: risks[idx] }));
         const alerts = classified.filter((comment) => comment.risk.alert);
         const fingerprints = alerts.map((comment) => commentFingerprint(target, comment));
@@ -141,6 +143,11 @@ export async function runMonitor(config = loadConfig()) {
     }
   }
   summary.sentAlerts = sentAlerts;
+
+  // LLM 사용량 요약 + 예상 비용(Haiku 4.5: 입력 $1 / 출력 $5 / 캐시읽기 $0.1 / 캐시생성 $1.25 per 1M).
+  const estUsd = (llmStats.inputTokens * 1 + llmStats.outputTokens * 5 + llmStats.cacheRead * 0.1 + llmStats.cacheCreate * 1.25) / 1e6;
+  summary.llm = { ...llmStats, estUsd: Number(estUsd.toFixed(5)) };
+  console.error(`[llm] calls=${llmStats.calls} reviewed=${llmStats.reviewed} in=${llmStats.inputTokens} out=${llmStats.outputTokens} cacheR=${llmStats.cacheRead} cacheC=${llmStats.cacheCreate} est=$${estUsd.toFixed(5)} (Haiku 4.5)`);
 
   if (summary_deltaBreakdown) summary.deltaBreakdown = summary_deltaBreakdown;
   // 성공적으로 스크레이프한 게시물의 댓글 수 기준선 갱신(다음 실행부터 증가분만).

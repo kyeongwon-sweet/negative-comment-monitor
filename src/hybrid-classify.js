@@ -1,7 +1,7 @@
 import { classifyNegativeComment, needsContextualReview } from './classify.js';
 import { classifyCommentsLLM } from './llm.js';
 
-export async function classifyCommentsHybrid(comments, target, config, llmClassifier = classifyCommentsLLM) {
+export async function classifyCommentsHybrid(comments, target, config, llmClassifier = classifyCommentsLLM, stats = null) {
   const keywordResults = comments.map((comment) => classifyNegativeComment(comment, target));
   const reviewIndexes = [];
   for (let index = 0; index < comments.length; index += 1) {
@@ -11,7 +11,7 @@ export async function classifyCommentsHybrid(comments, target, config, llmClassi
     return keywordResults.map((risk) => ({ ...risk, engine: 'keyword' }));
   }
   const reviewComments = reviewIndexes.map((index) => comments[index]);
-  const reviewed = await llmClassifier(reviewComments, config);
+  const reviewed = await llmClassifier(reviewComments, config, undefined, stats);
   if (!reviewed) return keywordResults.map((risk) => ({ ...risk, engine: 'keyword' }));
   const out = keywordResults.map((risk) => ({ ...risk, engine: 'keyword' }));
   for (let position = 0; position < reviewIndexes.length; position += 1) {

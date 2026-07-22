@@ -21,6 +21,23 @@ test('calls the LLM only for ambiguous comments and keeps immediate rules local'
   assert.equal(results[2].engine, 'keyword');
 });
 
+test('threads the usage stats accumulator through to the LLM classifier', async () => {
+  let receivedStats;
+  const stats = { calls: 0 };
+  const llmClassifier = async (items, config, fetchImpl, s) => {
+    receivedStats = s;
+    return [{ alert: false, category: '정상댓글', reason: '', priority: 'normal' }];
+  };
+  await classifyCommentsHybrid(
+    [{ text: '이거 광고인가요?' }],
+    { brandName: '라라스윗' },
+    { anthropicKey: 'key' },
+    llmClassifier,
+    stats,
+  );
+  assert.equal(receivedStats, stats);
+});
+
 test('uses only free keyword rules when no Anthropic key is configured', async () => {
   let called = false;
   const results = await classifyCommentsHybrid(
