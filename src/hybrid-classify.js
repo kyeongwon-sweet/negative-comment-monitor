@@ -3,22 +3,20 @@ import { classifyCommentsLLM } from './llm.js';
 import { commentFingerprint } from './dedup.js';
 import { cacheEnabled, computeClassifierHash, lookupCache, storeCache } from './cache.js';
 
-// 키워드(무료·즉시) + Anthropic(문맥 후보만) 하이브리드 분류.
-// 문맥 후보는 먼저 캐시(comment_fingerprint + classifier_hash)를 조회해 히트분은 LLM 호출을
-// 건너뛴다. 캐시 관련 어떤 실패든 실시간 LLM 분류로 폴백한다(누락 방지 우선).
-export async function classifyCommentsHybrid(comments, target, config, llmClassifier = classifyCommentsLLM, stats = null) {
-  const keywordResults = comments.map((comment) => classifyNegativeComment(comment, target));
-  const out = keywordResults.map((risk) => ({ ...risk, engine: 'keyword' }));
+const LLM_BATCH = 25; // 실행 전체 문맥 후보를 25개 단위로 통합해 LLM 호출 수를 줄인다.
 
+// 한 게시물: 키워드 분류 + 문맥 후보 판별 + 캐시 조회. LLM이 필요한 캐시 미스만 pending으로 돌려준다.
+// 캐시 관련 어떤 실패든 classifierHash=null로 두고 실시간 분류로 진행(누락 방지 우선).
+async function prepareLocal(comments, target, config, stats, fetchImpl) {
+  const out = comments.map((comment) => ({ ...classifyNegativeComment(comment, target), engine: 'keyword' }));
   const reviewIndexes = [];
   for (let index = 0; index < comments.length; index += 1) {
     if (needsContextualReview(comments[index], target)) reviewIndexes.push(index);
   }
-  if (!reviewIndexes.length || !config.anthropicKey) return out;
+  if (!reviewIndexes.length || !config.anthropicKey) return { out, pending: [], classifierHash: null };
 
-  // 캐시 조회(문맥 후보만). 실패 시 classifierHash=null → 이후 저장도 건너뛰고 전량 LLM.
   let classifierHash = null;
-  let cacheHits = new Map(); // reviewIndex -> result
+  let cacheHits = new Map();
   const fingerprintByIndex = new Map();
   if (cacheEnabled(config)) {
     try {
@@ -28,39 +26,71 @@ export async function classifyCommentsHybrid(comments, target, config, llmClassi
         fingerprintByIndex.set(index, fingerprint);
         return { index, fingerprint };
       });
-      cacheHits = await lookupCache(config, reviewItems, classifierHash);
+      cacheHits = await lookupCache(config, reviewItems, classifierHash, fetchImpl);
     } catch {
       classifierHash = null;
       cacheHits = new Map();
     }
   }
-
-  // 캐시 미스만 LLM에 보낸다.
+  for (const index of reviewIndexes) {
+    if (cacheHits.has(index)) out[index] = { ...cacheHits.get(index), entity: { matched: true }, engine: 'llm-cache' };
+  }
   const missIndexes = reviewIndexes.filter((index) => !cacheHits.has(index));
-  const missComments = missIndexes.map((index) => comments[index]);
   if (stats) {
     stats.cacheHits = (stats.cacheHits || 0) + cacheHits.size;
     stats.cacheMiss = (stats.cacheMiss || 0) + missIndexes.length;
   }
-  const reviewed = missComments.length ? await llmClassifier(missComments, config, undefined, stats) : [];
+  const pending = missIndexes.map((index) => ({ index, comment: comments[index], fingerprint: fingerprintByIndex.get(index) || null }));
+  return { out, pending, classifierHash };
+}
 
-  // 캐시 히트 적용(이전 LLM 판정 재사용).
-  for (const index of reviewIndexes) {
-    if (cacheHits.has(index)) out[index] = { ...cacheHits.get(index), entity: { matched: true }, engine: 'llm-cache' };
-  }
-
-  // LLM 결과 적용 + 새 판정 저장(best-effort). reviewed=null(LLM 실패)이면 미스분은 키워드 판정 유지.
-  if (reviewed) {
-    const toStore = [];
-    for (let position = 0; position < missIndexes.length; position += 1) {
-      const index = missIndexes[position];
-      const result = reviewed[position];
-      if (result) {
-        out[index] = { ...result, entity: { matched: true }, engine: 'llm' };
-        if (classifierHash) toStore.push({ fingerprint: fingerprintByIndex.get(index), result });
-      }
+// 여러 게시물을 한 번에 분류. 문맥 후보(캐시 미스)를 실행 전체에서 25개 단위로 통합해 LLM에 보낸다.
+// 반환: entries와 같은 순서·길이의 결과 배열들(각 out[idx]는 해당 게시물 댓글에 정확히 귀속).
+// 어떤 LLM/캐시 실패(호출 실패·부분 응답 누락·JSON 파싱 실패)도 키워드 안전경로로 폴백한다.
+export async function classifyTargetsBatched(entries, config, llmClassifier = classifyCommentsLLM, stats = null, fetchImpl = fetch) {
+  const prepared = [];
+  for (const entry of entries) {
+    try {
+      prepared.push(await prepareLocal(entry.comments, entry.target, config, stats, fetchImpl));
+    } catch {
+      // 준비 단계 실패는 그 게시물만 키워드로 폴백(전체 중단 없음).
+      const safe = Array.isArray(entry.comments) ? entry.comments : [];
+      prepared.push({ out: safe.map((comment) => ({ ...classifyNegativeComment(comment, entry.target), engine: 'keyword' })), pending: [], classifierHash: null });
     }
-    if (classifierHash && toStore.length) await storeCache(config, toStore, classifierHash);
   }
-  return out;
+
+  // 실행 전체 pending 평탄화 — 원 게시물(entry)·댓글 인덱스 귀속을 슬롯에 보존.
+  const flat = [];
+  for (let e = 0; e < prepared.length; e += 1) {
+    for (const p of prepared[e].pending) flat.push({ entry: e, index: p.index, comment: p.comment, fingerprint: p.fingerprint });
+  }
+  const classifierHash = prepared.find((p) => p.classifierHash)?.classifierHash || null;
+
+  const toStore = [];
+  for (let start = 0; start < flat.length; start += LLM_BATCH) {
+    const slice = flat.slice(start, start + LLM_BATCH);
+    let reviewed = null;
+    try {
+      reviewed = await llmClassifier(slice.map((s) => s.comment), config, undefined, stats);
+    } catch {
+      reviewed = null; // 호출 실패 → 이 배치는 키워드 유지
+    }
+    if (!reviewed) continue; // JSON 파싱 실패 등으로 null → 키워드 폴백
+    for (let k = 0; k < slice.length; k += 1) {
+      const result = reviewed[k];
+      if (!result) continue; // 일부 응답 누락/부족 → 해당 항목만 키워드 유지
+      const { entry, index, fingerprint } = slice[k];
+      prepared[entry].out[index] = { ...result, entity: { matched: true }, engine: 'llm' };
+      if (classifierHash && fingerprint) toStore.push({ fingerprint, result });
+    }
+  }
+  if (classifierHash && toStore.length) await storeCache(config, toStore, classifierHash, fetchImpl);
+
+  return prepared.map((p) => p.out);
+}
+
+// 단일 게시물 편의 래퍼(기존 호출부·테스트 호환). 내부적으로 배치 경로를 재사용.
+export async function classifyCommentsHybrid(comments, target, config, llmClassifier = classifyCommentsLLM, stats = null) {
+  const [result] = await classifyTargetsBatched([{ comments, target }], config, llmClassifier, stats);
+  return result || comments.map((comment) => ({ ...classifyNegativeComment(comment, target), engine: 'keyword' }));
 }

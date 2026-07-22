@@ -3,7 +3,7 @@ import { runActor } from './apify.js';
 import { fetchTargets, submitResult } from './gas.js';
 import { normalizeDataset } from './normalize.js';
 import { detectPlatform, filterEligibleSponsorships, groupApifyTargets } from './routing.js';
-import { classifyCommentsHybrid } from './hybrid-classify.js';
+import { classifyTargetsBatched } from './hybrid-classify.js';
 import { sendAlert } from './slack.js';
 import { filterDueTargets, isEvergreenCategory, kstDateKey } from './schedule.js';
 import { loadCommentCounts, filterChangedTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
@@ -101,6 +101,8 @@ export async function runMonitor(config = loadConfig()) {
     platforms: {},
   };
 
+  // Phase 1: 플랫폼별 스크레이프 → (게시물, 댓글) 엔트리 수집. 플랫폼 실패는 그 플랫폼만 기록.
+  const entries = [];
   for (const [platform, platformTargets] of Object.entries(groups)) {
     summary.graphSkipped -= platformTargets.length;
     if (!platformTargets.length) continue;
@@ -118,33 +120,40 @@ export async function runMonitor(config = loadConfig()) {
           if (single) return true;                              // 단일 대상 배치 예외
           return comment.url && comment.url === target.url;     // 그 외 정확 URL 일치만
         });
-        // 욕설·명백한 불만은 무료 규칙으로 처리하고, 문맥 후보만 Anthropic에 전달한다.
-        const risks = await classifyCommentsHybrid(targetComments, target, config, undefined, llmStats);
-        const classified = targetComments.map((comment, idx) => ({ ...comment, risk: risks[idx] }));
-        const alerts = classified.filter((comment) => comment.risk.alert);
-        const fingerprints = alerts.map((comment) => commentFingerprint(target, comment));
-        const seenFingerprints = config.dryRun ? new Set() : await loadSeenFingerprints(config, fingerprints);
-        // (가) injibot이 버튼 포함으로 채널에 발송. DRY_RUN이면 실제 발송 없이 카운트/로그만.
-        for (let alertIndex = 0; alertIndex < alerts.length; alertIndex += 1) {
-          const comment = alerts[alertIndex];
-          const fingerprint = fingerprints[alertIndex];
-          if (seenFingerprints.has(fingerprint)) {
-            console.error(`[dedup] already alerted: ${target.platform} | ${comment.id || fingerprint.slice(0, 12)}`);
-            continue;
-          }
-          console.error(`[alert] ${target.platform} | ${comment.risk.category} | ${(comment.text || '').replace(/\s+/g, ' ').slice(0, 50)}`);
-          if (!config.dryRun) {
-            const slackResult = await sendAlert(config, target, comment);
-            await recordAlert(config, target, comment, fingerprint, slackResult.ts);
-          }
-          sentAlerts += 1;
-        }
+        entries.push({ target, comments: targetComments });
         scrapedTargets.push(target);   // 스크레이프 성공분만 last_count 갱신 대상
       }
       summary.platforms[platform] = { targets: platformTargets.length, items: normalized.length, ok: true };
     } catch (error) {
       // 실패 시 last_count 미갱신 → 다음 실행에서 재시도됨(부정댓글 없음으로 오보하지 않음)
       summary.platforms[platform] = { targets: platformTargets.length, items: 0, ok: false, error: error.message };
+    }
+  }
+
+  // Phase 2: 실행 전체 문맥 후보를 25개 단위로 통합 분류(캐시 미스만 LLM). 결과는 entries와 동일 순서·귀속.
+  const risksPerEntry = await classifyTargetsBatched(entries, config, undefined, llmStats);
+
+  // Phase 3: 게시물별 dedup + 알림 발송(injibot 버튼 포함). DRY_RUN이면 발송 없이 카운트/로그만.
+  for (let e = 0; e < entries.length; e += 1) {
+    const { target, comments } = entries[e];
+    const risks = risksPerEntry[e] || [];
+    const classified = comments.map((comment, idx) => ({ ...comment, risk: risks[idx] || { alert: false } }));
+    const alerts = classified.filter((comment) => comment.risk.alert);
+    const fingerprints = alerts.map((comment) => commentFingerprint(target, comment));
+    const seenFingerprints = config.dryRun ? new Set() : await loadSeenFingerprints(config, fingerprints);
+    for (let alertIndex = 0; alertIndex < alerts.length; alertIndex += 1) {
+      const comment = alerts[alertIndex];
+      const fingerprint = fingerprints[alertIndex];
+      if (seenFingerprints.has(fingerprint)) {
+        console.error(`[dedup] already alerted: ${target.platform} | ${comment.id || fingerprint.slice(0, 12)}`);
+        continue;
+      }
+      console.error(`[alert] ${target.platform} | ${comment.risk.category} | ${(comment.text || '').replace(/\s+/g, ' ').slice(0, 50)}`);
+      if (!config.dryRun) {
+        const slackResult = await sendAlert(config, target, comment);
+        await recordAlert(config, target, comment, fingerprint, slackResult.ts);
+      }
+      sentAlerts += 1;
     }
   }
   summary.sentAlerts = sentAlerts;
