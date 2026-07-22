@@ -48,6 +48,7 @@ test('cache hit skips the LLM for that comment (engine=llm-cache)', async () => 
   const realFetch = globalThis.fetch;
   let stored = false;
   globalThis.fetch = async (url, opts) => {
+    if (/negative_comment_alerts/.test(url)) return { ok: true, json: async () => [] }; // 오탐 조회: 없음
     if ((opts?.method || 'GET') === 'GET') {
       return { ok: true, json: async () => [{ fingerprint: fp, alert: true, category: '광고/바이럴 의심', reason: '광고 냉소', priority: 'normal' }] };
     }
