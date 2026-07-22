@@ -8,6 +8,7 @@ import { sendAlert } from './slack.js';
 import { filterDueTargets, isEvergreenCategory } from './schedule.js';
 import { loadCommentCounts, filterChangedTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
 import { commentFingerprint, loadRecentlyAlertedPostKeys, loadSeenFingerprints, recordAlert } from './dedup.js';
+import { estimateUsd } from './pricing.js';
 
 export async function runMonitor(config = loadConfig()) {
   const runNow = Date.now();
@@ -144,10 +145,10 @@ export async function runMonitor(config = loadConfig()) {
   }
   summary.sentAlerts = sentAlerts;
 
-  // LLM 사용량 요약 + 예상 비용(Haiku 4.5: 입력 $1 / 출력 $5 / 캐시읽기 $0.1 / 캐시생성 $1.25 per 1M).
-  const estUsd = (llmStats.inputTokens * 1 + llmStats.outputTokens * 5 + llmStats.cacheRead * 0.1 + llmStats.cacheCreate * 1.25) / 1e6;
+  // LLM 사용량 요약 + 예상 비용(단가는 pricing.js에 분리).
+  const estUsd = estimateUsd(llmStats, config.anthropicModel);
   summary.llm = { ...llmStats, estUsd: Number(estUsd.toFixed(5)) };
-  console.error(`[llm] calls=${llmStats.calls} reviewed=${llmStats.reviewed} in=${llmStats.inputTokens} out=${llmStats.outputTokens} cacheR=${llmStats.cacheRead} cacheC=${llmStats.cacheCreate} est=$${estUsd.toFixed(5)} (Haiku 4.5)`);
+  console.error(`[llm] calls=${llmStats.calls} reviewed=${llmStats.reviewed} in=${llmStats.inputTokens} out=${llmStats.outputTokens} cacheR=${llmStats.cacheRead} cacheC=${llmStats.cacheCreate} est=$${estUsd.toFixed(5)} (${config.anthropicModel})`);
 
   if (summary_deltaBreakdown) summary.deltaBreakdown = summary_deltaBreakdown;
   // 성공적으로 스크레이프한 게시물의 댓글 수 기준선 갱신(다음 실행부터 증가분만).
