@@ -29,6 +29,15 @@ test('automatically detects common profanity variants', () => {
   assert.equal(classifyNegativeComment({ text: '시발 가격 뭐냐' }, target).priority, 'high');
 });
 
+test('욕설은 즉시부정 대신 LLM 문맥검토로 라우팅(사람 겨냥 오탐 방지)', () => {
+  const target = { brandName: '라라스윗', productName: '쫀득바' };
+  // 댓글러 겨냥 욕설(제품 무관) → 즉시부정 아님, LLM 검토 대상으로 라우팅
+  assert.equal(needsContextualReview({ text: '꺼져 닥쳐 새끼야' }, target), true);
+  // 제품 명백 불만(HARD)+욕설 → 즉시부정(LLM 불필요), 여전히 알림
+  assert.equal(needsContextualReview({ text: '라라스윗 맛없어 씨발' }, target), false);
+  assert.equal(classifyNegativeComment({ text: '라라스윗 맛없어 씨발' }, target).alert, true);
+});
+
 test('detects entity directly in the comment even without post metadata', () => {
   const result = classifyNegativeComment({ text: '쫀득바 광고 너무 심한데' });
   assert.equal(result.alert, true);
