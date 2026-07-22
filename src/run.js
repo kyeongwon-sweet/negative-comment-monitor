@@ -9,6 +9,7 @@ import { filterDueTargets, isEvergreenCategory } from './schedule.js';
 import { loadCommentCounts, filterChangedTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
 import { commentFingerprint, loadRecentlyAlertedPostKeys, loadSeenFingerprints, recordAlert } from './dedup.js';
 import { estimateUsd } from './pricing.js';
+import { purgeCache } from './cache.js';
 
 export async function runMonitor(config = loadConfig()) {
   const runNow = Date.now();
@@ -82,8 +83,8 @@ export async function runMonitor(config = loadConfig()) {
   const groups = groupApifyTargets(targets);
   const scrapedTargets = [];
   let sentAlerts = 0;
-  // LLM 사용량 계측(내용·키 미기록, 카운트/토큰만). 하루 이상 축적 후 캐시 도입 판단 근거.
-  const llmStats = { calls: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0 };
+  // LLM 사용량 계측(내용·키 미기록, 카운트/토큰만). cacheHits/cacheMiss=분류 캐시 적중 현황.
+  const llmStats = { calls: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
   const summary = {
     fetchedTargets: rawTargets.length,
     excludedTargets: rawTargets.length - eligibleMappedTargets.length,
@@ -148,7 +149,10 @@ export async function runMonitor(config = loadConfig()) {
   // LLM 사용량 요약 + 예상 비용(단가는 pricing.js에 분리).
   const estUsd = estimateUsd(llmStats, config.anthropicModel);
   summary.llm = { ...llmStats, estUsd: Number(estUsd.toFixed(5)) };
-  console.error(`[llm] calls=${llmStats.calls} reviewed=${llmStats.reviewed} in=${llmStats.inputTokens} out=${llmStats.outputTokens} cacheR=${llmStats.cacheRead} cacheC=${llmStats.cacheCreate} est=$${estUsd.toFixed(5)} (${config.anthropicModel})`);
+  console.error(`[llm] calls=${llmStats.calls} reviewed=${llmStats.reviewed} cacheHit=${llmStats.cacheHits} cacheMiss=${llmStats.cacheMiss} in=${llmStats.inputTokens} out=${llmStats.outputTokens} promptCacheR=${llmStats.cacheRead} promptCacheC=${llmStats.cacheCreate} est=$${estUsd.toFixed(5)} (${config.anthropicModel})`);
+
+  // 90일 초과 분류 캐시 정리(best-effort — 실패해도 무시).
+  if (!config.dryRun) await purgeCache(config);
 
   if (summary_deltaBreakdown) summary.deltaBreakdown = summary_deltaBreakdown;
   // 성공적으로 스크레이프한 게시물의 댓글 수 기준선 갱신(다음 실행부터 증가분만).
