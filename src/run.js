@@ -5,11 +5,12 @@ import { normalizeDataset } from './normalize.js';
 import { detectPlatform, filterEligibleSponsorships, groupApifyTargets } from './routing.js';
 import { classifyCommentsHybrid } from './hybrid-classify.js';
 import { sendAlert } from './slack.js';
-import { filterDueTargets, isEvergreenCategory } from './schedule.js';
+import { filterDueTargets, isEvergreenCategory, kstDateKey } from './schedule.js';
 import { loadCommentCounts, filterChangedTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
 import { commentFingerprint, loadRecentlyAlertedPostKeys, loadSeenFingerprints, recordAlert } from './dedup.js';
 import { estimateUsd } from './pricing.js';
 import { purgeCache } from './cache.js';
+import { DEFAULT_COST_THRESHOLDS, estimateApifyUsd, maybeAlertCosts, postCostWarning, recordRunCost, runKey, sumDailyCost } from './cost.js';
 
 export async function runMonitor(config = loadConfig()) {
   const runNow = Date.now();
@@ -85,6 +86,7 @@ export async function runMonitor(config = loadConfig()) {
   let sentAlerts = 0;
   // LLM 사용량 계측(내용·키 미기록, 카운트/토큰만). cacheHits/cacheMiss=분류 캐시 적중 현황.
   const llmStats = { calls: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
+  const apifyCommentsByPlatform = {}; // 플랫폼별 수집 댓글 수(Apify 비용 추정 입력)
   const summary = {
     fetchedTargets: rawTargets.length,
     excludedTargets: rawTargets.length - eligibleMappedTargets.length,
@@ -105,6 +107,7 @@ export async function runMonitor(config = loadConfig()) {
     try {
       const items = await runActor(config, platform, platformTargets);
       const normalized = normalizeDataset(platform, items, '');
+      apifyCommentsByPlatform[platform] = (apifyCommentsByPlatform[platform] || 0) + normalized.length;
       const single = platformTargets.length === 1;   // 단일 대상 배치면 URL 없는 댓글도 그 대상 소속
       for (const rawTarget of platformTargets) {
         const target = { ...rawTarget, caption: rawTarget.caption || (counts[rawTarget.url] || {}).caption || '' };
@@ -153,6 +156,27 @@ export async function runMonitor(config = loadConfig()) {
 
   // 90일 초과 분류 캐시 정리(best-effort — 실패해도 무시).
   if (!config.dryRun) await purgeCache(config);
+
+  // 일별(KST) 비용 누적 + 임계치 경고. run_key 멱등(재시도 중복합산 방지), 임계치별 하루 1회 발송.
+  // 비용 경로의 어떤 실패도 모니터링 본류를 막지 않는다.
+  if (config.supabaseUrl && config.supabaseKey && !config.dryRun) {
+    try {
+      const kstDate = kstDateKey(runNow);
+      const runApifyUsd = estimateApifyUsd(apifyCommentsByPlatform);
+      await recordRunCost(config, { runKey: runKey(process.env, runNow), kstDate, apifyUsd: runApifyUsd, anthropicUsd: estUsd });
+      const daily = await sumDailyCost(config, kstDate);
+      summary.cost = { kstDate, runApifyUsd: Number(runApifyUsd.toFixed(4)), runAnthropicUsd: Number(estUsd.toFixed(5)), daily };
+      const thresholds = config.costThresholds || DEFAULT_COST_THRESHOLDS;
+      const fired = await maybeAlertCosts(config, kstDate, daily, thresholds,
+        (kind, amount, threshold) => postCostWarning(config, kind, amount, threshold, kstDate));
+      if (fired.length) {
+        summary.cost.alertsFired = fired;
+        console.error(`[cost] 일일 비용 경고 발송: ${fired.join(', ')} (KST ${kstDate})`);
+      }
+    } catch (error) {
+      console.error('[cost] 비용 집계/경고 실패(무시):', error.message);
+    }
+  }
 
   if (summary_deltaBreakdown) summary.deltaBreakdown = summary_deltaBreakdown;
   // 성공적으로 스크레이프한 게시물의 댓글 수 기준선 갱신(다음 실행부터 증가분만).
