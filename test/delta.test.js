@@ -13,14 +13,16 @@ test('extractPostKey: 플랫폼별 게시물 ID 추출', () => {
   assert.equal(extractPostKey('https://naver.com/x'), null);
 });
 
-test('filterChangedTargets: 첫확인/변화(증가·감소)는 통과, 미상·미변화는 skip', () => {
+test('filterChangedTargets: 첫확인/변화/신규글(신호없어도)은 통과, 미상·미변화는 skip', () => {
   const targets = [
     { url: 'a' }, // 첫 확인(신호 있음, last=null) → 통과
     { url: 'b' }, // 증가 → 통과
     { url: 'c' }, // 변화 없음 → skip
-    { url: 'd' }, // 감소 → 통과(삭제 후 신규 댓글 가능성 — 블라인드스팟 방지)
+    { url: 'd' }, // 감소 → 통과(삭제 후 신규 댓글 가능성)
     { url: 'e' }, // 현재값 미상(last 있음) → skip
-    { url: 'f' }, // 현재값 미상(첫 확인) → skip(비용 안전)
+    { url: 'f' }, // 현재값 미상 + DB 미등록(postId 없음) → skip(기록 불가)
+    { url: 'g' }, // 신규글: 신호 없어도 아직 미스캔 + DB 등록 → 통과(조기 감시)
+    { url: 'h' }, // 이미 firstScan 했으나 여전히 신호 없음 → skip(재과금 방지)
   ];
   const counts = {
     a: { postId: '1', current: 5, last: null },
@@ -29,9 +31,11 @@ test('filterChangedTargets: 첫확인/변화(증가·감소)는 통과, 미상·
     d: { postId: '4', current: 3, last: 9 },
     e: { postId: '5', current: null, last: 4 },
     f: { postId: null, current: null, last: null },
+    g: { postId: '6', current: null, last: null },
+    h: { postId: '7', current: null, last: null, lastCheckedAt: '2026-07-20T00:00:00Z' },
   };
   const out = filterChangedTargets(targets, counts).map((t) => t.url);
-  assert.deepEqual(out, ['a', 'b', 'd']);
+  assert.deepEqual(out, ['a', 'b', 'd', 'g']);
 });
 
 test('summarizeDelta: 사유별 집계', () => {

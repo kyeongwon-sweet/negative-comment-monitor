@@ -1,7 +1,7 @@
 // 델타 스킵: 댓글 수가 늘어난 게시물만 스크레이프해 Apify 과금을 최소화한다.
 // 현재 댓글 수 신호는 대시보드가 매일 수집하는 Supabase post_daily_stats.comments_count를 재사용(무상).
 // 마지막 확인 시점의 댓글 수는 post_comment_checks.last_count에 저장.
-//   - 체크 이력이 없으면(처음) 스크레이프해 기존 댓글까지 1회 스캔한다.
+//   - 체크 이력이 없으면(신규글) 댓글 수 신호가 아직 없어도 1회 스크레이프해 조기 감시한다(DB 등록분만).
 //   - 이후에는 current_count가 last_count와 달라진(증가·감소 모두) 글을 스크레이프한다.
 //     (댓글 삭제로 카운트가 줄어도 그 사이 새 댓글이 달렸을 수 있어 재스캔; 중복 알림은 fingerprint로 방지)
 //   - 현재 댓글 수를 모르면(매칭 실패/미수집) 재과금 방지로 건너뛴다.
@@ -73,9 +73,13 @@ export async function loadCommentCounts(config, targets, fetchImpl = fetch, now 
 export function filterChangedTargets(targets, counts) {
   return targets.filter((t) => {
     const c = counts[t.url] || {};
-    if (c.current == null) return false;   // 댓글 수 신호 없음 → skip(비용 안전)
+    // 신규글(DB 등록됨 + 아직 한 번도 스캔 안 함)은 댓글수 신호가 아직 없어도 1회 스캔한다.
+    // 대시보드 comments_count 수집 지연으로 신규글이 감시에서 누락되던 갭 방지. 스캔하면 last_checked_at이
+    // 기록돼 다음부터는 재스캔 안 함(재과금 없음). postId 없는(DB 미등록) 글은 기록 불가라 제외.
+    if (c.last == null && !c.lastCheckedAt && c.postId) return true;
+    if (c.current == null) return false;   // 그 외 신호 없음 → skip(비용 안전)
     if (c.last == null) return true;        // 첫 확인(신호 있음) → 최근 댓글 1회 스캔
-    return c.current !== c.last;            // 증가·감소 모두 재스캔(삭제로 카운트 줄어도 새 댓글 있을 수 있음; 중복 알림은 fingerprint dedup이 방지)
+    return c.current !== c.last;            // 이후엔 증가·감소 모두 재스캔(삭제로 카운트 줄어도 새 댓글 가능; 중복은 fingerprint dedup 방지)
   });
 }
 
