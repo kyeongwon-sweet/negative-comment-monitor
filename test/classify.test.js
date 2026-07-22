@@ -69,6 +69,21 @@ test('does not alert when contextual keywords appear in an overall positive sent
   assert.equal(result.reason, '긍정 문맥 예외');
 });
 
+test('경쟁품 단순 언급은 키워드 단계에서 정상(#6 메로나는 참외맛임)', () => {
+  const target = { brandName: '라라스윗', productName: '쫀득바', caption: '라라스윗 쫀득바 신상' };
+  // 경쟁품(메로나) 단순/취향 언급만 → 라라스윗을 깎아내리지 않으므로 정상. LLM 검토는 별도.
+  assert.equal(classifyNegativeComment({ text: '메로나는 참외맛임' }, target).alert, false);
+  assert.equal(classifyNegativeComment({ text: '메론바가 원조지' }, target).alert, false);
+  // 다만 문맥 판단 대상이므로 LLM 검토로는 라우팅된다(라라스윗 깎아내림 여부를 LLM이 최종 판단).
+  assert.equal(needsContextualReview({ text: '메로나는 참외맛임' }, target), true);
+});
+
+test('경쟁품+제품 불만이 함께면 여전히 알림/검토 대상(#7 경계)', () => {
+  const target = { brandName: '라라스윗', productName: '쫀득바' };
+  // 경쟁품 언급 + 명백 불만(HARD) → 즉시 알림 유지
+  assert.equal(classifyNegativeComment({ text: '쫀득바 노맛, 그냥 메로나 먹어라' }, target).alert, true);
+});
+
 test('sends only ambiguous marketing, dissatisfaction, and competitor terms to contextual review', () => {
   const target = { brandName: '라라스윗' };
   assert.equal(needsContextualReview({ text: '이거 광고인가요?' }, target), true);

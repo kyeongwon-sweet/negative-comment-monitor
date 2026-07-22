@@ -73,11 +73,22 @@ export function classifyNegativeComment(comment, target = {}) {
     return { alert: false, category: '정상댓글', priority: 'none', entity, matches: [] };
   }
 
+  const hardDissatisfaction = findMatches(text, HARD_DISSATISFACTION);
+
+  // #7 경쟁품 단순 언급·사실 정정·취향 표현은 그 자체로 부정이 아니다. 라라스윗/쫀득바를 명시적으로
+  // 깎아내리는지는 LLM이 문맥으로 판단한다(needsContextualReview=true). 경쟁품 외 다른 부정 신호가
+  // 없으면 키워드 단계에서는 정상 처리해, LLM 미설정/실패 시에도 단순 언급을 오탐하지 않는다.
+  // (명백 불만 HARD·판매 문제가 함께 있으면 아래 즉시탐지로 넘어간다.)
+  const hasNonCompetitorSignal = profanity.length || marketing.length || dissatisfaction.length
+    || sales.length || authenticity.length || hardDissatisfaction.length;
+  if (competitor.length && !hasNonCompetitorSignal) {
+    return { alert: false, category: '정상댓글', priority: 'none', entity, matches, reason: '경쟁품 단순 언급(문맥 검토 대상)' };
+  }
+
   // 광고·바이럴·별로·경쟁제품·성분의혹·욕설은 문맥에 따라 긍정 문장이나 제품 무관에도 등장한다
   // (예: '없던데'는 가용성 긍정, '꺼져/닥쳐/새끼' 등 욕설은 제품이 아니라 댓글러끼리 싸움일 수 있음).
   // 명백한 제품 불만(HARD)/판매 문제만 즉시 탐지하고, 나머지는 긍정 문맥이면 정상 처리 + LLM 검토로 넘긴다.
   // Anthropic이 설정된 환경에서는 run.js의 의미 분류(LLM)가 이 규칙보다 우선한다.
-  const hardDissatisfaction = findMatches(text, HARD_DISSATISFACTION);
   const immediateNegative = hardDissatisfaction.length || sales.length;
   if (!immediateNegative && hasPositiveContext(text)) {
     return {
