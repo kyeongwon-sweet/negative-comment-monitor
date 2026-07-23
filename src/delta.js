@@ -6,6 +6,25 @@
 //     (댓글 삭제로 카운트가 줄어도 그 사이 새 댓글이 달렸을 수 있어 재스캔; 중복 알림은 fingerprint로 방지)
 //   - 현재 댓글 수를 모르면(매칭 실패/미수집) 재과금 방지로 건너뛴다.
 
+import { kstDateKey } from './schedule.js';
+
+// 바이럴 게시물은 대시보드 comments_count 신호가 0/null인 경우가 많아(타 계정 수집 한계)
+// 첫 스캔 후 재스캔이 안 걸려 나중에 달린 부정댓글을 놓친다(365_hot·happing_box 사례).
+// → 최근 N일 이내 바이럴 글은 신호와 무관하게 하루 1회 재스캔(비용은 기간·1일1회로 상한).
+const VIRAL_RESCAN_DAYS = 3;
+
+function isRecentViral(target, now) {
+  if (!/바이럴/.test(String(target.channelCategory || ''))) return false;
+  const d = Date.parse(target.uploadedAt || target.publishedAt || target.postedAt || '');
+  if (!Number.isFinite(d)) return false; // 업로드일 모르면 과수집 방지 위해 제외
+  return now - d <= VIRAL_RESCAN_DAYS * 864e5;
+}
+
+function scannedTodayKst(lastCheckedAt, now) {
+  const t = Date.parse(lastCheckedAt || '');
+  return Number.isFinite(t) && kstDateKey(t) === kstDateKey(now);
+}
+
 export function extractPostKey(url) {
   const u = String(url || '');
   let m;
@@ -70,13 +89,16 @@ export async function loadCommentCounts(config, targets, fetchImpl = fetch, now 
 // 순수 함수: 스크레이프해야 할 대상만 남긴다.
 //   현재 댓글 수 신호가 없으면(매칭 실패/미수집) 무조건 skip → 안 바뀐 글 무한 재과금 방지.
 //   (이렇게 스킵된 글 수는 호출부에서 로그로 표면화해 커버리지 갭을 드러낸다.)
-export function filterChangedTargets(targets, counts) {
+export function filterChangedTargets(targets, counts, now = Date.now()) {
   return targets.filter((t) => {
     const c = counts[t.url] || {};
     // 신규글(DB 등록됨 + 아직 한 번도 스캔 안 함)은 댓글수 신호가 아직 없어도 1회 스캔한다.
     // 대시보드 comments_count 수집 지연으로 신규글이 감시에서 누락되던 갭 방지. 스캔하면 last_checked_at이
     // 기록돼 다음부터는 재스캔 안 함(재과금 없음). postId 없는(DB 미등록) 글은 기록 불가라 제외.
     if (c.last == null && !c.lastCheckedAt && c.postId) return true;
+    // 최근 바이럴 글은 신호가 죽어(0/null) 있어도 하루 1회 재스캔(신규 부정댓글 누락 방지).
+    // 오늘 이미 스캔했으면 재과금 안 함(scannedTodayKst 가드).
+    if (c.postId && isRecentViral(t, now) && !scannedTodayKst(c.lastCheckedAt, now)) return true;
     if (c.current == null) return false;   // 그 외 신호 없음 → skip(비용 안전)
     if (c.last == null) return true;        // 첫 확인(신호 있음) → 최근 댓글 1회 스캔
     return c.current !== c.last;            // 이후엔 증가·감소 모두 재스캔(삭제로 카운트 줄어도 새 댓글 가능; 중복은 fingerprint dedup 방지)
@@ -84,16 +106,18 @@ export function filterChangedTargets(targets, counts) {
 }
 
 // 델타 스킵 사유별 집계(로그·요약용).
-export function summarizeDelta(targets, counts) {
-  let noSignal = 0, unchanged = 0, firstScan = 0, changed = 0;
+export function summarizeDelta(targets, counts, now = Date.now()) {
+  let noSignal = 0, unchanged = 0, firstScan = 0, changed = 0, viralRescan = 0;
   for (const t of targets) {
     const c = counts[t.url] || {};
-    if (c.current == null) noSignal++;
-    else if (c.last == null) firstScan++;
-    else if (c.current !== c.last) changed++;
-    else unchanged++;
+    // filterChangedTargets와 동일한 판정 순서로 집계(버킷이 실제 스크레이프 결정과 일치).
+    if (c.last == null && !c.lastCheckedAt && c.postId) { firstScan++; continue; }
+    if (c.postId && isRecentViral(t, now) && !scannedTodayKst(c.lastCheckedAt, now)) { viralRescan++; continue; }
+    if (c.current == null) { noSignal++; continue; }
+    if (c.last == null) { firstScan++; continue; }
+    if (c.current !== c.last) changed++; else unchanged++;
   }
-  return { noSignal, unchanged, firstScan, changed, scrape: firstScan + changed };
+  return { noSignal, unchanged, firstScan, changed, viralRescan, scrape: firstScan + changed + viralRescan };
 }
 
 // 스크레이프 성공한 대상의 last_count를 현재값으로 갱신(다음 실행부터 증가분만).

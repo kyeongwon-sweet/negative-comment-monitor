@@ -47,5 +47,22 @@ test('summarizeDelta: 사유별 집계', () => {
     d: { current: 3, last: 9 },     // changed(감소)
     f: { current: null, last: null }, // noSignal
   };
-  assert.deepEqual(summarizeDelta(targets, counts), { noSignal: 1, unchanged: 1, firstScan: 1, changed: 2, scrape: 3 });
+  assert.deepEqual(summarizeDelta(targets, counts), { noSignal: 1, unchanged: 1, firstScan: 1, changed: 2, viralRescan: 0, scrape: 3 });
+});
+
+test('filterChangedTargets: 최근 바이럴 글은 신호 없어도 하루 1회 재스캔(오늘 스캔했으면 skip)', () => {
+  const now = Date.parse('2026-07-23T05:00:00Z'); // KST 14:00
+  const targets = [
+    { url: 'v1', channelCategory: '바이럴 (영상)', uploadedAt: '2026-07-22' }, // 최근 바이럴·신호없음·오늘 미스캔 → 통과
+    { url: 'v2', channelCategory: '바이럴 (배너)', uploadedAt: '2026-07-22' }, // 오늘(KST) 이미 스캔 → skip
+    { url: 'v3', channelCategory: '바이럴 (영상)', uploadedAt: '2026-07-01' }, // 3일 초과 → skip
+    { url: 'n1', channelCategory: '협찬 (인플루언서)', uploadedAt: '2026-07-22' }, // 바이럴 아님 → skip
+  ];
+  const counts = {
+    v1: { postId: 'a', current: null, last: null, lastCheckedAt: '2026-07-20T00:00:00Z' },
+    v2: { postId: 'b', current: null, last: null, lastCheckedAt: '2026-07-23T01:00:00Z' }, // KST 10:00 = 오늘
+    v3: { postId: 'c', current: null, last: null, lastCheckedAt: '2026-07-20T00:00:00Z' },
+    n1: { postId: 'd', current: null, last: null, lastCheckedAt: '2026-07-20T00:00:00Z' },
+  };
+  assert.deepEqual(filterChangedTargets(targets, counts, now).map((t) => t.url), ['v1']);
 });
