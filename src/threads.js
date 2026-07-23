@@ -11,8 +11,8 @@ function threadsEnabled(config) {
 }
 
 export function buildThreadParentText(channelCategory, kstDate, assignee = '') {
-  const mention = assignee ? ` <@${assignee}>` : '';
-  return `🚨 *[${channelCategory || '기타'}]* 부정댓글 · ${kstDate}${mention}`;
+  const assigneeLine = assignee ? `\n담당자: <@${assignee}>` : '';
+  return `🚨 *[${channelCategory || '기타'}]* 부정댓글 · ${kstDate}${assigneeLine}`;
 }
 
 async function selectThreadTs(config, kstDate, channelCategory, fetchImpl) {

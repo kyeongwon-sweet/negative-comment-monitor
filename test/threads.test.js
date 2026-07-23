@@ -4,12 +4,13 @@ import { buildThreadParentText, ensureDailyThread } from '../src/threads.js';
 
 const CFG = { supabaseUrl: 'https://db.example', supabaseKey: 'svc', slackBotToken: 'tok', slackChannelId: 'C0BHD9S69JA' };
 
-test('buildThreadParentText: [분류] 날짜 @담당자 형식', () => {
+test('buildThreadParentText: 1줄=분류·날짜, 2줄=담당자 멘션', () => {
   assert.equal(
     buildThreadParentText('바이럴 (배너)', '2026-07-23', 'U09RCJ1B9ML'),
-    '🚨 *[바이럴 (배너)]* 부정댓글 · 2026-07-23 <@U09RCJ1B9ML>',
+    '🚨 *[바이럴 (배너)]* 부정댓글 · 2026-07-23\n담당자: <@U09RCJ1B9ML>',
   );
-  assert.match(buildThreadParentText('', '2026-07-23', ''), /\[기타\]/); // 분류 없으면 기타, 멘션 없음
+  // 담당자 없으면 담당자 줄 생략, 분류 없으면 기타
+  assert.equal(buildThreadParentText('', '2026-07-23', ''), '🚨 *[기타]* 부정댓글 · 2026-07-23');
 });
 
 test('ensureDailyThread: 이미 있으면 슬랙 발송 없이 기존 ts 반환', async () => {
