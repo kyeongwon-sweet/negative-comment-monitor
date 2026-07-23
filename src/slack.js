@@ -70,12 +70,17 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   ];
 }
 
-export async function sendAlert(config, target, comment, fetchImpl = fetch) {
+export async function sendAlert(config, target, comment, fetchImpl = fetch, threadTs = null) {
   if (!config.slackBotToken) throw new Error('Missing environment variable: SLACK_BOT_TOKEN');
   const blocks = buildAlertBlocks(target, comment, config.managedChannelCategories, config.slackAssignees);
   const response = await fetchImpl('https://slack.com/api/chat.postMessage', {
     method: 'POST', headers: { authorization: `Bearer ${config.slackBotToken}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ channel: config.slackChannelId, text: `부정댓글 감지: ${truncate(comment.text, 200)}`, blocks }),
+    body: JSON.stringify({
+      channel: config.slackChannelId,
+      text: `부정댓글 감지: ${truncate(comment.text, 200)}`,
+      blocks,
+      ...(threadTs ? { thread_ts: threadTs } : {}),   // 날짜×분류 스레드에 답글로. 없으면 최상위 발송.
+    }),
   });
   const payload = await response.json();
   if (!payload.ok) throw new Error(`Slack API: ${payload.error || 'unknown_error'}`);

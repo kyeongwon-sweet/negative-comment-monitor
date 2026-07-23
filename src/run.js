@@ -11,6 +11,8 @@ import { commentFingerprint, loadRecentlyAlertedPostKeys, loadSeenFingerprints, 
 import { estimateUsd } from './pricing.js';
 import { computeClassifierHash, purgeCache } from './cache.js';
 import { falsePositiveStats } from './review.js';
+import { ensureDailyThread } from './threads.js';
+import { assigneeForChannelCategory } from './slack.js';
 import { DEFAULT_COST_THRESHOLDS, estimateApifyUsd, maybeAlertCosts, postCostWarning, recordRunCost, runKey, sumDailyCost } from './cost.js';
 
 export async function runMonitor(config = loadConfig()) {
@@ -138,7 +140,19 @@ export async function runMonitor(config = loadConfig()) {
   let classifierHash = null;
   try { classifierHash = computeClassifierHash(config); } catch { classifierHash = null; }
 
-  // Phase 3: 게시물별 dedup + 알림 발송(injibot 버튼 포함). DRY_RUN이면 발송 없이 카운트/로그만.
+  // 날짜×채널분류 스레드 ts를 실행 내 캐시(분류당 1회만 조회/생성). 실패 시 null → 최상위 발송 폴백.
+  const kstDateForThreads = kstDateKey(runNow);
+  const threadTsByCategory = new Map();
+  async function resolveThreadTs(channelCategory) {
+    const category = channelCategory || '기타';
+    if (threadTsByCategory.has(category)) return threadTsByCategory.get(category);
+    const assignee = assigneeForChannelCategory(category, config.slackAssignees);
+    const ts = await ensureDailyThread(config, { kstDate: kstDateForThreads, channelCategory: category, assignee });
+    threadTsByCategory.set(category, ts);
+    return ts;
+  }
+
+  // Phase 3: 게시물별 dedup + 알림 발송(날짜×분류 스레드에 답글로, injibot 버튼 포함). DRY_RUN이면 카운트/로그만.
   for (let e = 0; e < entries.length; e += 1) {
     const { target, comments } = entries[e];
     const risks = risksPerEntry[e] || [];
@@ -155,7 +169,8 @@ export async function runMonitor(config = loadConfig()) {
       }
       console.error(`[alert] ${target.platform} | ${comment.risk.category} | ${(comment.text || '').replace(/\s+/g, ' ').slice(0, 50)}`);
       if (!config.dryRun) {
-        const slackResult = await sendAlert(config, target, comment);
+        const threadTs = await resolveThreadTs(target.channelCategory);
+        const slackResult = await sendAlert(config, target, comment, undefined, threadTs);
         await recordAlert(config, target, comment, fingerprint, slackResult.ts, classifierHash);
       }
       sentAlerts += 1;

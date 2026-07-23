@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { actionDefinitions, assigneeForChannelCategory, buildAlertBlocks, verifySlackSignature } from '../src/slack.js';
+import { actionDefinitions, assigneeForChannelCategory, buildAlertBlocks, sendAlert, verifySlackSignature } from '../src/slack.js';
 
 const assignees = {
   satellite: 'U_SATELLITE',
@@ -64,4 +64,16 @@ test('verifies valid Slack signatures and rejects stale requests', () => {
   const signature = `v0=${createHmac('sha256', secret).update(`v0:${timestamp}:${rawBody}`).digest('hex')}`;
   assert.equal(verifySlackSignature({ signingSecret: secret, timestamp, signature, rawBody, now: 1000 * 1000 }), true);
   assert.equal(verifySlackSignature({ signingSecret: secret, timestamp, signature, rawBody, now: 2000 * 1000 }), false);
+});
+
+test('sendAlert: threadTs 주면 thread_ts로 답글 발송, 없으면 최상위', async () => {
+  const cfg = { slackBotToken: 'tok', slackChannelId: 'C1', managedChannelCategories: [], slackAssignees: {} };
+  const target = { url: 'https://x.com/u/status/1', channelName: 'ch', channelCategory: '바이럴 (배너)', platform: 'twitter' };
+  const comment = { id: 'c1', platform: 'twitter', text: '광고 별로', username: 'u', timestamp: '1700000000' };
+  let body;
+  const fetchImpl = async (url, opts) => { body = JSON.parse(opts.body); return { json: async () => ({ ok: true, ts: '1.1' }) }; };
+  await sendAlert(cfg, target, comment, fetchImpl, '555.666');
+  assert.equal(body.thread_ts, '555.666');
+  await sendAlert(cfg, target, comment, fetchImpl); // threadTs 없음
+  assert.ok(!('thread_ts' in body), '스레드 없으면 최상위 발송');
 });
