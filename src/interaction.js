@@ -2,6 +2,9 @@ import { verifySlackSignature } from './slack.js';
 import { FALSE_POSITIVE_REASONS, recordFalsePositive } from './review.js';
 
 const allowedActions = new Set(['hide', 'approve', 'hold', 'unhide', 'complete', 'ignore', 'fp_reason']);
+// [완료]·[숨김] = 처리 완료로 간주 → 해당 답글을 삭제해 스레드엔 '미처리'만 남긴다.
+// (무시는 오탐 사유 선택 UX가 필요해 삭제하지 않고 기록만 함.)
+const DELETE_ON_RESOLVE = new Set(['complete', 'hide']);
 const statusLabels = {
   hide: '숨김 완료 🚫', approve: '승인 완료 ✅', hold: '보류 ⏸️', unhide: '숨김해제 완료 👁️',
   complete: '처리완료 ✅', ignore: '무시 🙈 (오탐 기록됨)',
@@ -70,6 +73,15 @@ export async function handleSlackInteraction(config, request, fetchImpl = fetch,
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ ...value, decision: action.action_id, slackUserId: userId, slackMessageTs: messageTs }),
   }));
+
+  // [완료]·[숨김] → 답글 삭제(스레드엔 미처리만 남김). GAS 상태 갱신은 위에서 이미 반영됨.
+  if (DELETE_ON_RESOLVE.has(action.action_id)) {
+    await json(await fetchImpl('https://slack.com/api/chat.delete', {
+      method: 'POST', headers: { authorization: `Bearer ${config.slackBotToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ channel: channelId, ts: messageTs }),
+    }));
+    return Response.json({ ok: true, deleted: true, ts: messageTs });
+  }
 
   // [무시] → 오탐 피드백 기록(분류기 반영용). 식별=slack_channel_id + slack_ts(댓글 원문 미사용).
   // classifier_hash는 알림 당시 저장된 값을 보존(여기서 덮어쓰지 않음). best-effort.
