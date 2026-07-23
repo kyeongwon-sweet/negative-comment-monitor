@@ -7,6 +7,14 @@ function endpoint(base, params) {
 async function readJson(response) {
   const text = await response.text();
   if (!response.ok) throw new Error(`GAS HTTP ${response.status}: ${text.slice(0, 300)}`);
+  // GAS는 스크립트 예외 시 200 + HTML 오류 페이지를 반환한다(예: 시트 헤더 누락으로 throw).
+  // 그대로 JSON.parse하면 "Unexpected token '<'"라는 암호 같은 오류만 남아 진단이 늦다.
+  // → HTML을 감지해 실제 원인(errorMessage)을 담은 명확한 오류로 바꿔 던진다(로그/알림 즉시 진단).
+  if (text.trimStart().startsWith('<')) {
+    const m = text.match(/errorMessage[^>]*>([\s\S]*?)<\/div>/);
+    const detail = (m ? m[1] : text).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+    throw new Error(`GAS가 JSON 대신 오류 페이지 반환(시트 헤더 누락 등 스크립트 오류 가능): ${detail}`);
+  }
   const payload = JSON.parse(text);
   if (payload.ok === false) throw new Error(payload.error || 'GAS request failed');
   return payload;
