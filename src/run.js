@@ -68,14 +68,14 @@ export async function runMonitor(config = loadConfig()) {
   if (config.deltaEnabled && config.supabaseUrl && config.supabaseKey) {
     try {
       if (!Object.keys(counts).length) counts = await loadCommentCounts(config, dueTargets);
-      const changed = filterChangedTargets(dueTargets, counts, runNow);
+      const changed = filterChangedTargets(dueTargets, counts);
       const intensive = dueTargets.filter((target) => {
         const detected = Date.parse(target.recentNegativeDetectedAt || '');
         return Number.isFinite(detected) && runNow - detected <= 3 * 60 * 60 * 1000;
       });
       targets = [...new Map([...changed, ...intensive].map((target) => [target.url, target])).values()];
       deltaSkipped = dueTargets.length - targets.length;
-      summary_deltaBreakdown = summarizeDelta(dueTargets, counts, runNow);
+      summary_deltaBreakdown = summarizeDelta(dueTargets, counts);
       if (summary_deltaBreakdown.noSignal) {
         console.error(`[delta] 댓글 수 신호 없어 스킵된 대상 ${summary_deltaBreakdown.noSignal}건 — 커버리지 갭(대시보드 comments_count 미수집/URL 미매칭)`);
       }
