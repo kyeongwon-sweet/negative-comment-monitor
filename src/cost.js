@@ -147,3 +147,61 @@ export async function postCostWarning(config, kind, amount, threshold, kstDate, 
   if (!payload.ok) throw new Error(`Slack API: ${payload.error || 'unknown_error'}`);
   return payload;
 }
+
+// 잔여 이 값(USD) 미만이면 경고 — Apify 예산 소진으로 수집이 조용히 멈추는 것 방지(재발방지).
+export const APIFY_LOW_BALANCE_USD = 20;
+
+// Apify 월 사용량/한도 조회 → { usedUsd, maxUsd, remainingUsd } 또는 null(실패·미설정). best-effort.
+export async function fetchApifyUsage(apifyToken, fetchImpl = fetch) {
+  if (!apifyToken) return null;
+  try {
+    const res = await fetchImpl(`https://api.apify.com/v2/users/me/limits?token=${encodeURIComponent(apifyToken)}`);
+    if (!res.ok) return null;
+    const d = (await res.json()).data || {};
+    const used = d.current && d.current.monthlyUsageUsd;
+    const max = d.limits && d.limits.maxMonthlyUsageUsd;
+    if (typeof used !== 'number' || typeof max !== 'number') return null;
+    return { usedUsd: used, maxUsd: max, remainingUsd: max - used };
+  } catch {
+    return null;
+  }
+}
+
+export function buildApifyLowText(usage, thresholdUsd, assignee = '') {
+  const mention = assignee ? ` <@${assignee}>` : '';
+  return `⚠️ *Apify 잔여 한도 부족*${mention}\n`
+    + `사용 $${usage.usedUsd.toFixed(2)} / 한도 $${usage.maxUsd.toFixed(2)} → 잔여 $${usage.remainingUsd.toFixed(2)}`
+    + ` (경고 임계 $${thresholdUsd}). 소진되면 협찬 수집·부정댓글 감시가 멈춥니다 — 한도 상향/사용 점검 필요.`;
+}
+
+// 잔여 한도 부족 시 하루 1회만 Slack 경고. sender(usage)는 실제 전송(실패 시 throw). 반환: 발송 여부.
+export async function maybeAlertApifyLow(config, kstDate, usage, thresholdUsd, sender, fetchImpl = fetch) {
+  if (!costEnabled(config) || !usage || !(usage.remainingUsd < thresholdUsd)) return false;
+  let claimed = false;
+  try {
+    claimed = await claimAlert(config, kstDate, 'apify_balance', thresholdUsd, usage.remainingUsd, fetchImpl);
+  } catch {
+    claimed = false;
+  }
+  if (!claimed) return false;
+  try {
+    await sender(usage);
+    return true;
+  } catch {
+    await releaseAlert(config, kstDate, 'apify_balance', fetchImpl);
+    return false;
+  }
+}
+
+export async function postApifyLowWarning(config, usage, thresholdUsd, fetchImpl = fetch) {
+  if (!config.slackBotToken || !config.slackChannelId) throw new Error('Slack not configured for apify warning');
+  const assignee = (config.slackAssignees && config.slackAssignees.other) || '';
+  const res = await fetchImpl('https://slack.com/api/chat.postMessage', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${config.slackBotToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ channel: config.slackChannelId, text: buildApifyLowText(usage, thresholdUsd, assignee) }),
+  });
+  const payload = await res.json();
+  if (!payload.ok) throw new Error(`Slack API: ${payload.error || 'unknown_error'}`);
+  return payload;
+}

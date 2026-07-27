@@ -13,7 +13,7 @@ import { computeClassifierHash, purgeCache } from './cache.js';
 import { falsePositiveStats } from './review.js';
 import { ensureDailyThread } from './threads.js';
 import { assigneeForChannelCategory } from './slack.js';
-import { DEFAULT_COST_THRESHOLDS, estimateApifyUsd, maybeAlertCosts, postCostWarning, recordRunCost, runKey, sumDailyCost } from './cost.js';
+import { APIFY_LOW_BALANCE_USD, DEFAULT_COST_THRESHOLDS, estimateApifyUsd, fetchApifyUsage, maybeAlertApifyLow, maybeAlertCosts, postApifyLowWarning, postCostWarning, recordRunCost, runKey, sumDailyCost } from './cost.js';
 
 export async function runMonitor(config = loadConfig()) {
   const runNow = Date.now();
@@ -212,6 +212,20 @@ export async function runMonitor(config = loadConfig()) {
       if (reviewStats) summary.reviewStats = reviewStats;
     } catch (error) {
       console.error('[review] 오탐률 집계 실패(무시):', error.message);
+    }
+
+    // Apify 잔여 한도 경고(재발방지: 예산 소진으로 수집이 조용히 멈추는 것 방지). 하루 1회.
+    try {
+      const usage = await fetchApifyUsage(config.apifyApiToken);
+      if (usage) {
+        summary.apifyUsage = { usedUsd: Number(usage.usedUsd.toFixed(2)), maxUsd: usage.maxUsd, remainingUsd: Number(usage.remainingUsd.toFixed(2)) };
+        const thr = config.apifyLowBalanceUsd || APIFY_LOW_BALANCE_USD;
+        const fired = await maybeAlertApifyLow(config, kstDateKey(runNow), usage, thr,
+          (u) => postApifyLowWarning(config, u, thr));
+        if (fired) console.error(`[apify] 잔여 한도 부족 경고 발송: 잔여 $${usage.remainingUsd.toFixed(2)} < $${thr}`);
+      }
+    } catch (error) {
+      console.error('[apify] 잔여 한도 조회/경고 실패(무시):', error.message);
     }
   }
 

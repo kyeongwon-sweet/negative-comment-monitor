@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   APIFY_RATE_USD, DEFAULT_COST_THRESHOLDS, buildCostWarningText,
   estimateApifyUsd, maybeAlertCosts, recordRunCost, runKey, sumDailyCost, postCostWarning,
+  fetchApifyUsage, maybeAlertApifyLow, buildApifyLowText,
 } from '../src/cost.js';
 
 const CFG = { supabaseUrl: 'https://db.example', supabaseKey: 'svc', slackBotToken: 'x', slackChannelId: 'C0BHD9S69JA' };
@@ -113,4 +114,38 @@ test('postCostWarning: Slack 미설정이면 throw(상위서 claim 해제)', asy
 test('APIFY_RATE_USD/기본 임계치 상수 고정', () => {
   assert.equal(APIFY_RATE_USD.instagram, 0.0023);
   assert.deepEqual(DEFAULT_COST_THRESHOLDS, { apify: 2, anthropic: 0.1, total: 3 });
+});
+
+test('fetchApifyUsage: 사용량/한도 파싱 → 잔여 계산', async () => {
+  const fetchImpl = async (u) => { assert.match(u, /users\/me\/limits/); return { ok: true, json: async () => ({ data: { current: { monthlyUsageUsd: 162.09 }, limits: { maxMonthlyUsageUsd: 200 } } }) }; };
+  const usage = await fetchApifyUsage('tok', fetchImpl);
+  assert.equal(usage.usedUsd, 162.09);
+  assert.equal(usage.maxUsd, 200);
+  assert.equal(Number(usage.remainingUsd.toFixed(2)), 37.91);
+});
+
+test('fetchApifyUsage: 실패/미설정/이상응답은 null', async () => {
+  assert.equal(await fetchApifyUsage('', async () => ({ ok: true, json: async () => ({}) })), null);
+  assert.equal(await fetchApifyUsage('t', async () => ({ ok: false })), null);
+  assert.equal(await fetchApifyUsage('t', async () => { throw new Error('x'); }), null);
+  assert.equal(await fetchApifyUsage('t', async () => ({ ok: true, json: async () => ({ data: {} }) })), null);
+});
+
+test('maybeAlertApifyLow: 잔여<임계면 하루 1회 경고, 임계이상이면 안 함', async () => {
+  const CFG = { supabaseUrl: 'https://db', supabaseKey: 'k' };
+  const claims = new Set(); const sent = [];
+  const fetchImpl = async (u, o) => { const b = JSON.parse(o.body); const key = `${b.kst_date}|${b.kind}`; if (claims.has(key)) return { ok: true, json: async () => [] }; claims.add(key); return { ok: true, json: async () => [b] }; };
+  const sender = async (usage) => { sent.push(usage.remainingUsd); };
+  // 잔여 15 < 임계 20 → 발송
+  assert.equal(await maybeAlertApifyLow(CFG, '2026-07-27', { usedUsd: 185, maxUsd: 200, remainingUsd: 15 }, 20, sender, fetchImpl), true);
+  // 같은 날 재호출 → 중복 안 함
+  assert.equal(await maybeAlertApifyLow(CFG, '2026-07-27', { usedUsd: 185, maxUsd: 200, remainingUsd: 15 }, 20, sender, fetchImpl), false);
+  // 잔여 50 >= 임계 20 → 발송 안 함
+  assert.equal(await maybeAlertApifyLow(CFG, '2026-07-27', { usedUsd: 150, maxUsd: 200, remainingUsd: 50 }, 20, sender, fetchImpl), false);
+  assert.equal(sent.length, 1);
+});
+
+test('buildApifyLowText: 사용·한도·잔여·임계 포함', () => {
+  const t = buildApifyLowText({ usedUsd: 185, maxUsd: 200, remainingUsd: 15 }, 20, 'U0B2Y0ZC8QZ');
+  assert.match(t, /\$185\.00/); assert.match(t, /\$200\.00/); assert.match(t, /\$15\.00/); assert.match(t, /<@U0B2Y0ZC8QZ>/);
 });
