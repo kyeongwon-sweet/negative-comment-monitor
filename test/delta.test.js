@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractPostKey, filterChangedTargets, filterNoSignalRescueTargets, summarizeDelta } from '../src/delta.js';
+import { extractPostKey, filterChangedTargets, filterNoSignalRescueTargets, filterDeepScanTargets, summarizeDelta } from '../src/delta.js';
 
 test('extractPostKey: 플랫폼별 게시물 ID 추출', () => {
   assert.equal(extractPostKey('https://www.instagram.com/p/DaSY7BxE6pT/'), 'ig:DaSY7BxE6pT');
@@ -84,4 +84,28 @@ test('filterNoSignalRescueTargets: 이미 확인 이력이 있는 noSignal만 �
   };
   const out = filterNoSignalRescueTargets(targets, counts, { limit: 1 }).map((t) => t.url);
   assert.deepEqual(out, ['new-nosignal']);
+});
+
+test('filterDeepScanTargets: high-comment posts are limited by cadence and marked deepScan', () => {
+  const now = Date.parse('2026-07-28T00:00:00Z');
+  const targets = [
+    { url: 'daily-due', uploadedAt: '2026-07-26T00:00:00Z' },
+    { url: 'daily-not-yet', uploadedAt: '2026-07-27T00:00:00Z' },
+    { url: 'two-day-due', uploadedAt: '2026-07-18T00:00:00Z' },
+    { url: 'low-comment', uploadedAt: '2026-07-26T00:00:00Z' },
+  ];
+  const counts = {
+    'daily-due': { current: 12, lastCheckedAt: '2026-07-26T23:00:00Z' },
+    'daily-not-yet': { current: 15, lastCheckedAt: '2026-07-27T12:00:00Z' },
+    'two-day-due': { current: 20, lastCheckedAt: '2026-07-25T00:00:00Z' },
+    'low-comment': { current: 9, lastCheckedAt: '2026-07-20T00:00:00Z' },
+  };
+  const out = filterDeepScanTargets(targets, counts, {
+    limit: 2,
+    commentThreshold: 10,
+    trackingDays: 14,
+    now,
+  });
+  assert.deepEqual(out.map((t) => t.url), ['two-day-due', 'daily-due']);
+  assert.equal(out.every((t) => t.deepScan), true);
 });

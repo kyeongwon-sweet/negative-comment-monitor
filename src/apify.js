@@ -11,10 +11,20 @@ function actorUrl(actorId, token) {
   return `${API}/acts/${encodeURIComponent(actorId)}/runs?token=${encodeURIComponent(token)}`;
 }
 
-export function buildActorInput(platform, actorInput, targets) {
+function deepInputOverrides(platform, commentLimit) {
+  const limit = Number.isFinite(Number(commentLimit)) ? Number(commentLimit) : 100;
+  if (platform === 'instagram') return { resultsLimit: limit, includeNestedComments: true };
+  if (platform === 'youtube') return { maxComments: limit, oldestCommentDate: '14 days' };
+  if (platform === 'tiktok') return { commentsPerPost: limit, maxRepliesPerComment: 15 };
+  if (platform === 'twitter') return { maxItems: Math.max(limit, 10) };
+  return {};
+}
+
+export function buildActorInput(platform, actorInput, targets, options = {}) {
   const urls = targets.map((target) => target.url);
+  const extra = options.deepScan ? deepInputOverrides(platform, options.commentLimit) : {};
   if (platform === 'instagram') {
-    return { resultsLimit: 10, includeNestedComments: false, ...actorInput, directUrls: urls };
+    return { resultsLimit: 10, includeNestedComments: false, ...actorInput, ...extra, directUrls: urls };
   }
   if (platform === 'youtube') {
     return {
@@ -22,21 +32,22 @@ export function buildActorInput(platform, actorInput, targets) {
       sortCommentsBy: 'NEWEST_FIRST',
       oldestCommentDate: '7 days',
       ...actorInput,
+      ...extra,
       startUrls: urls.map((url) => ({ url })),
     };
   }
   if (platform === 'tiktok') {
-    return { commentsPerPost: 30, maxRepliesPerComment: 0, ...actorInput, postURLs: urls };
+    return { commentsPerPost: 30, maxRepliesPerComment: 0, ...actorInput, ...extra, postURLs: urls };
   }
   if (platform === 'twitter') {
-    return { maxItems: Math.max(10, urls.length * 30), useSearch: false, ...actorInput, startUrls: urls };
+    return { maxItems: Math.max(10, urls.length * 30), useSearch: false, ...actorInput, ...extra, startUrls: urls };
   }
   throw new Error(`Unsupported Apify platform: ${platform}`);
 }
 
-export async function runActor(config, platform, targets, fetchImpl = fetch) {
+export async function runActor(config, platform, targets, fetchImpl = fetch, options = {}) {
   const actor = config.actors[platform];
-  const input = buildActorInput(platform, actor.input, targets);
+  const input = buildActorInput(platform, actor.input, targets, options);
   const started = await apifyJson(actorUrl(actor.id, config.apifyApiToken), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

@@ -6,7 +6,7 @@ import { detectPlatform, filterEligibleSponsorships, groupApifyTargets } from '.
 import { classifyTargetsBatched } from './hybrid-classify.js';
 import { sendAlert } from './slack.js';
 import { filterDueTargets, isEvergreenCategory, kstDateKey } from './schedule.js';
-import { loadCommentCounts, filterChangedTargets, filterNoSignalRescueTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
+import { loadCommentCounts, filterChangedTargets, filterNoSignalRescueTargets, filterDeepScanTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
 import { commentFingerprint, loadRecentlyAlertedPostKeys, loadSeenFingerprints, recordAlert } from './dedup.js';
 import { estimateUsd } from './pricing.js';
 import { computeClassifierHash, purgeCache } from './cache.js';
@@ -30,6 +30,7 @@ export async function runMonitor(config = loadConfig()) {
   const eligibleMappedTargets = eligibleTargets.map((target) => ({
     ...target,
     platform: String(target.platform || detectPlatform(target.url)).toLowerCase(),
+    trackingDays: config.trackingDays,
     // 감시 대상 = 라라스윗 협찬 게시물 → 브랜드 컨텍스트 부여(캡션에 브랜드명이 없어도
     // 제품 관련 부정댓글을 entity 게이트가 놓치지 않게 함). brandName은 classify가 postContext로 읽음.
     brandName: target.brandName || config.brandContext,
@@ -70,16 +71,25 @@ export async function runMonitor(config = loadConfig()) {
       if (!Object.keys(counts).length) counts = await loadCommentCounts(config, dueTargets);
       const changed = filterChangedTargets(dueTargets, counts, { firstScanLimit: config.firstScanLimit });
       const noSignalRescue = filterNoSignalRescueTargets(dueTargets, counts, { limit: config.noSignalScanLimit });
+      const deepScan = filterDeepScanTargets(dueTargets, counts, {
+        limit: config.deepScanLimit,
+        commentThreshold: config.deepScanCommentThreshold,
+        trackingDays: config.trackingDays,
+        now: runNow,
+      });
       const intensive = dueTargets.filter((target) => {
         const detected = Date.parse(target.recentNegativeDetectedAt || '');
         return Number.isFinite(detected) && runNow - detected <= 3 * 60 * 60 * 1000;
       });
-      targets = [...new Map([...changed, ...noSignalRescue, ...intensive].map((target) => [target.url, target])).values()];
+      targets = [...new Map([...changed, ...noSignalRescue, ...intensive, ...deepScan].map((target) => [target.url, target])).values()];
       deltaSkipped = dueTargets.length - targets.length;
       summary_deltaBreakdown = summarizeDelta(dueTargets, counts);
       summary_deltaBreakdown.firstScanLimit = config.firstScanLimit;
       summary_deltaBreakdown.noSignalScanLimit = config.noSignalScanLimit;
       summary_deltaBreakdown.noSignalRescue = noSignalRescue.length;
+      summary_deltaBreakdown.deepScanLimit = config.deepScanLimit;
+      summary_deltaBreakdown.deepScanCommentThreshold = config.deepScanCommentThreshold;
+      summary_deltaBreakdown.deepScan = deepScan.length;
       summary_deltaBreakdown.scrapeAfterLimit = targets.length;
       if (summary_deltaBreakdown.noSignal) {
         console.error(`[delta] 댓글 수 신호 없어 스킵된 대상 ${summary_deltaBreakdown.noSignal}건 — 커버리지 갭(대시보드 comments_count 미수집/URL 미매칭)`);
@@ -114,12 +124,22 @@ export async function runMonitor(config = loadConfig()) {
   for (const [platform, platformTargets] of Object.entries(groups)) {
     summary.graphSkipped -= platformTargets.length;
     if (!platformTargets.length) continue;
+    const platformRuns = [
+      { deepScan: false, targets: platformTargets.filter((target) => !target.deepScan) },
+      { deepScan: true, targets: platformTargets.filter((target) => target.deepScan) },
+    ].filter((item) => item.targets.length);
+    const platformSummary = { targets: platformTargets.length, items: 0, ok: true, deepTargets: platformTargets.filter((target) => target.deepScan).length };
     try {
-      const items = await runActor(config, platform, platformTargets);
+      for (const platformRun of platformRuns) {
+      const items = await runActor(config, platform, platformRun.targets, fetch, {
+        deepScan: platformRun.deepScan,
+        commentLimit: config.deepScanCommentLimit,
+      });
       const normalized = normalizeDataset(platform, items, '');
+      platformSummary.items += normalized.length;
       apifyCommentsByPlatform[platform] = (apifyCommentsByPlatform[platform] || 0) + normalized.length;
-      const single = platformTargets.length === 1;   // 단일 대상 배치면 URL 없는 댓글도 그 대상 소속
-      for (const rawTarget of platformTargets) {
+      const single = platformRun.targets.length === 1;   // 단일 대상 배치면 URL 없는 댓글도 그 대상 소속
+      for (const rawTarget of platformRun.targets) {
         const target = { ...rawTarget, caption: rawTarget.caption || (counts[rawTarget.url] || {}).caption || '' };
         const targetKey = extractPostKey(target.url);
         const targetComments = normalized.filter((comment) => {
@@ -131,7 +151,8 @@ export async function runMonitor(config = loadConfig()) {
         entries.push({ target, comments: targetComments });
         scrapedTargets.push(target);   // 스크레이프 성공분만 last_count 갱신 대상
       }
-      summary.platforms[platform] = { targets: platformTargets.length, items: normalized.length, ok: true };
+      }
+      summary.platforms[platform] = platformSummary;
     } catch (error) {
       // 실패 시 last_count 미갱신 → 다음 실행에서 재시도됨(부정댓글 없음으로 오보하지 않음)
       summary.platforms[platform] = { targets: platformTargets.length, items: 0, ok: false, error: error.message };

@@ -72,6 +72,9 @@ jobs:
           TARGET_BATCH_SIZE: ${{ vars.TARGET_BATCH_SIZE }}
           FIRST_SCAN_LIMIT: ${{ vars.FIRST_SCAN_LIMIT }}
           NO_SIGNAL_SCAN_LIMIT: ${{ vars.NO_SIGNAL_SCAN_LIMIT }}
+          DEEP_SCAN_LIMIT: ${{ vars.DEEP_SCAN_LIMIT }}
+          DEEP_SCAN_COMMENT_THRESHOLD: ${{ vars.DEEP_SCAN_COMMENT_THRESHOLD }}
+          DEEP_SCAN_COMMENT_LIMIT: ${{ vars.DEEP_SCAN_COMMENT_LIMIT }}
           TRACKING_DAYS: ${{ vars.TRACKING_DAYS }}
           DELTA_ENABLED: 'true'
           DRY_RUN: 'false'

@@ -23,6 +23,18 @@ test('builds TikTok comment actor input', () => {
   assert.equal(input.maxRepliesPerComment, 0);
 });
 
+test('builds deep scan actor input with higher comment limits', () => {
+  const instagram = buildActorInput('instagram', { resultsLimit: 30 }, targets, { deepScan: true, commentLimit: 100 });
+  const youtube = buildActorInput('youtube', { maxComments: 50 }, targets, { deepScan: true, commentLimit: 100 });
+  const tiktok = buildActorInput('tiktok', { commentsPerPost: 50 }, targets, { deepScan: true, commentLimit: 100 });
+  assert.equal(instagram.resultsLimit, 100);
+  assert.equal(instagram.includeNestedComments, true);
+  assert.equal(youtube.maxComments, 100);
+  assert.equal(youtube.oldestCommentDate, '14 days');
+  assert.equal(tiktok.commentsPerPost, 100);
+  assert.equal(tiktok.maxRepliesPerComment, 15);
+});
+
 test('builds Twitter replies actor input', () => {
   const input = buildActorInput('twitter', {}, targets);
   assert.deepEqual(input.startUrls, targets.map((target) => target.url));

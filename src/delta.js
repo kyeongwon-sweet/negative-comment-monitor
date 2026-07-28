@@ -128,6 +128,35 @@ export function filterNoSignalRescueTargets(targets, counts, options = {}) {
     .map((item) => item.target);
 }
 
+export function filterDeepScanTargets(targets, counts, options = {}) {
+  const limit = Number(options.limit);
+  if (!Number.isFinite(limit) || limit <= 0) return [];
+  const now = Number(options.now || Date.now());
+  const threshold = Number.isFinite(Number(options.commentThreshold)) ? Number(options.commentThreshold) : 10;
+  const trackingDays = Number.isFinite(Number(options.trackingDays)) ? Number(options.trackingDays) : 14;
+  const day = 24 * 60 * 60 * 1000;
+  return targets
+    .filter((target) => {
+      const c = counts[target.url] || {};
+      const current = Number(c.current);
+      if (!Number.isFinite(current) || current < threshold) return false;
+      const published = targetDateMs_(target);
+      const ageDays = published ? Math.max(0, (now - published) / day) : Infinity;
+      let intervalDays = Infinity;
+      if (target.isBoosted || ageDays <= 7) intervalDays = 1;
+      else if (ageDays <= trackingDays) intervalDays = 2;
+      else if (String(target.channelCategory || '').includes('온드') || String(target.channelCategory || '').includes('위성') || String(target.channelCategory || '').includes('?⑤뱶') || String(target.channelCategory || '').includes('?꾩꽦')) intervalDays = 7;
+      if (!Number.isFinite(intervalDays)) return false;
+      const last = Date.parse(c.lastCheckedAt || '');
+      if (!Number.isFinite(last)) return true;
+      return now - last >= intervalDays * day;
+    })
+    .map((target, index) => ({ target: { ...target, deepScan: true }, index, current: Number((counts[target.url] || {}).current || 0), dateMs: targetDateMs_(target) }))
+    .sort((a, b) => b.current - a.current || b.dateMs - a.dateMs || a.index - b.index)
+    .slice(0, Math.max(0, limit))
+    .map((item) => item.target);
+}
+
 export function filterChangedTargetsUnlimited(targets, counts) {
   return targets.filter((t) => {
     const c = counts[t.url] || {};

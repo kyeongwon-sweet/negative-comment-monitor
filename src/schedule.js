@@ -20,7 +20,8 @@ export function collectionIntervalMs(target, now = Date.now()) {
     if (Number.isFinite(detectedAge) && detectedAge <= 3 * HOUR) return 15 * MINUTE;
   }
   const age = ageMs(target, now);
-  if (target.isBoosted || isEvergreenCategory(target.channelCategory) || age <= 7 * DAY) return DAY;
+  const trackingDays = Number(target.trackingDays || 7);
+  if (target.isBoosted || isEvergreenCategory(target.channelCategory) || age <= trackingDays * DAY) return DAY;
   return Infinity;
 }
 
