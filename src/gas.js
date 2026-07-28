@@ -20,15 +20,32 @@ async function readJson(response) {
   return payload;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function fetchTargets(config, fetchImpl = fetch) {
   const url = endpoint(config.gasWebAppUrl, {
     action: 'sponsoredTargets',
     key: config.gasVerifyToken,
     limit: config.targetBatchSize,
   });
-  const response = await fetchImpl(url, { method: 'GET', redirect: 'follow' });
-  const payload = await readJson(response);
-  return payload.result?.targets || [];
+  const maxAttempts = Math.max(1, Number(config.gasFetchRetries || 4));
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await fetchImpl(url, { method: 'GET', redirect: 'follow' });
+      const payload = await readJson(response);
+      return payload.result?.targets || [];
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxAttempts) break;
+      const delayMs = Math.min(1500 * attempt, 5000);
+      console.error(`[gas] sponsoredTargets 조회 실패(${attempt}/${maxAttempts}) — ${delayMs}ms 후 재시도: ${error.message}`);
+      await sleep(delayMs);
+    }
+  }
+  throw lastError;
 }
 
 export async function submitResult(config, target, comments, error = '', fetchImpl = fetch) {
