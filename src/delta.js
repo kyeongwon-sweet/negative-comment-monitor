@@ -88,6 +88,10 @@ function firstScanPriority_(target, counts) {
   return currentScore * 1e13 + dateScore;
 }
 
+function targetDateMs_(target) {
+  return Date.parse(target.uploadedAt || target.publishedAt || target.postedAt || '') || 0;
+}
+
 export function filterChangedTargets(targets, counts, options = {}) {
   const firstScanLimit = Number(options.firstScanLimit);
   if (!Number.isFinite(firstScanLimit) || firstScanLimit < 0) {
@@ -106,6 +110,22 @@ export function filterChangedTargets(targets, counts, options = {}) {
     .slice(0, Math.max(0, firstScanLimit))
     .map((item) => item.target);
   return [...changed, ...limitedFirstScan];
+}
+
+export function filterNoSignalRescueTargets(targets, counts, options = {}) {
+  const limit = Number(options.limit);
+  if (!Number.isFinite(limit) || limit <= 0) return [];
+  return targets
+    .filter((target) => {
+      const c = counts[target.url] || {};
+      // 이미 한 번 확인 이력이 있는데도 comments_count 신호가 없는 글만 별도 rescue한다.
+      // 신규 noSignal 글은 firstScanLimit 대기열에서 처리해 firstScan 비용상한을 우회하지 않게 한다.
+      return Boolean(c.postId) && c.current == null && Boolean(c.lastCheckedAt);
+    })
+    .map((target, index) => ({ target, index, dateMs: targetDateMs_(target) }))
+    .sort((a, b) => b.dateMs - a.dateMs || a.index - b.index)
+    .slice(0, Math.max(0, limit))
+    .map((item) => item.target);
 }
 
 export function filterChangedTargetsUnlimited(targets, counts) {

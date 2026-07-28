@@ -6,7 +6,7 @@ import { detectPlatform, filterEligibleSponsorships, groupApifyTargets } from '.
 import { classifyTargetsBatched } from './hybrid-classify.js';
 import { sendAlert } from './slack.js';
 import { filterDueTargets, isEvergreenCategory, kstDateKey } from './schedule.js';
-import { loadCommentCounts, filterChangedTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
+import { loadCommentCounts, filterChangedTargets, filterNoSignalRescueTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
 import { commentFingerprint, loadRecentlyAlertedPostKeys, loadSeenFingerprints, recordAlert } from './dedup.js';
 import { estimateUsd } from './pricing.js';
 import { computeClassifierHash, purgeCache } from './cache.js';
@@ -69,15 +69,18 @@ export async function runMonitor(config = loadConfig()) {
     try {
       if (!Object.keys(counts).length) counts = await loadCommentCounts(config, dueTargets);
       const changed = filterChangedTargets(dueTargets, counts, { firstScanLimit: config.firstScanLimit });
+      const noSignalRescue = filterNoSignalRescueTargets(dueTargets, counts, { limit: config.noSignalScanLimit });
       const intensive = dueTargets.filter((target) => {
         const detected = Date.parse(target.recentNegativeDetectedAt || '');
         return Number.isFinite(detected) && runNow - detected <= 3 * 60 * 60 * 1000;
       });
-      targets = [...new Map([...changed, ...intensive].map((target) => [target.url, target])).values()];
+      targets = [...new Map([...changed, ...noSignalRescue, ...intensive].map((target) => [target.url, target])).values()];
       deltaSkipped = dueTargets.length - targets.length;
       summary_deltaBreakdown = summarizeDelta(dueTargets, counts);
       summary_deltaBreakdown.firstScanLimit = config.firstScanLimit;
-      summary_deltaBreakdown.scrapeAfterLimit = changed.length;
+      summary_deltaBreakdown.noSignalScanLimit = config.noSignalScanLimit;
+      summary_deltaBreakdown.noSignalRescue = noSignalRescue.length;
+      summary_deltaBreakdown.scrapeAfterLimit = targets.length;
       if (summary_deltaBreakdown.noSignal) {
         console.error(`[delta] 댓글 수 신호 없어 스킵된 대상 ${summary_deltaBreakdown.noSignal}건 — 커버리지 갭(대시보드 comments_count 미수집/URL 미매칭)`);
       }

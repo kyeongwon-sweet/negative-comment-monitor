@@ -42,6 +42,7 @@ export function loadConfig(env = process.env) {
     managedChannelCategories: String(env.MANAGED_CHANNEL_CATEGORIES || '온드미디어,위성채널').split(',').map((value) => value.trim()).filter(Boolean),
     targetBatchSize: Number(env.TARGET_BATCH_SIZE || 20),
     firstScanLimit: Number(env.FIRST_SCAN_LIMIT || 60),
+    noSignalScanLimit: Number(env.NO_SIGNAL_SCAN_LIMIT || 20),
     pollIntervalMs: Number(env.APIFY_POLL_INTERVAL_MS || 5000),
     runTimeoutMs: Number(env.APIFY_RUN_TIMEOUT_MS || 600000),
     dryRun: String(env.DRY_RUN || 'true').toLowerCase() !== 'false',

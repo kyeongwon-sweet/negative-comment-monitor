@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractPostKey, filterChangedTargets, summarizeDelta } from '../src/delta.js';
+import { extractPostKey, filterChangedTargets, filterNoSignalRescueTargets, summarizeDelta } from '../src/delta.js';
 
 test('extractPostKey: 플랫폼별 게시물 ID 추출', () => {
   assert.equal(extractPostKey('https://www.instagram.com/p/DaSY7BxE6pT/'), 'ig:DaSY7BxE6pT');
@@ -67,4 +67,21 @@ test('filterChangedTargets: firstScanLimit은 첫확인만 댓글수 높은 순�
   };
   const out = filterChangedTargets(targets, counts, { firstScanLimit: 2 }).map((t) => t.url);
   assert.deepEqual(out, ['changed-a', 'changed-b', 'first-high', 'first-mid']);
+});
+
+test('filterNoSignalRescueTargets: 이미 확인 이력이 있는 noSignal만 최신순 제한 rescue', () => {
+  const targets = [
+    { url: 'old-nosignal', uploadedAt: '2026-07-20T00:00:00Z' },
+    { url: 'new-nosignal', uploadedAt: '2026-07-28T00:00:00Z' },
+    { url: 'fresh-nosignal', uploadedAt: '2026-07-29T00:00:00Z' },
+    { url: 'changed', uploadedAt: '2026-07-30T00:00:00Z' },
+  ];
+  const counts = {
+    'old-nosignal': { postId: '1', current: null, last: null, lastCheckedAt: '2026-07-27T00:00:00Z' },
+    'new-nosignal': { postId: '2', current: null, last: null, lastCheckedAt: '2026-07-27T00:00:00Z' },
+    'fresh-nosignal': { postId: '3', current: null, last: null },
+    changed: { postId: '4', current: 2, last: 1, lastCheckedAt: '2026-07-27T00:00:00Z' },
+  };
+  const out = filterNoSignalRescueTargets(targets, counts, { limit: 1 }).map((t) => t.url);
+  assert.deepEqual(out, ['new-nosignal']);
 });
