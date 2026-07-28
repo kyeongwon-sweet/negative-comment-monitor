@@ -43,7 +43,7 @@ export function loadConfig(env = process.env) {
     targetBatchSize: Number(env.TARGET_BATCH_SIZE || 20),
     firstScanLimit: Number(env.FIRST_SCAN_LIMIT || 60),
     noSignalScanLimit: Number(env.NO_SIGNAL_SCAN_LIMIT || 20),
-    deepScanLimit: Number(env.DEEP_SCAN_LIMIT || 10),
+    deepScanLimit: Number(env.DEEP_SCAN_LIMIT || 5),
     deepScanCommentThreshold: Number(env.DEEP_SCAN_COMMENT_THRESHOLD || 10),
     deepScanCommentLimit: Number(env.DEEP_SCAN_COMMENT_LIMIT || 100),
     pollIntervalMs: Number(env.APIFY_POLL_INTERVAL_MS || 5000),
