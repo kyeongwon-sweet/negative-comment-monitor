@@ -55,3 +55,40 @@ export async function ensureDailyThread(config, { kstDate, channelCategory, assi
     return null;
   }
 }
+
+// 오늘 스레드 중 답글이 0개(담당자가 모두 처리)인데 완료 반응이 없는 것에 :완료느낌표:를 단다.
+// injibot-action(Vercel) 라우트가 버튼 클릭 시 즉시 달지만, 그 라우트 토큰 이슈에도 견고하도록
+// 봇이 매 실행마다 백업 점검한다. 봇 토큰(reactions:write 확인됨) 사용, best-effort.
+export async function markCompletedThreads(config, kstDate, emoji = '완료느낌표', fetchImpl = fetch) {
+  if (!threadsEnabled(config)) return 0;
+  try {
+    const url = `${config.supabaseUrl}/rest/v1/alert_threads?select=slack_ts`
+      + `&kst_date=eq.${encodeURIComponent(kstDate)}`
+      + `&slack_channel_id=eq.${encodeURIComponent(config.slackChannelId)}`;
+    const res = await fetchImpl(url, { headers: headers(config) });
+    if (!res.ok) return 0;
+    const rows = await res.json();
+    let marked = 0;
+    for (const r of rows) {
+      const ts = r.slack_ts;
+      if (!ts) continue;
+      const rep = await fetchImpl(
+        `https://slack.com/api/conversations.replies?channel=${encodeURIComponent(config.slackChannelId)}&ts=${encodeURIComponent(ts)}&limit=50`,
+        { headers: { authorization: `Bearer ${config.slackBotToken}` } },
+      ).then((x) => x.json()).catch(() => ({}));
+      const msgs = rep.messages || [];
+      if (!msgs.length) continue;                        // 조회 실패/삭제된 부모 → 건너뜀
+      if (msgs.filter((m) => m.ts !== ts).length > 0) continue; // 아직 미처리 답글 있음
+      if ((msgs[0].reactions || []).some((x) => x.name === emoji)) continue; // 이미 달림
+      const add = await fetchImpl('https://slack.com/api/reactions.add', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${config.slackBotToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ channel: config.slackChannelId, timestamp: ts, name: emoji }),
+      }).then((x) => x.json()).catch(() => ({}));
+      if (add.ok || add.error === 'already_reacted') marked += 1;
+    }
+    return marked;
+  } catch {
+    return 0;
+  }
+}

@@ -11,7 +11,7 @@ import { commentFingerprint, loadRecentlyAlertedPostKeys, loadSeenFingerprints, 
 import { estimateUsd } from './pricing.js';
 import { computeClassifierHash, purgeCache } from './cache.js';
 import { falsePositiveStats } from './review.js';
-import { ensureDailyThread } from './threads.js';
+import { ensureDailyThread, markCompletedThreads } from './threads.js';
 import { assigneeForChannelCategory } from './slack.js';
 import { APIFY_LOW_BALANCE_USD, DEFAULT_COST_THRESHOLDS, estimateApifyUsd, fetchApifyUsage, maybeAlertApifyLow, maybeAlertCosts, postApifyLowWarning, postCostWarning, recordRunCost, runKey, sumDailyCost } from './cost.js';
 
@@ -185,6 +185,16 @@ export async function runMonitor(config = loadConfig()) {
 
   // 90일 초과 분류 캐시 정리(best-effort — 실패해도 무시).
   if (!config.dryRun) await purgeCache(config);
+
+  // 오늘 스레드 중 답글 0개(전부 처리)인데 완료 반응 없는 것에 :완료느낌표: 백업 부착(best-effort).
+  if (!config.dryRun) {
+    try {
+      const marked = await markCompletedThreads(config, kstDateKey(runNow));
+      if (marked) console.error(`[thread] 완료 스레드 ${marked}개에 완료느낌표 부착`);
+    } catch (error) {
+      console.error('[thread] 완료 반응 부착 실패(무시):', error.message);
+    }
+  }
 
   // 일별(KST) 비용 누적 + 임계치 경고. run_key 멱등(재시도 중복합산 방지), 임계치별 하루 1회 발송.
   // 비용 경로의 어떤 실패도 모니터링 본류를 막지 않는다.
