@@ -49,3 +49,22 @@ test('summarizeDelta: 사유별 집계', () => {
   };
   assert.deepEqual(summarizeDelta(targets, counts), { noSignal: 1, unchanged: 1, firstScan: 1, changed: 2, scrape: 3 });
 });
+
+test('filterChangedTargets: firstScanLimit은 첫확인만 댓글수 높은 순으로 제한하고 변화글은 유지', () => {
+  const targets = [
+    { url: 'first-low', uploadedAt: '2026-07-28T00:00:00Z' },
+    { url: 'changed-a' },
+    { url: 'first-high', uploadedAt: '2026-07-27T00:00:00Z' },
+    { url: 'changed-b' },
+    { url: 'first-mid', uploadedAt: '2026-07-26T00:00:00Z' },
+  ];
+  const counts = {
+    'first-low': { postId: '1', current: 1, last: null },
+    'changed-a': { postId: '2', current: 11, last: 10 },
+    'first-high': { postId: '3', current: 50, last: null },
+    'changed-b': { postId: '4', current: 3, last: 9 },
+    'first-mid': { postId: '5', current: 20, last: null },
+  };
+  const out = filterChangedTargets(targets, counts, { firstScanLimit: 2 }).map((t) => t.url);
+  assert.deepEqual(out, ['changed-a', 'changed-b', 'first-high', 'first-mid']);
+});

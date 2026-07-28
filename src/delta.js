@@ -70,7 +70,45 @@ export async function loadCommentCounts(config, targets, fetchImpl = fetch, now 
 // 순수 함수: 스크레이프해야 할 대상만 남긴다.
 //   현재 댓글 수 신호가 없으면(매칭 실패/미수집) 무조건 skip → 안 바뀐 글 무한 재과금 방지.
 //   (이렇게 스킵된 글 수는 호출부에서 로그로 표면화해 커버리지 갭을 드러낸다.)
-export function filterChangedTargets(targets, counts) {
+function deltaReason_(target, counts) {
+  const c = counts[target.url] || {};
+  // ?좉퇋湲(DB ?깅줉??+ ?꾩쭅 ??踰덈룄 ?ㅼ틪 ????? ?볤????좏샇媛 ?꾩쭅 ?놁뼱??1???ㅼ틪?쒕떎.
+  // ??쒕낫??comments_count ?섏쭛 吏?곗쑝濡??좉퇋湲??媛먯떆?먯꽌 ?꾨씫?섎뜕 媛?諛⑹?. ?ㅼ틪?섎㈃ last_checked_at??
+  // 湲곕줉???ㅼ쓬遺?곕뒗 ?ъ뒪罹??????ш낵湲??놁쓬). postId ?녿뒗(DB 誘몃벑濡? 湲? 湲곕줉 遺덇????쒖쇅.
+  if (c.last == null && !c.lastCheckedAt && c.postId) return 'firstScan';
+  if (c.current == null) return '';   // 洹????좏샇 ?놁쓬 ??skip(鍮꾩슜 ?덉쟾)
+  if (c.last == null) return 'firstScan';        // 泥??뺤씤(?좏샇 ?덉쓬) ??理쒓렐 ?볤? 1???ㅼ틪
+  return c.current !== c.last ? 'changed' : '';            // ?댄썑??利앷?쨌媛먯냼 紐⑤몢 ?ъ뒪罹???젣濡?移댁슫??以꾩뼱?????볤? 媛?? 以묐났? fingerprint dedup 諛⑹?)
+}
+
+function firstScanPriority_(target, counts) {
+  const c = counts[target.url] || {};
+  const currentScore = Number.isFinite(Number(c.current)) ? Number(c.current) : -1;
+  const dateScore = Date.parse(target.uploadedAt || target.publishedAt || target.postedAt || '') || 0;
+  return currentScore * 1e13 + dateScore;
+}
+
+export function filterChangedTargets(targets, counts, options = {}) {
+  const firstScanLimit = Number(options.firstScanLimit);
+  if (!Number.isFinite(firstScanLimit) || firstScanLimit < 0) {
+    return targets.filter((t) => deltaReason_(t, counts));
+  }
+  const changed = [];
+  const firstScan = [];
+  for (const target of targets) {
+    const reason = deltaReason_(target, counts);
+    if (reason === 'changed') changed.push(target);
+    else if (reason === 'firstScan') firstScan.push(target);
+  }
+  const limitedFirstScan = firstScan
+    .map((target, index) => ({ target, index, priority: firstScanPriority_(target, counts) }))
+    .sort((a, b) => b.priority - a.priority || a.index - b.index)
+    .slice(0, Math.max(0, firstScanLimit))
+    .map((item) => item.target);
+  return [...changed, ...limitedFirstScan];
+}
+
+export function filterChangedTargetsUnlimited(targets, counts) {
   return targets.filter((t) => {
     const c = counts[t.url] || {};
     // 신규글(DB 등록됨 + 아직 한 번도 스캔 안 함)은 댓글수 신호가 아직 없어도 1회 스캔한다.
