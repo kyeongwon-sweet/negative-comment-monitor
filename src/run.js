@@ -74,6 +74,7 @@ export async function runMonitor(config = loadConfig()) {
       const deepScan = filterDeepScanTargets(dueTargets, counts, {
         limit: config.deepScanLimit,
         commentThreshold: config.deepScanCommentThreshold,
+        recentCommentThreshold: config.deepScanRecentCommentThreshold,
         trackingDays: config.trackingDays,
         now: runNow,
       });
@@ -89,6 +90,7 @@ export async function runMonitor(config = loadConfig()) {
       summary_deltaBreakdown.noSignalRescue = noSignalRescue.length;
       summary_deltaBreakdown.deepScanLimit = config.deepScanLimit;
       summary_deltaBreakdown.deepScanCommentThreshold = config.deepScanCommentThreshold;
+      summary_deltaBreakdown.deepScanRecentCommentThreshold = config.deepScanRecentCommentThreshold;
       summary_deltaBreakdown.deepScan = deepScan.length;
       summary_deltaBreakdown.scrapeAfterLimit = targets.length;
       if (summary_deltaBreakdown.noSignal) {

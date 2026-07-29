@@ -133,15 +133,17 @@ export function filterDeepScanTargets(targets, counts, options = {}) {
   if (!Number.isFinite(limit) || limit <= 0) return [];
   const now = Number(options.now || Date.now());
   const threshold = Number.isFinite(Number(options.commentThreshold)) ? Number(options.commentThreshold) : 10;
+  const recentThreshold = Number.isFinite(Number(options.recentCommentThreshold)) ? Number(options.recentCommentThreshold) : threshold;
   const trackingDays = Number.isFinite(Number(options.trackingDays)) ? Number(options.trackingDays) : 14;
   const day = 24 * 60 * 60 * 1000;
   return targets
     .filter((target) => {
       const c = counts[target.url] || {};
       const current = Number(c.current);
-      if (!Number.isFinite(current) || current < threshold) return false;
       const published = targetDateMs_(target);
       const ageDays = published ? Math.max(0, (now - published) / day) : Infinity;
+      const requiredComments = ageDays <= 7 ? recentThreshold : threshold;
+      if (!Number.isFinite(current) || current < requiredComments) return false;
       let intervalDays = Infinity;
       if (target.isBoosted || ageDays <= 7) intervalDays = 1;
       else if (ageDays <= trackingDays) intervalDays = 2;

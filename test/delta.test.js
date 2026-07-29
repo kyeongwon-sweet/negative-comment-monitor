@@ -109,3 +109,23 @@ test('filterDeepScanTargets: high-comment posts are limited by cadence and marke
   assert.deepEqual(out.map((t) => t.url), ['two-day-due', 'daily-due']);
   assert.equal(out.every((t) => t.deepScan), true);
 });
+
+test('filterDeepScanTargets: recent posts can use a lower comment threshold', () => {
+  const now = Date.parse('2026-07-28T00:00:00Z');
+  const targets = [
+    { url: 'recent-low', uploadedAt: '2026-07-27T00:00:00Z' },
+    { url: 'old-low', uploadedAt: '2026-07-18T00:00:00Z' },
+  ];
+  const counts = {
+    'recent-low': { current: 5, lastCheckedAt: '2026-07-26T00:00:00Z' },
+    'old-low': { current: 5, lastCheckedAt: '2026-07-25T00:00:00Z' },
+  };
+  const out = filterDeepScanTargets(targets, counts, {
+    limit: 10,
+    commentThreshold: 10,
+    recentCommentThreshold: 5,
+    trackingDays: 14,
+    now,
+  });
+  assert.deepEqual(out.map((t) => t.url), ['recent-low']);
+});
