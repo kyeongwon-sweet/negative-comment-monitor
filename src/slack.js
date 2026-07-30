@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { isManagedChannel } from './routing.js';
 
+const DEFAULT_COMPLETED_THREAD_EMOJI = '\uC644\uB8CC\uB290\uB08C\uD45C';
 const managedActions = [['숨김', 'hide', 'danger'], ['승인', 'approve', 'primary'], ['보류', 'hold'], ['숨김해제', 'unhide']];
 const externalActions = [['✅ 완료', 'complete', 'primary'], ['🙈 무시', 'ignore']];
 
@@ -73,6 +74,17 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
 export async function sendAlert(config, target, comment, fetchImpl = fetch, threadTs = null) {
   if (!config.slackBotToken) throw new Error('Missing environment variable: SLACK_BOT_TOKEN');
   const blocks = buildAlertBlocks(target, comment, config.managedChannelCategories, config.slackAssignees);
+  if (threadTs) {
+    await fetchImpl('https://slack.com/api/reactions.remove', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${config.slackBotToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: config.slackChannelId,
+        timestamp: threadTs,
+        name: config.completedThreadEmoji || DEFAULT_COMPLETED_THREAD_EMOJI,
+      }),
+    }).then((x) => x.json()).catch(() => ({}));
+  }
   const response = await fetchImpl('https://slack.com/api/chat.postMessage', {
     method: 'POST', headers: { authorization: `Bearer ${config.slackBotToken}`, 'content-type': 'application/json' },
     body: JSON.stringify({

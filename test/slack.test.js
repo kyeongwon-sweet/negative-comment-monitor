@@ -77,3 +77,20 @@ test('sendAlert: threadTs 주면 thread_ts로 답글 발송, 없으면 최상위
   await sendAlert(cfg, target, comment, fetchImpl); // threadTs 없음
   assert.ok(!('thread_ts' in body), '스레드 없으면 최상위 발송');
 });
+
+test('sendAlert: 기존 완료 스레드에 새 답글을 달기 전에 완료 반응을 제거', async () => {
+  const cfg = { slackBotToken: 'tok', slackChannelId: 'C1', managedChannelCategories: [], slackAssignees: {} };
+  const target = { url: 'https://x.com/u/status/1', channelName: 'ch', channelCategory: 'PPL', platform: 'twitter' };
+  const comment = { id: 'c1', platform: 'twitter', text: '광고 별로', username: 'u', timestamp: '1700000000' };
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return { json: async () => ({ ok: true, ts: '1.1' }) };
+  };
+  await sendAlert(cfg, target, comment, fetchImpl, '555.666');
+  assert.match(calls[0].url, /reactions\.remove/);
+  assert.equal(calls[0].body.timestamp, '555.666');
+  assert.equal(calls[0].body.name, '완료느낌표');
+  assert.match(calls[1].url, /chat\.postMessage/);
+  assert.equal(calls[1].body.thread_ts, '555.666');
+});

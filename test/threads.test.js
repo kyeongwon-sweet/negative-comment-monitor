@@ -74,3 +74,17 @@ test('markCompletedThreads: 비활성/조회실패는 0(무해)', async () => {
   const CFG = { supabaseUrl: 'https://db', supabaseKey: 'k', slackBotToken: 't', slackChannelId: 'C1' };
   assert.equal(await markCompletedThreads(CFG, '2026-07-28', '완료느낌표', async () => ({ ok: false })), 0);
 });
+
+test('markCompletedThreads: replies 배열이 부모만 반환돼도 reply_count가 있으면 완료 반응을 달지 않음', async () => {
+  const CFG = { supabaseUrl: 'https://db', supabaseKey: 'k', slackBotToken: 'tok', slackChannelId: 'C1' };
+  const added = [];
+  const fetchImpl = async (u, o) => {
+    if (/alert_threads/.test(u)) return { ok: true, json: async () => [{ slack_ts: 'T0' }] };
+    if (/conversations\.replies/.test(u)) return { json: async () => ({ messages: [{ ts: 'T0', reply_count: 1, reactions: [] }] }) };
+    if (/reactions\.add/.test(u)) { added.push(JSON.parse(o.body).timestamp); return { json: async () => ({ ok: true }) }; }
+    return { ok: true, json: async () => ({}) };
+  };
+  const marked = await markCompletedThreads(CFG, '2026-07-30', '완료느낌표', fetchImpl);
+  assert.equal(marked, 0);
+  assert.deepEqual(added, []);
+});
