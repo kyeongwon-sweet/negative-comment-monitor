@@ -32,8 +32,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Gate 15-minute intensive run
+        id: intensive_gate
+        if: ${{ github.event_name == 'schedule' && github.event.schedule == '*/15 * * * *' }}
+        run: node src/intensive-gate.js
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       - run: npm install --ignore-scripts
-      - run: npm test
+        if: ${{ github.event_name != 'schedule' || github.event.schedule != '*/15 * * * *' || steps.intensive_gate.outputs.should_run == 'true' }}
       - name: Verify Anthropic API key
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_anthropic }}
         run: node src/verify-anthropic.js
@@ -41,6 +48,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5-20251001
       - run: npm start
+        if: ${{ github.event_name != 'schedule' || github.event.schedule != '*/15 * * * *' || steps.intensive_gate.outputs.should_run == 'true' }}
         env:
           GAS_WEB_APP_URL: ${{ secrets.GAS_WEB_APP_URL }}
           GAS_VERIFY_TOKEN: ${{ secrets.GAS_VERIFY_TOKEN }}
