@@ -24,6 +24,49 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isTiktokShortUrl(value) {
+  try {
+    const host = new URL(value).hostname.replace(/^www\./, '').toLowerCase();
+    return host === 'vt.tiktok.com' || host === 'vm.tiktok.com';
+  } catch {
+    return false;
+  }
+}
+
+async function resolveTiktokShortUrl(url, fetchImpl) {
+  const attempts = [
+    { method: 'HEAD', redirect: 'follow' },
+    { method: 'GET', redirect: 'follow' },
+  ];
+  let lastError;
+  for (const options of attempts) {
+    try {
+      const response = await fetchImpl(url, options);
+      const resolved = String(response.url || '').trim();
+      if (resolved && resolved !== url && /tiktok\.com/i.test(resolved)) return resolved;
+      if (response.ok && resolved) return resolved;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError) console.error(`[gas] TikTok short URL resolve failed: ${url} — ${lastError.message}`);
+  return url;
+}
+
+export async function resolveTargetUrls(targets, fetchImpl = fetch) {
+  const out = [];
+  for (const target of targets) {
+    const url = String(target.url || '').trim();
+    if (!isTiktokShortUrl(url)) {
+      out.push(target);
+      continue;
+    }
+    const resolvedUrl = await resolveTiktokShortUrl(url, fetchImpl);
+    out.push(resolvedUrl && resolvedUrl !== url ? { ...target, originalUrl: target.originalUrl || url, url: resolvedUrl } : target);
+  }
+  return out;
+}
+
 export async function fetchTargets(config, fetchImpl = fetch) {
   const url = endpoint(config.gasWebAppUrl, {
     action: 'sponsoredTargets',
@@ -36,7 +79,7 @@ export async function fetchTargets(config, fetchImpl = fetch) {
     try {
       const response = await fetchImpl(url, { method: 'GET', redirect: 'follow' });
       const payload = await readJson(response);
-      return payload.result?.targets || [];
+      return resolveTargetUrls(payload.result?.targets || [], fetchImpl);
     } catch (error) {
       lastError = error;
       if (attempt >= maxAttempts) break;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchTargets } from '../src/gas.js';
+import { fetchTargets, resolveTargetUrls } from '../src/gas.js';
 
 const CFG = { gasWebAppUrl: 'https://script.google.com/x/exec', gasVerifyToken: 'tok', targetBatchSize: 300 };
 
@@ -35,4 +35,25 @@ test('fetchTargets: transient GAS HTML/404는 재시도 후 성공하면 targets
   const out = await fetchTargets({ ...CFG, gasFetchRetries: 3 }, fetchImpl);
   assert.equal(calls, 3);
   assert.deepEqual(out, [{ url: 'u2' }]);
+});
+
+test('resolveTargetUrls: TikTok vt/vm short URLs are replaced with canonical redirected URLs', async () => {
+  const fetchImpl = async (url, options) => {
+    assert.equal(url, 'https://vt.tiktok.com/ZSYabc123/');
+    assert.equal(options.redirect, 'follow');
+    assert.equal(options.method, 'HEAD');
+    return { ok: true, url: 'https://www.tiktok.com/@humorbox_/photo/7530011122233445566' };
+  };
+  const out = await resolveTargetUrls([
+    { url: 'https://vt.tiktok.com/ZSYabc123/', channelCategory: '협찬' },
+    { url: 'https://www.tiktok.com/@u/video/7656707663044185364', channelCategory: '협찬' },
+  ], fetchImpl);
+  assert.deepEqual(out, [
+    {
+      url: 'https://www.tiktok.com/@humorbox_/photo/7530011122233445566',
+      originalUrl: 'https://vt.tiktok.com/ZSYabc123/',
+      channelCategory: '협찬',
+    },
+    { url: 'https://www.tiktok.com/@u/video/7656707663044185364', channelCategory: '협찬' },
+  ]);
 });
