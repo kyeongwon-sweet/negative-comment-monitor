@@ -14,6 +14,8 @@ on:
     # GitHub 크론 드롭/지연에도 스캔이 09:10 직후 확실히 걸리게 한다. 오프-라운드 분(혼잡 회피).
     # 첫 회차가 그날치를 처리하면 이후 회차는 멱등 스킵(비용 증가 없음).
     - cron: '13,26,39,52 0 * * *'
+    # Floor scan: even in quiet periods, run the full monitor every 3h so first-negative latency is bounded.
+    - cron: '0 */3 * * *'
     # 상시 15분 웨이크: 부정 감지글 3h 집중확인 + 지연분 백업.
     - cron: '*/15 * * * *'
 
