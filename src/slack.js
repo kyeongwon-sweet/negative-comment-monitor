@@ -36,6 +36,13 @@ export function productGroup(productName) {
   return 'other';
 }
 
+// 상품군 → 스레드 라벨(표시명). jd=쫀득바, p=파인트, 그 외=기타.
+export function productLabel(group) {
+  if (group === 'jd') return '쫀득바';
+  if (group === 'p') return '파인트';
+  return '기타';
+}
+
 // 담당자 라우팅 = (상품군 × 채널카테고리). 상품별 지정이 없는 조합/상품은
 // 기존 카테고리 기반 담당자(assigneeForChannelCategory)로 폴백해 하위호환.
 export function assigneeForTarget(target, assignees = {}) {

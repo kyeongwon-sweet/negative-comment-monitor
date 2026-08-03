@@ -12,7 +12,7 @@ import { estimateUsd } from './pricing.js';
 import { computeClassifierHash, purgeCache } from './cache.js';
 import { falsePositiveStats } from './review.js';
 import { ensureDailyThread, markCompletedThreads } from './threads.js';
-import { assigneeForTarget } from './slack.js';
+import { assigneeForTarget, productGroup, productLabel } from './slack.js';
 import { APIFY_LOW_BALANCE_USD, DEFAULT_COST_THRESHOLDS, estimateApifyUsd, fetchApifyUsage, maybeAlertApifyLow, maybeAlertCosts, postApifyLowWarning, postCostWarning, recordRunCost, runKey, sumDailyCost } from './cost.js';
 
 export async function runMonitor(config = loadConfig()) {
@@ -171,13 +171,16 @@ export async function runMonitor(config = loadConfig()) {
 
   // 날짜×채널분류 스레드 ts를 실행 내 캐시(분류당 1회만 조회/생성). 실패 시 null → 최상위 발송 폴백.
   const kstDateForThreads = kstDateKey(runNow);
-  const threadTsByAssignee = new Map();
+  const threadTsByScope = new Map();
   async function resolveThreadTs(target) {
-    // 스레드는 담당자별로 분리한다((상품 × 카테고리) → 담당자). 담당자 1명당 하루 1스레드.
+    // 스레드는 (상품 × 카테고리)별로 분리한다. 스코프의 담당자는 결정적이라 스레드당 1명.
+    const label = productLabel(productGroup(target.productName));
+    const category = target.channelCategory || '기타';
+    const scopeKey = `${label}|${category}`;
+    if (threadTsByScope.has(scopeKey)) return threadTsByScope.get(scopeKey);
     const assignee = assigneeForTarget(target, config.slackAssignees);
-    if (threadTsByAssignee.has(assignee)) return threadTsByAssignee.get(assignee);
-    const ts = await ensureDailyThread(config, { kstDate: kstDateForThreads, assignee });
-    threadTsByAssignee.set(assignee, ts);
+    const ts = await ensureDailyThread(config, { kstDate: kstDateForThreads, scopeKey, productLabel: label, category, assignee });
+    threadTsByScope.set(scopeKey, ts);
     return ts;
   }
 

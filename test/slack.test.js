@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { actionDefinitions, assigneeForChannelCategory, assigneeForTarget, buildAlertBlocks, productGroup, sendAlert, verifySlackSignature } from '../src/slack.js';
+import { actionDefinitions, assigneeForChannelCategory, assigneeForTarget, buildAlertBlocks, productGroup, productLabel, sendAlert, verifySlackSignature } from '../src/slack.js';
 
 const assignees = {
   satellite: 'U_SATELLITE',
@@ -40,6 +40,11 @@ test('productGroup: JD 포함=jd, P로 시작=p, 그 외=other', () => {
   assert.equal(productGroup('DB혼'), 'other');
   assert.equal(productGroup('C혼'), 'other');
   assert.equal(productGroup(''), 'other');
+});
+test('productLabel: jd=쫀득바, p=파인트, 그 외=기타', () => {
+  assert.equal(productLabel('jd'), '쫀득바');
+  assert.equal(productLabel('p'), '파인트');
+  assert.equal(productLabel('other'), '기타');
 });
 test('assigneeForTarget: 상품×카테고리 라우팅 + 미지정은 카테고리 기본값 폴백', () => {
   // JD 상품
