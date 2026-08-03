@@ -62,6 +62,22 @@ test('assigneeForTarget: 상품×카테고리 라우팅 + 미지정은 카테고
   // 상품 정보 없음 → 폴백(하위호환)
   assert.equal(assigneeForTarget({ channelCategory: '유상협찬' }, assignees), 'U_SPONSORSHIP');
 });
+test('alert card category line shows product label (상품 × 카테고리)', () => {
+  const blocks = buildAlertBlocks(
+    { row: 1, url: 'https://example.com', channelCategory: '바이럴 (배너)', productName: 'JD멜' },
+    { id: 'c1', platform: 'instagram', text: '라라스윗 별로', risk: {} },
+    undefined,
+    assignees,
+  );
+  assert.ok(blocks.some((b) => b.text?.text === '*[쫀득바] 바이럴 (배너)*'));
+});
+test('alert card label falls back to 기타 when product unknown', () => {
+  const blocks = buildAlertBlocks(
+    { row: 1, url: 'https://example.com', channelCategory: '유상협찬' },
+    { id: 'c1', platform: 'instagram', text: 'x', risk: {} },
+  );
+  assert.ok(blocks.some((b) => b.text?.text === '*[기타] 유상협찬*'));
+});
 test('alert blocks mention the category assignee', () => {
   const blocks = buildAlertBlocks(
     { row: 1, url: 'https://example.com', channelCategory: '바이럴(배너)' },

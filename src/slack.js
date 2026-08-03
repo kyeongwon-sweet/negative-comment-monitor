@@ -99,7 +99,7 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   const assigneeId = assigneeForTarget(target, assignees);
   return [
     { type: 'header', text: { type: 'plain_text', text: `🚨 부정댓글 감지 — ${comment.platform}` } },
-    { type: 'section', text: { type: 'mrkdwn', text: `*[${esc(target.channelCategory || '-')}]*` } },
+    { type: 'section', text: { type: 'mrkdwn', text: `*[${esc(productLabel(productGroup(target.productName)))}] ${esc(target.channelCategory || '-')}*` } },
     { type: 'section', text: { type: 'mrkdwn', text: mainLine } },
     { type: 'section', fields: [
       { type: 'mrkdwn', text: '*현재상태*\n미처리 ⏳' },
