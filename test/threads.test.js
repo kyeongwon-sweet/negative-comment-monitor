@@ -4,13 +4,13 @@ import { buildThreadParentText, ensureDailyThread, markCompletedThreads } from '
 
 const CFG = { supabaseUrl: 'https://db.example', supabaseKey: 'svc', slackBotToken: 'tok', slackChannelId: 'C0BHD9S69JA' };
 
-test('buildThreadParentText: 1줄=분류·날짜, 2줄=담당자 멘션', () => {
+test('buildThreadParentText: 담당자별 스레드 — 1줄=날짜, 2줄=담당자 멘션', () => {
   assert.equal(
-    buildThreadParentText('바이럴 (배너)', '2026-07-23', 'U09RCJ1B9ML'),
-    '🚨 *[바이럴 (배너)]* 부정댓글 · 2026-07-23\n담당자: <@U09RCJ1B9ML>',
+    buildThreadParentText('2026-07-23', 'U09RCJ1B9ML'),
+    '🚨 부정댓글 · 2026-07-23\n담당자: <@U09RCJ1B9ML>',
   );
-  // 담당자 없으면 담당자 줄 생략, 분류 없으면 기타
-  assert.equal(buildThreadParentText('', '2026-07-23', ''), '🚨 *[기타]* 부정댓글 · 2026-07-23');
+  // 담당자 없으면 담당자 줄 생략
+  assert.equal(buildThreadParentText('2026-07-23', ''), '🚨 부정댓글 · 2026-07-23');
 });
 
 test('ensureDailyThread: 이미 있으면 슬랙 발송 없이 기존 ts 반환', async () => {
@@ -19,7 +19,7 @@ test('ensureDailyThread: 이미 있으면 슬랙 발송 없이 기존 ts 반환'
     if (/slack.com/.test(url)) { posted = true; return { ok: true, json: async () => ({ ok: true, ts: 'NEW' }) }; }
     return { ok: true, json: async () => [{ slack_ts: '111.222' }] }; // select 결과 존재
   };
-  const ts = await ensureDailyThread(CFG, { kstDate: '2026-07-23', channelCategory: '바이럴 (배너)', assignee: 'U1' }, fetchImpl);
+  const ts = await ensureDailyThread(CFG, { kstDate: '2026-07-23', assignee: 'U1' }, fetchImpl);
   assert.equal(ts, '111.222');
   assert.equal(posted, false);
 });
@@ -36,17 +36,17 @@ test('ensureDailyThread: 없으면 부모 발송 + 저장 + ts 반환', async ()
     selectCount += 1;
     return { ok: true, json: async () => (selectCount === 1 ? [] : [{ slack_ts: '999.000' }]) };
   };
-  const ts = await ensureDailyThread(CFG, { kstDate: '2026-07-23', channelCategory: '온드미디어', assignee: 'U8' }, fetchImpl);
+  const ts = await ensureDailyThread(CFG, { kstDate: '2026-07-23', assignee: 'U8' }, fetchImpl);
   assert.equal(ts, '999.000');
   assert.deepEqual(calls, ['post', 'insert']);
 });
 
 test('ensureDailyThread: 비활성/실패는 null(최상위 발송 폴백)', async () => {
-  assert.equal(await ensureDailyThread({}, { kstDate: '2026-07-23', channelCategory: 'x' }, async () => ({ ok: true, json: async () => [] })), null);
-  assert.equal(await ensureDailyThread(CFG, { kstDate: '2026-07-23', channelCategory: 'x' }, async () => { throw new Error('down'); }), null);
+  assert.equal(await ensureDailyThread({}, { kstDate: '2026-07-23', assignee: 'U1' }, async () => ({ ok: true, json: async () => [] })), null);
+  assert.equal(await ensureDailyThread(CFG, { kstDate: '2026-07-23', assignee: 'U1' }, async () => { throw new Error('down'); }), null);
   // 슬랙 발송 실패(ok:false)도 null
   const f = async (url) => (/slack.com/.test(url) ? { ok: true, json: async () => ({ ok: false }) } : { ok: true, json: async () => [] });
-  assert.equal(await ensureDailyThread(CFG, { kstDate: '2026-07-23', channelCategory: 'x' }, f), null);
+  assert.equal(await ensureDailyThread(CFG, { kstDate: '2026-07-23', assignee: 'U1' }, f), null);
 });
 
 test('markCompletedThreads: 답글0+미반응 스레드만 완료느낌표, 미처리·이미반응은 건너뜀', async () => {

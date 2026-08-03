@@ -12,7 +12,7 @@ import { estimateUsd } from './pricing.js';
 import { computeClassifierHash, purgeCache } from './cache.js';
 import { falsePositiveStats } from './review.js';
 import { ensureDailyThread, markCompletedThreads } from './threads.js';
-import { assigneeForChannelCategory } from './slack.js';
+import { assigneeForTarget } from './slack.js';
 import { APIFY_LOW_BALANCE_USD, DEFAULT_COST_THRESHOLDS, estimateApifyUsd, fetchApifyUsage, maybeAlertApifyLow, maybeAlertCosts, postApifyLowWarning, postCostWarning, recordRunCost, runKey, sumDailyCost } from './cost.js';
 
 export async function runMonitor(config = loadConfig()) {
@@ -54,6 +54,7 @@ export async function runMonitor(config = loadConfig()) {
         ...target,
         lastCollectedAt: target.lastCollectedAt || counts[target.url]?.lastCheckedAt || '',
         recentNegativeDetectedAt: recentAlerts.get(extractPostKey(target.url)) || target.recentNegativeDetectedAt || '',
+        productName: target.productName || counts[target.url]?.productName || '',
       }));
     } catch (error) {
       console.error('[schedule] Supabase 이력 조회 실패 — GAS 시각 정보로 진행:', error.message);
@@ -170,13 +171,13 @@ export async function runMonitor(config = loadConfig()) {
 
   // 날짜×채널분류 스레드 ts를 실행 내 캐시(분류당 1회만 조회/생성). 실패 시 null → 최상위 발송 폴백.
   const kstDateForThreads = kstDateKey(runNow);
-  const threadTsByCategory = new Map();
-  async function resolveThreadTs(channelCategory) {
-    const category = channelCategory || '기타';
-    if (threadTsByCategory.has(category)) return threadTsByCategory.get(category);
-    const assignee = assigneeForChannelCategory(category, config.slackAssignees);
-    const ts = await ensureDailyThread(config, { kstDate: kstDateForThreads, channelCategory: category, assignee });
-    threadTsByCategory.set(category, ts);
+  const threadTsByAssignee = new Map();
+  async function resolveThreadTs(target) {
+    // 스레드는 담당자별로 분리한다((상품 × 카테고리) → 담당자). 담당자 1명당 하루 1스레드.
+    const assignee = assigneeForTarget(target, config.slackAssignees);
+    if (threadTsByAssignee.has(assignee)) return threadTsByAssignee.get(assignee);
+    const ts = await ensureDailyThread(config, { kstDate: kstDateForThreads, assignee });
+    threadTsByAssignee.set(assignee, ts);
     return ts;
   }
 
@@ -197,7 +198,7 @@ export async function runMonitor(config = loadConfig()) {
       }
       console.error(`[alert] ${target.platform} | ${comment.risk.category} | ${(comment.text || '').replace(/\s+/g, ' ').slice(0, 50)}`);
       if (!config.dryRun) {
-        const threadTs = await resolveThreadTs(target.channelCategory);
+        const threadTs = await resolveThreadTs(target);
         const slackResult = await sendAlert(config, target, comment, undefined, threadTs);
         await recordAlert(config, target, comment, fingerprint, slackResult.ts, classifierHash);
       }

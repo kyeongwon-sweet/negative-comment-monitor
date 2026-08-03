@@ -24,6 +24,39 @@ export function assigneeForChannelCategory(channelCategory, assignees = {}) {
   return assignees.other || '';
 }
 
+// 상품 코드(sponsored_posts.product_name)로 상품군 판정.
+//   - 'jd 들어간 상품'(JD멜/JD망/JD혼=쫀득바) → 'jd'
+//   - 'p로 시작하는 상품'(P혼/P망=파인트) → 'p'
+//   - 그 외(듬뿍바 DB·C·ZB·BA 등) → 'other'(기존 카테고리 담당자 유지)
+export function productGroup(productName) {
+  const p = String(productName || '').trim().toLowerCase();
+  if (!p) return 'other';
+  if (p.includes('jd')) return 'jd';
+  if (p.startsWith('p')) return 'p';
+  return 'other';
+}
+
+// 담당자 라우팅 = (상품군 × 채널카테고리). 상품별 지정이 없는 조합/상품은
+// 기존 카테고리 기반 담당자(assigneeForChannelCategory)로 폴백해 하위호환.
+export function assigneeForTarget(target, assignees = {}) {
+  const category = String(target?.channelCategory || '').trim().toLowerCase();
+  const group = productGroup(target?.productName);
+  const isBanner = category.includes('바이럴') && category.includes('배너');
+  const isVideo = category.includes('바이럴') && category.includes('영상');
+  const isSatellite = category.includes('위성채널');
+  const isSponsorship = category.includes('협찬');
+  if (group === 'jd') {
+    if (isSponsorship && assignees.jd?.sponsorship) return assignees.jd.sponsorship;
+    if (isBanner && assignees.jd?.viralBanner) return assignees.jd.viralBanner;
+    if (isVideo && assignees.jd?.viralVideo) return assignees.jd.viralVideo;
+    if (isSatellite && assignees.jd?.satellite) return assignees.jd.satellite;
+  } else if (group === 'p') {
+    if (isBanner && assignees.p?.viralBanner) return assignees.p.viralBanner;
+    if (isVideo && assignees.p?.viralVideo) return assignees.p.viralVideo;
+  }
+  return assigneeForChannelCategory(target?.channelCategory, assignees);
+}
+
 function esc(text) {
   return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -56,7 +89,7 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   const text = esc(truncate(String(comment.text || '').replace(/\s+/g, ' ').trim()));
   const companyPart = (isViral && company) ? ` (${company})` : '';
   const mainLine = `<${target.url}|${channel}>${companyPart} / ${author} / ${text}`;
-  const assigneeId = assigneeForChannelCategory(target.channelCategory, assignees);
+  const assigneeId = assigneeForTarget(target, assignees);
   return [
     { type: 'header', text: { type: 'plain_text', text: `🚨 부정댓글 감지 — ${comment.platform}` } },
     { type: 'section', text: { type: 'mrkdwn', text: `*[${esc(target.channelCategory || '-')}]*` } },

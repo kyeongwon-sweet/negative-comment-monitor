@@ -6,9 +6,9 @@ function threadsEnabled(config) {
   return Boolean(config && config.supabaseUrl && config.supabaseKey && config.slackBotToken && config.slackChannelId);
 }
 
-export function buildThreadParentText(channelCategory, kstDate, assignee = '') {
+export function buildThreadParentText(kstDate, assignee = '') {
   const assigneeLine = assignee ? `\n담당자: <@${assignee}>` : '';
-  return `🚨 *[${channelCategory || '기타'}]* 부정댓글 · ${kstDate}${assigneeLine}`;
+  return `🚨 부정댓글 · ${kstDate}${assigneeLine}`;
 }
 
 async function selectThreadTs(config, kstDate, channelCategory, fetchImpl) {
@@ -22,17 +22,19 @@ async function selectThreadTs(config, kstDate, channelCategory, fetchImpl) {
   return rows[0]?.slack_ts || null;
 }
 
-export async function ensureDailyThread(config, { kstDate, channelCategory, assignee = '' }, fetchImpl = fetch) {
+// 스레드는 담당자별로 분리한다(담당자 1명당 하루 1스레드). alert_threads.channel_category 컬럼을
+// 담당자ID 스코프 키로 재사용해 스키마 변경 없이 (kst_date, 담당자, channel) 유니크를 유지한다.
+export async function ensureDailyThread(config, { kstDate, assignee = '' }, fetchImpl = fetch) {
   if (!threadsEnabled(config)) return null;
-  const category = channelCategory || '기타';
+  const scope = assignee || '기타';
   try {
-    const existing = await selectThreadTs(config, kstDate, category, fetchImpl);
+    const existing = await selectThreadTs(config, kstDate, scope, fetchImpl);
     if (existing) return existing;
 
     const res = await fetchImpl('https://slack.com/api/chat.postMessage', {
       method: 'POST',
       headers: { authorization: `Bearer ${config.slackBotToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ channel: config.slackChannelId, text: buildThreadParentText(category, kstDate, assignee) }),
+      body: JSON.stringify({ channel: config.slackChannelId, text: buildThreadParentText(kstDate, assignee) }),
     });
     const payload = await res.json();
     if (!payload.ok || !payload.ts) return null;
@@ -40,9 +42,9 @@ export async function ensureDailyThread(config, { kstDate, channelCategory, assi
     await fetchImpl(`${config.supabaseUrl}/rest/v1/alert_threads?on_conflict=kst_date,channel_category,slack_channel_id`, {
       method: 'POST',
       headers: headers(config, { 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' }),
-      body: JSON.stringify({ kst_date: kstDate, channel_category: category, slack_channel_id: config.slackChannelId, slack_ts: payload.ts }),
+      body: JSON.stringify({ kst_date: kstDate, channel_category: scope, slack_channel_id: config.slackChannelId, slack_ts: payload.ts }),
     });
-    const canonical = await selectThreadTs(config, kstDate, category, fetchImpl);
+    const canonical = await selectThreadTs(config, kstDate, scope, fetchImpl);
     return canonical || payload.ts;
   } catch {
     return null;

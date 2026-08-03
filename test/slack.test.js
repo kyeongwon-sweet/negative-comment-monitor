@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { actionDefinitions, assigneeForChannelCategory, buildAlertBlocks, sendAlert, verifySlackSignature } from '../src/slack.js';
+import { actionDefinitions, assigneeForChannelCategory, assigneeForTarget, buildAlertBlocks, productGroup, sendAlert, verifySlackSignature } from '../src/slack.js';
 
 const assignees = {
   satellite: 'U_SATELLITE',
@@ -9,6 +9,8 @@ const assignees = {
   viralVideoOwned: 'U_VIDEO_OWNED',
   other: 'U_OTHER',
   sponsorship: 'U_SPONSORSHIP',
+  jd: { sponsorship: 'U_JD_SPON', viralBanner: 'U_JD_BANNER', viralVideo: 'U_JD_VIDEO', satellite: 'U_JD_SAT' },
+  p: { viralBanner: 'U_P_BANNER', viralVideo: 'U_P_VIDEO' },
 };
 
 test('owned media and satellite channels get moderation buttons', () => {
@@ -29,6 +31,31 @@ test('routes channel categories to the requested Slack assignees', () => {
   assert.equal(assigneeForChannelCategory('온드미디어', assignees), 'U_VIDEO_OWNED');
   assert.equal(assigneeForChannelCategory('유상협찬', assignees), 'U_SPONSORSHIP');
   assert.equal(assigneeForChannelCategory('PPL', assignees), 'U_OTHER');
+});
+test('productGroup: JD 포함=jd, P로 시작=p, 그 외=other', () => {
+  assert.equal(productGroup('JD멜'), 'jd');
+  assert.equal(productGroup('JD망'), 'jd');
+  assert.equal(productGroup('P혼'), 'p');
+  assert.equal(productGroup('P망'), 'p');
+  assert.equal(productGroup('DB혼'), 'other');
+  assert.equal(productGroup('C혼'), 'other');
+  assert.equal(productGroup(''), 'other');
+});
+test('assigneeForTarget: 상품×카테고리 라우팅 + 미지정은 카테고리 기본값 폴백', () => {
+  // JD 상품
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_JD_SPON');
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '바이럴 (배너)' }, assignees), 'U_JD_BANNER');
+  assert.equal(assigneeForTarget({ productName: 'JD망', channelCategory: '바이럴 (영상)' }, assignees), 'U_JD_VIDEO');
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '위성채널' }, assignees), 'U_JD_SAT');
+  // P 상품(배너·영상만 지정) — 나머지는 폴백
+  assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '바이럴 (배너)' }, assignees), 'U_P_BANNER');
+  assert.equal(assigneeForTarget({ productName: 'P망', channelCategory: '바이럴 (영상)' }, assignees), 'U_P_VIDEO');
+  assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_SPONSORSHIP');
+  // 기타 상품(듬뿍바 등) → 현재 카테고리 담당자 유지
+  assert.equal(assigneeForTarget({ productName: 'DB혼', channelCategory: '바이럴 (배너)' }, assignees), 'U_BANNER');
+  assert.equal(assigneeForTarget({ productName: 'DB딸', channelCategory: '위성채널' }, assignees), 'U_SATELLITE');
+  // 상품 정보 없음 → 폴백(하위호환)
+  assert.equal(assigneeForTarget({ channelCategory: '유상협찬' }, assignees), 'U_SPONSORSHIP');
 });
 test('alert blocks mention the category assignee', () => {
   const blocks = buildAlertBlocks(

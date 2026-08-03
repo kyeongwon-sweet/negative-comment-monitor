@@ -24,6 +24,17 @@ export function loadConfig(env = process.env) {
       viralVideoOwned: String(env.SLACK_ASSIGNEE_VIRAL_VIDEO_OWNED || '').trim(),
       other: String(env.SLACK_ASSIGNEE_OTHER || '').trim(),
       sponsorship: String(env.SLACK_ASSIGNEE_SPONSORSHIP || '').trim(),
+      // 상품별 담당자(상품 코드 × 카테고리). 미지정 조합/상품은 위 카테고리 기본값으로 폴백.
+      jd: {
+        sponsorship: String(env.SLACK_ASSIGNEE_JD_SPONSORSHIP || '').trim(),
+        viralBanner: String(env.SLACK_ASSIGNEE_JD_VIRAL_BANNER || '').trim(),
+        viralVideo: String(env.SLACK_ASSIGNEE_JD_VIRAL_VIDEO || '').trim(),
+        satellite: String(env.SLACK_ASSIGNEE_JD_SATELLITE || '').trim(),
+      },
+      p: {
+        viralBanner: String(env.SLACK_ASSIGNEE_P_VIRAL_BANNER || '').trim(),
+        viralVideo: String(env.SLACK_ASSIGNEE_P_VIRAL_VIDEO || '').trim(),
+      },
     },
     supabaseUrl: String(env.SUPABASE_URL || '').trim().replace(/\/$/, ''),
     supabaseKey: String(env.SUPABASE_SERVICE_ROLE_KEY || '').trim(),

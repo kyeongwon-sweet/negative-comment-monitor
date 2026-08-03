@@ -29,11 +29,12 @@ export async function loadCommentCounts(config, targets, fetchImpl = fetch, now 
   // 1) sponsored_posts 전량 → 게시물키→{id, 캡션} 매핑
   const keyToId = {};
   const keyToCaption = {};
+  const keyToProduct = {};
   for (let off = 0; ; off += 1000) {
-    const chunk = await sbGet(config, `sponsored_posts?select=id,url,content_summary&order=id&offset=${off}&limit=1000`, fetchImpl);
+    const chunk = await sbGet(config, `sponsored_posts?select=id,url,content_summary,product_name&order=id&offset=${off}&limit=1000`, fetchImpl);
     for (const p of chunk) {
       const k = extractPostKey(p.url);
-      if (k && !keyToId[k]) { keyToId[k] = p.id; keyToCaption[k] = p.content_summary || ''; }
+      if (k && !keyToId[k]) { keyToId[k] = p.id; keyToCaption[k] = p.content_summary || ''; keyToProduct[k] = p.product_name || ''; }
     }
     if (chunk.length < 1000) break;
   }
@@ -62,6 +63,7 @@ export async function loadCommentCounts(config, targets, fetchImpl = fetch, now 
       last: id != null ? (checks[id]?.lastCount ?? null) : null,
       lastCheckedAt: id != null ? (checks[id]?.lastCheckedAt || '') : '',
       caption: k ? (keyToCaption[k] || '') : '',
+      productName: k ? (keyToProduct[k] || '') : '',
     };
   }
   return out;
