@@ -30,13 +30,15 @@ export function evaluateHealth(runs, now = Date.now()) {
   return { healthy: lastSuccessAt != null && lastSuccessAt >= threshold, lastSuccessAt, threshold };
 }
 
-export function buildStaleMessage(now, lastSuccessAt, assigneeOther = '') {
+export function buildStaleMessage(now, lastSuccessAt, assigneeOther = '', recoveryDispatched = false) {
   const owner = String(assigneeOther || '').trim();
   return [
     '⚠️ *부정댓글 모니터링 — 오늘 점검 미확인*',
     `오늘(${kstDate(now)}) 09:10 KST 이후 성공한 monitor 실행이 없습니다.`,
     `마지막 성공 실행: ${fmtKst(lastSuccessAt)}`,
-    'GitHub Actions 스케줄 실행/실패를 확인하세요.',
+    recoveryDispatched
+      ? '자가치유: monitor.yml 수동 실행을 자동 요청했습니다.'
+      : 'GitHub Actions 스케줄 실행/실패를 확인하세요.',
     owner ? `담당자: <@${owner}>` : '',
   ].filter(Boolean).join('\n');
 }
@@ -68,16 +70,37 @@ async function postSlack(env, text, fetchImpl) {
   return payload;
 }
 
+async function dispatchMonitor(env, fetchImpl) {
+  const repo = String(env.GITHUB_REPOSITORY || '').trim();
+  const token = String(env.GH_TOKEN || env.GITHUB_TOKEN || '').trim();
+  const ref = String(env.GITHUB_REF_NAME || 'master').trim() || 'master';
+  if (!repo || !token) throw new Error('Missing GITHUB_REPOSITORY or token');
+  const url = `https://api.github.com/repos/${repo}/actions/workflows/monitor.yml/dispatches`;
+  const res = await fetchImpl(url, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: 'application/vnd.github+json',
+      'content-type': 'application/json',
+      'user-agent': 'ncm-heartbeat',
+    },
+    body: JSON.stringify({ ref }),
+  });
+  if (!res.ok) throw new Error(`GitHub dispatch API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return true;
+}
+
 export async function runHeartbeatCheck(env = process.env, now = Date.now(), fetchImpl = fetch) {
   const runs = await fetchMonitorRuns(env, fetchImpl);
   const health = evaluateHealth(runs, now);
   if (health.healthy) {
     console.log(`[heartbeat] OK — 마지막 성공 ${fmtKst(health.lastSuccessAt)}`);
-    return { warned: false };
+    return { warned: false, dispatched: false };
   }
-  await postSlack(env, buildStaleMessage(now, health.lastSuccessAt, env.SLACK_ASSIGNEE_OTHER), fetchImpl);
-  console.error(`[heartbeat] STALE — 오늘 09:10 KST 이후 성공 실행 없음(마지막 ${fmtKst(health.lastSuccessAt)}) → 경고 발송`);
-  return { warned: true };
+  await dispatchMonitor(env, fetchImpl);
+  await postSlack(env, buildStaleMessage(now, health.lastSuccessAt, env.SLACK_ASSIGNEE_OTHER, true), fetchImpl);
+  console.error(`[heartbeat] STALE — 오늘 09:10 KST 이후 성공 실행 없음(마지막 ${fmtKst(health.lastSuccessAt)}) → monitor.yml 자동 실행 요청 + 경고 발송`);
+  return { warned: true, dispatched: true };
 }
 
 if (import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`) {
