@@ -52,15 +52,18 @@ test('assigneeForTarget: 상품×카테고리 라우팅 + 미지정은 카테고
   assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '바이럴 (배너)' }, assignees), 'U_JD_BANNER');
   assert.equal(assigneeForTarget({ productName: 'JD망', channelCategory: '바이럴 (영상)' }, assignees), 'U_JD_VIDEO');
   assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '위성채널' }, assignees), 'U_JD_SAT');
-  // P 상품(배너·영상만 지정) — 나머지는 폴백
+  // P 상품(배너·영상만 지정) — 나머지 조합은 기타로 황경원(other)
   assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '바이럴 (배너)' }, assignees), 'U_P_BANNER');
   assert.equal(assigneeForTarget({ productName: 'P망', channelCategory: '바이럴 (영상)' }, assignees), 'U_P_VIDEO');
-  assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_SPONSORSHIP');
-  // 기타 상품(듬뿍바 등) → 현재 카테고리 담당자 유지
-  assert.equal(assigneeForTarget({ productName: 'DB혼', channelCategory: '바이럴 (배너)' }, assignees), 'U_BANNER');
-  assert.equal(assigneeForTarget({ productName: 'DB딸', channelCategory: '위성채널' }, assignees), 'U_SATELLITE');
-  // 상품 정보 없음 → 폴백(하위호환)
-  assert.equal(assigneeForTarget({ channelCategory: '유상협찬' }, assignees), 'U_SPONSORSHIP');
+  assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_OTHER');
+  // 기타 상품(듬뿍바 등)은 카테고리 무관 모두 황경원(other)
+  assert.equal(assigneeForTarget({ productName: 'DB혼', channelCategory: '바이럴 (배너)' }, assignees), 'U_OTHER');
+  assert.equal(assigneeForTarget({ productName: 'DB딸', channelCategory: '위성채널' }, assignees), 'U_OTHER');
+  assert.equal(assigneeForTarget({ productName: 'DB혼', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_OTHER');
+  // JD 상품이라도 미지정 채널(기타채널, 예: 온드미디어)은 황경원(other)
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '온드미디어' }, assignees), 'U_OTHER');
+  // 상품 정보 없음 → 기타 → 황경원(other)
+  assert.equal(assigneeForTarget({ channelCategory: '유상협찬' }, assignees), 'U_OTHER');
 });
 test('alert card category line shows product label (상품 × 카테고리)', () => {
   const blocks = buildAlertBlocks(
@@ -80,12 +83,12 @@ test('alert card label falls back to 기타 when product unknown', () => {
 });
 test('alert blocks mention the category assignee', () => {
   const blocks = buildAlertBlocks(
-    { row: 1, url: 'https://example.com', channelCategory: '바이럴(배너)' },
+    { row: 1, url: 'https://example.com', channelCategory: '바이럴(배너)', productName: 'JD멜' },
     { id: 'c1', platform: 'instagram', text: '라라스윗 별로', risk: {} },
     undefined,
     assignees,
   );
-  assert.ok(blocks.some((block) => block.text?.text === '*담당자*\n<@U_BANNER>'));
+  assert.ok(blocks.some((block) => block.text?.text === '*담당자*\n<@U_JD_BANNER>'));
 });
 test('작성자는 메인 라인에만, 필드엔 중복 없음(B2)', () => {
   const blocks = buildAlertBlocks(

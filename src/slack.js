@@ -43,8 +43,9 @@ export function productLabel(group) {
   return '기타';
 }
 
-// 담당자 라우팅 = (상품군 × 채널카테고리). 상품별 지정이 없는 조합/상품은
-// 기존 카테고리 기반 담당자(assigneeForChannelCategory)로 폴백해 하위호환.
+// 담당자 라우팅 = (상품군 × 채널카테고리).
+//   - JD/P 상품의 지정 조합은 해당 담당자로.
+//   - 그 외(기타 제품 DB·C·ZB·BA 등 + 기타 채널 + 미지정 조합)는 모두 담당자 other(황경원).
 export function assigneeForTarget(target, assignees = {}) {
   const category = String(target?.channelCategory || '').trim().toLowerCase();
   const group = productGroup(target?.productName);
@@ -61,7 +62,7 @@ export function assigneeForTarget(target, assignees = {}) {
     if (isBanner && assignees.p?.viralBanner) return assignees.p.viralBanner;
     if (isVideo && assignees.p?.viralVideo) return assignees.p.viralVideo;
   }
-  return assigneeForChannelCategory(target?.channelCategory, assignees);
+  return assignees.other || '';
 }
 
 function esc(text) {
