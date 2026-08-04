@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "start": "node src/run.js",
+    "start:meta-ads": "node src/meta-ads-run.js",
     "test": "node --test"
   },
   "engines": {
     "node": ">=20"
   }
 }
-

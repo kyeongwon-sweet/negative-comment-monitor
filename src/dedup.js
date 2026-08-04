@@ -64,6 +64,9 @@ export async function recordAlert(config, target, comment, fingerprint, slackTs 
       slack_channel_id: String(config.slackChannelId || ''),
       slack_ts: String(slackTs || '') || null,
       classifier_hash: classifierHash || null,
+      source: String(target.source || '') || null,
+      meta_media_id: String(target.metaMediaId || '') || null,
+      meta_ad_id: String(target.metaAdId || '') || null,
     }),
   });
   if (!response.ok) throw new Error(`Dedup POST ${response.status}: ${(await response.text()).slice(0, 200)}`);

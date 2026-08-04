@@ -4,7 +4,7 @@
 //   - 토큰 값은 Supabase meta_tokens 테이블에 저장(자동 갱신이 GitHub 시크릿을 건드리지 않게).
 //   - app_secret 등 자격증명은 절대 로그/에러에 노출하지 않는다.
 
-const DEFAULT_GRAPH = 'https://graph.facebook.com/v21.0';
+const DEFAULT_GRAPH = 'https://graph.facebook.com/v26.0';
 
 function graphBase(config) {
   return (config && config.metaGraphBase) || DEFAULT_GRAPH;

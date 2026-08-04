@@ -20,6 +20,9 @@ test('owned media and satellite channels get moderation buttons', () => {
 test('external channels only get complete and ignore buttons', () => {
   assert.deepEqual(actionDefinitions({ channelCategory: '유상협찬' }).map((item) => item[1]), ['complete', 'ignore']);
 });
+test('Meta ad alerts expose only human hide and ignore actions', () => {
+  assert.deepEqual(actionDefinitions({ source: 'meta_ads', channelCategory: '인지 광고' }).map((item) => item[1]), ['hide', 'ignore']);
+});
 test('alert blocks include ownership-specific action buttons', () => {
   const blocks = buildAlertBlocks({ row: 1, url: 'https://example.com', channelCategory: '유상협찬' }, { id: 'c1', platform: 'youtube', text: '라라스윗 별로', risk: {} });
   assert.equal(blocks.at(-1).elements.length, 2);

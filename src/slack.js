@@ -4,12 +4,14 @@ import { isManagedChannel } from './routing.js';
 const DEFAULT_COMPLETED_THREAD_EMOJI = '\uC644\uB8CC\uB290\uB08C\uD45C';
 const managedActions = [['숨김', 'hide', 'danger'], ['승인', 'approve', 'primary'], ['보류', 'hold'], ['숨김해제', 'unhide']];
 const externalActions = [['✅ 완료', 'complete', 'primary'], ['🙈 무시', 'ignore']];
+const metaAdActions = [['숨김', 'hide', 'danger'], ['🙈 무시', 'ignore']];
 
 function button([text, actionId, style], value) {
   return { type: 'button', text: { type: 'plain_text', text }, action_id: actionId, value, ...(style ? { style } : {}) };
 }
 
 export function actionDefinitions(target, managedCategories) {
+  if (target?.source === 'meta_ads') return metaAdActions;
   return isManagedChannel(target, managedCategories) ? managedActions : externalActions;
 }
 
@@ -87,7 +89,13 @@ export function formatKst(ts) {
 }
 
 export function buildAlertBlocks(target, comment, managedCategories = ['온드미디어', '위성채널'], assignees = {}) {
-  const value = JSON.stringify({ row: target.row, commentId: comment.id, platform: comment.platform, url: target.url });
+  const value = JSON.stringify({
+    row: target.row,
+    commentId: comment.id,
+    platform: comment.platform,
+    url: target.url,
+    source: target.source || '',
+  });
   const reason = comment.risk?.matchedTerms?.join(', ') || comment.risk?.reason || '부정 표현';
   // 채널명(업체명) / 작성자 / 댓글 — 한 라인. 채널명은 게시글 링크, 업체명은 바이럴만.
   const isViral = /바이럴/.test(target.channelCategory || '');

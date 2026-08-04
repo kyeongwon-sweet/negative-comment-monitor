@@ -95,6 +95,25 @@ jobs:
           TRACKING_DAYS: ${{ vars.TRACKING_DAYS }}
           DELTA_ENABLED: 'true'
           DRY_RUN: 'false'
+      - name: Process queued Meta Instagram ad comments
+        # 기존 15분 웨이크 실행을 재사용한다. 별도 workflow/runner를 만들지 않아 Actions 비용을 늘리지 않는다.
+        # 일반 모니터가 실패하거나 intensive gate가 스킵이어도 광고 댓글 대기열은 독립 처리한다.
+        if: ${{ always() }}
+        run: node src/meta-ads-run.js
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: claude-haiku-4-5-20251001
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          META_GRAPH_BASE: https://graph.facebook.com/v26.0
+          META_TOKEN_KIND: ig_ads
+          META_ADS_PRODUCT_NAME: JD
+          META_ADS_CHANNEL_CATEGORY: 인지 광고
+          META_ADS_INSTAGRAM_USERNAME: lalasweet_icecream
+          DRY_RUN: 'false'
       - name: Notify Slack on failure
         if: ${{ failure() }}
         continue-on-error: true

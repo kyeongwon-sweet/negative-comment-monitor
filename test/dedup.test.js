@@ -32,6 +32,17 @@ test('recordAlert writes a conflict-safe row', async () => {
   assert.equal(body.classifier_hash, 'hash123'); // 알림 당시 해시 저장(#8 오탐률 집계용)
 });
 
+test('recordAlert preserves Meta ad source identifiers for server-side moderation', async () => {
+  let body;
+  const config = { supabaseUrl: 'https://db.test', supabaseKey: 'key', slackChannelId: 'C1' };
+  const fetchImpl = async (_url, options) => { body = JSON.parse(options.body); return { ok: true }; };
+  const target = { url: 'https://instagram.com/p/ABC/', source: 'meta_ads', metaMediaId: 'm1', metaAdId: 'a1' };
+  await recordAlert(config, target, { id: 'c1', platform: 'instagram', text: 'bad' }, 'fp', '1.2', null, fetchImpl);
+  assert.equal(body.source, 'meta_ads');
+  assert.equal(body.meta_media_id, 'm1');
+  assert.equal(body.meta_ad_id, 'a1');
+});
+
 test('loads recently alerted post keys for intensive monitoring', async () => {
   const config = { supabaseUrl: 'https://db.test', supabaseKey: 'key' };
   const fetchImpl = async () => ({
