@@ -38,6 +38,15 @@ export function productGroup(productName) {
   return 'other';
 }
 
+// 광고 이름 마지막 '_' 뒤 이름 = 영상 담당자. 매핑(이름→Slack ID)에서 변환, 없으면 ''.
+// 예: "[26.07]F_V_JD멜_..._260731_빙과_정요한" → 정요한 → <@ID>
+export function videoAssigneeFromAdTitle(adTitle, videoAssignees = {}) {
+  const parts = String(adTitle || '').split('_');
+  const name = parts.length ? parts[parts.length - 1].trim() : '';
+  if (!name) return '';
+  return videoAssignees[name] || '';
+}
+
 // 상품군 → 스레드 라벨(표시명). jd=쫀득바, p=파인트, 그 외=기타.
 export function productLabel(group) {
   if (group === 'jd') return '쫀득바';
@@ -106,6 +115,8 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   const companyPart = (isViral && company) ? ` (${company})` : '';
   const mainLine = `<${target.url}|${channel}>${companyPart} / ${author} / ${text}`;
   const assigneeId = assigneeForTarget(target, assignees);
+  // 담당자 = 기본 담당자 + 추가 태그(예: 메타 광고의 영상 담당자). 중복·빈값 제거.
+  const assigneeIds = [...new Set([assigneeId, ...(Array.isArray(target.extraAssignees) ? target.extraAssignees : [])].filter(Boolean))];
   return [
     { type: 'header', text: { type: 'plain_text', text: `🚨 부정댓글 감지 — ${comment.platform}` } },
     { type: 'section', text: { type: 'mrkdwn', text: `*[${esc(productLabel(productGroup(target.productName)))}] ${esc(target.channelCategory || '-')}*` } },
@@ -115,7 +126,7 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
       { type: 'mrkdwn', text: `*작성시간*\n${formatKst(comment.timestamp)}` },
     ] },
     { type: 'section', text: { type: 'mrkdwn', text: `*분류 근거*\n${esc(reason)}` } },
-    ...(assigneeId ? [{ type: 'section', text: { type: 'mrkdwn', text: `*담당자*\n<@${assigneeId}>` } }] : []),
+    ...(assigneeIds.length ? [{ type: 'section', text: { type: 'mrkdwn', text: `*담당자*\n${assigneeIds.map((id) => `<@${id}>`).join(' ')}` } }] : []),
     { type: 'actions', elements: actionDefinitions(target, managedCategories).map((definition) => button(definition, value)) },
   ];
 }

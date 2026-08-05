@@ -1,6 +1,13 @@
 import { loadMetaToken } from './meta-token.js';
+import { videoAssigneeFromAdTitle } from './slack.js';
 
 export const META_AD_SOURCE = 'meta_ads';
+
+// 이름→Slack ID 매핑 JSON(META_AD_VIDEO_ASSIGNEES). 파싱 실패는 빈 맵.
+function parseVideoAssignees(raw) {
+  try { const m = JSON.parse(String(raw || '{}')); return m && typeof m === 'object' ? m : {}; }
+  catch { return {}; }
+}
 export const DEFAULT_META_GRAPH = 'https://graph.facebook.com/v26.0';
 
 function required(env, name) {
@@ -34,6 +41,7 @@ export function loadMetaAdsConfig(env = process.env) {
     metaAdsProductName: String(env.META_ADS_PRODUCT_NAME || 'JD').trim(),
     metaAdsChannelCategory: String(env.META_ADS_CHANNEL_CATEGORY || '인지 광고').trim(),
     metaAdsInstagramUsername: String(env.META_ADS_INSTAGRAM_USERNAME || 'lalasweet_icecream').trim(),
+    videoAssignees: parseVideoAssignees(env.META_AD_VIDEO_ASSIGNEES),
     dryRun: String(env.DRY_RUN || 'false').toLowerCase() === 'true',
     costThresholds: { apify: 2, anthropic: 0.1, total: 3 },
   };
@@ -90,6 +98,8 @@ export async function buildMetaAdEntries(config, events, fetchImpl = fetch) {
     const key = `${mediaId}|${event.ad_id}`;
     const media = mediaById.get(mediaId) || {};
     if (!grouped.has(key)) {
+      // 광고 이름(ad_title) 마지막 이름 = 영상 담당자 → 기본 담당자와 함께 태그.
+      const videoAssigneeId = videoAssigneeFromAdTitle(event.ad_title, config.videoAssignees);
       grouped.set(key, {
         target: {
           platform: 'instagram',
@@ -103,6 +113,7 @@ export async function buildMetaAdEntries(config, events, fetchImpl = fetch) {
           isManagedAccount: true,
           metaMediaId: mediaId === 'unknown' ? '' : mediaId,
           metaAdId: String(event.ad_id || ''),
+          extraAssignees: videoAssigneeId ? [videoAssigneeId] : [],
         },
         comments: [],
       });

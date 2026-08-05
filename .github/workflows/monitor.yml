@@ -113,6 +113,7 @@ jobs:
           META_ADS_PRODUCT_NAME: JD
           META_ADS_CHANNEL_CATEGORY: 인지 광고
           META_ADS_INSTAGRAM_USERNAME: lalasweet_icecream
+          META_AD_VIDEO_ASSIGNEES: ${{ vars.META_AD_VIDEO_ASSIGNEES }}
           DRY_RUN: 'false'
       - name: Notify Slack on failure
         if: ${{ failure() }}

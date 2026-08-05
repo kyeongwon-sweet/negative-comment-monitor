@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { actionDefinitions, assigneeForChannelCategory, assigneeForTarget, buildAlertBlocks, productGroup, productLabel, sendAlert, verifySlackSignature } from '../src/slack.js';
+import { actionDefinitions, assigneeForChannelCategory, assigneeForTarget, buildAlertBlocks, productGroup, productLabel, sendAlert, verifySlackSignature, videoAssigneeFromAdTitle } from '../src/slack.js';
 
 const assignees = {
   satellite: 'U_SATELLITE',
@@ -43,6 +43,22 @@ test('productGroup: JD 포함=jd, P로 시작=p, 그 외=other', () => {
   assert.equal(productGroup('DB혼'), 'other');
   assert.equal(productGroup('C혼'), 'other');
   assert.equal(productGroup(''), 'other');
+});
+test('videoAssigneeFromAdTitle: 광고명 마지막 이름을 Slack ID로 매핑', () => {
+  const map = { '정요한': 'U_VIDEO', '김유진': 'U_KJ' };
+  assert.equal(videoAssigneeFromAdTitle('[26.07]F_V_JD멜_인지_쫀득바출시_인물리뷰형_레시피따라하기_main.릴스_이나연.X_1P_김유진_260731_빙과_정요한', map), 'U_VIDEO');
+  assert.equal(videoAssigneeFromAdTitle('a_b_없는이름', map), ''); // 미매핑 → ''
+  assert.equal(videoAssigneeFromAdTitle('', map), '');
+  assert.equal(videoAssigneeFromAdTitle('단일세그먼트', map), ''); // '_' 없음 → 미매핑
+});
+test('alert card: extraAssignees(영상 담당자)를 기본 담당자와 함께 태그', () => {
+  const blocks = buildAlertBlocks(
+    { url: 'https://example.com', channelCategory: '인지 광고', productName: 'JD', extraAssignees: ['U_VIDEO'] },
+    { id: 'c1', platform: 'instagram', text: '라라스윗 별로', risk: {} },
+    undefined,
+    assignees,
+  );
+  assert.ok(blocks.some((b) => b.text?.text === '*담당자*\n<@U_OTHER> <@U_VIDEO>'));
 });
 test('productLabel: jd=쫀득바, p=파인트, 그 외=기타', () => {
   assert.equal(productLabel('jd'), '쫀득바');
