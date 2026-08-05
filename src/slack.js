@@ -160,6 +160,29 @@ export async function sendAlert(config, target, comment, fetchImpl = fetch, thre
   return payload;
 }
 
+// 바이럴(영상/배너) 업체별 복사용 메시지. 담당자가 그대로 복사해 업체에 보낼 수 있게.
+//   [업체명]
+//
+//   담당자님 하기 게시물 댓글 관리 부탁 드립니다!
+//   <게시물 URL들>
+export function buildViralCopyMessage(company, urls) {
+  const head = String(company || '').trim() || '-';
+  const list = [...new Set((Array.isArray(urls) ? urls : []).filter(Boolean))].join('\n');
+  return `[${head}]\n\n담당자님 하기 게시물 댓글 관리 부탁 드립니다!\n${list}`;
+}
+
+// 스레드에 일반 텍스트 답글 발송(복사용 메시지 등). 링크 미리보기(unfurl) 끔.
+export async function postThreadText(config, threadTs, text, fetchImpl = fetch) {
+  const res = await fetchImpl('https://slack.com/api/chat.postMessage', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${config.slackBotToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ channel: config.slackChannelId, text, thread_ts: threadTs, unfurl_links: false, unfurl_media: false }),
+  });
+  const payload = await res.json();
+  if (!payload.ok) throw new Error(`Slack API: ${payload.error || 'unknown_error'}`);
+  return payload;
+}
+
 export function verifySlackSignature({ signingSecret, timestamp, signature, rawBody, now = Date.now() }) {
   if (!signingSecret || !timestamp || !signature) return false;
   if (Math.abs(now / 1000 - Number(timestamp)) > 300) return false;

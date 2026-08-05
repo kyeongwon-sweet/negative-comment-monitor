@@ -4,7 +4,7 @@ import { fetchTargets, submitResult } from './gas.js';
 import { normalizeDataset } from './normalize.js';
 import { detectPlatform, filterEligibleSponsorships, groupApifyTargets } from './routing.js';
 import { classifyTargetsBatched } from './hybrid-classify.js';
-import { sendAlert } from './slack.js';
+import { sendAlert, buildViralCopyMessage, postThreadText } from './slack.js';
 import { filterDueTargets, isEvergreenCategory, kstDateKey } from './schedule.js';
 import { loadCommentCounts, filterChangedTargets, filterNoSignalRescueTargets, filterDeepScanTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
 import { commentFingerprint, loadRecentlyAlertedPostKeys, loadSeenFingerprints, recordAlert } from './dedup.js';
@@ -185,6 +185,8 @@ export async function runMonitor(config = loadConfig()) {
   }
 
   // Phase 3: 게시물별 dedup + 알림 발송(날짜×분류 스레드에 답글로, injibot 버튼 포함). DRY_RUN이면 카운트/로그만.
+  // 바이럴(영상/배너)은 새 알림이 있으면 업체별 '복사용 메시지'를 스레드에 하나 더 남긴다.
+  const viralCopyGroups = new Map(); // key: `${threadTs}||${업체}` → { threadTs, company, urls:Set }
   for (let e = 0; e < entries.length; e += 1) {
     const { target, comments } = entries[e];
     const risks = risksPerEntry[e] || [];
@@ -192,6 +194,8 @@ export async function runMonitor(config = loadConfig()) {
     const alerts = classified.filter((comment) => comment.risk.alert);
     const fingerprints = alerts.map((comment) => commentFingerprint(target, comment));
     const seenFingerprints = config.dryRun ? new Set() : await loadSeenFingerprints(config, fingerprints);
+    let threadTsForTarget = null;
+    let newAlertsForTarget = 0;
     for (let alertIndex = 0; alertIndex < alerts.length; alertIndex += 1) {
       const comment = alerts[alertIndex];
       const fingerprint = fingerprints[alertIndex];
@@ -201,14 +205,35 @@ export async function runMonitor(config = loadConfig()) {
       }
       console.error(`[alert] ${target.platform} | ${comment.risk.category} | ${(comment.text || '').replace(/\s+/g, ' ').slice(0, 50)}`);
       if (!config.dryRun) {
-        const threadTs = await resolveThreadTs(target);
-        const slackResult = await sendAlert(config, target, comment, undefined, threadTs);
+        threadTsForTarget = await resolveThreadTs(target);
+        const slackResult = await sendAlert(config, target, comment, undefined, threadTsForTarget);
         await recordAlert(config, target, comment, fingerprint, slackResult.ts, classifierHash);
       }
+      newAlertsForTarget += 1;
       sentAlerts += 1;
+    }
+    // 바이럴 영상/배너 + 이번 실행에 새 알림 → 업체별 복사메시지 그룹에 URL 추가.
+    const cat = String(target.channelCategory || '');
+    const isViralVideoBanner = cat.includes('바이럴') && (cat.includes('영상') || cat.includes('배너'));
+    if (!config.dryRun && newAlertsForTarget > 0 && threadTsForTarget && isViralVideoBanner) {
+      const company = String(target.company || target.channelName || '').trim();
+      const key = `${threadTsForTarget}||${company}`;
+      if (!viralCopyGroups.has(key)) viralCopyGroups.set(key, { threadTs: threadTsForTarget, company, urls: new Set() });
+      viralCopyGroups.get(key).urls.add(target.url);
     }
   }
   summary.sentAlerts = sentAlerts;
+
+  // 바이럴(영상/배너) 업체별 복사용 메시지 발송(best-effort — 실패해도 알림 본류엔 영향 없음).
+  if (!config.dryRun && viralCopyGroups.size) {
+    for (const group of viralCopyGroups.values()) {
+      try {
+        await postThreadText(config, group.threadTs, buildViralCopyMessage(group.company, [...group.urls]));
+      } catch (error) {
+        console.error('[copy] 업체 복사메시지 발송 실패(무시):', error.message);
+      }
+    }
+  }
 
   // LLM 사용량 요약 + 예상 비용(단가는 pricing.js에 분리).
   const estUsd = estimateUsd(llmStats, config.anthropicModel);

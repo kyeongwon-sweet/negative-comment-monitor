@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { actionDefinitions, assigneeForChannelCategory, assigneeForTarget, buildAlertBlocks, productGroup, productLabel, sendAlert, verifySlackSignature, videoAssigneeFromAdTitle } from '../src/slack.js';
+import { actionDefinitions, assigneeForChannelCategory, assigneeForTarget, buildAlertBlocks, buildViralCopyMessage, productGroup, productLabel, sendAlert, verifySlackSignature, videoAssigneeFromAdTitle } from '../src/slack.js';
 
 const assignees = {
   satellite: 'U_SATELLITE',
@@ -68,6 +68,14 @@ test('alert card: 메타 광고는 링크 텍스트에 광고 이름 원본(adTi
     [], assignees,
   );
   assert.ok(blocks[2].text.text.startsWith(`<https://www.instagram.com/p/x/|${ad}>`));
+});
+test('buildViralCopyMessage: 업체별 복사용 메시지 형식 + URL 중복 제거', () => {
+  const msg = buildViralCopyMessage('루나앤코코', [
+    'https://www.instagram.com/p/DbVfEk8E9Lp/',
+    'https://www.instagram.com/p/DbVfEk8E9Lp/',
+    'https://www.instagram.com/p/XYZ/',
+  ]);
+  assert.equal(msg, '[루나앤코코]\n\n담당자님 하기 게시물 댓글 관리 부탁 드립니다!\nhttps://www.instagram.com/p/DbVfEk8E9Lp/\nhttps://www.instagram.com/p/XYZ/');
 });
 test('productLabel: jd=쫀득바, p=파인트, 그 외=기타', () => {
   assert.equal(productLabel('jd'), '쫀득바');
