@@ -60,6 +60,15 @@ test('alert card: extraAssignees(영상 담당자)를 기본 담당자와 함께
   );
   assert.ok(blocks.some((b) => b.text?.text === '*담당자*\n<@U_OTHER> <@U_VIDEO>'));
 });
+test('alert card: 메타 광고는 링크 텍스트에 광고 이름 원본(adTitle) 사용', () => {
+  const ad = '[26.07]F_V_JD멜_인지_쫀득바출시_인물리뷰형_main.릴스_이나연.X_1P_김유진_260731_빙과_정요한';
+  const blocks = buildAlertBlocks(
+    { url: 'https://www.instagram.com/p/x/', channelName: 'lalasweet_icecream', channelCategory: '인지 광고', productName: 'JD', source: 'meta_ads', adTitle: ad },
+    { id: 'c1', platform: 'instagram', username: 'u', text: 't', risk: {} },
+    [], assignees,
+  );
+  assert.ok(blocks[2].text.text.startsWith(`<https://www.instagram.com/p/x/|${ad}>`));
+});
 test('productLabel: jd=쫀득바, p=파인트, 그 외=기타', () => {
   assert.equal(productLabel('jd'), '쫀득바');
   assert.equal(productLabel('p'), '파인트');

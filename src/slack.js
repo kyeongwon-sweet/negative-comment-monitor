@@ -109,7 +109,8 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   // 채널명(업체명) / 작성자 / 댓글 — 한 라인. 채널명은 게시글 링크, 업체명은 바이럴만.
   const isViral = /바이럴/.test(target.channelCategory || '');
   const company = esc(String(target.company || '').trim());
-  const channel = esc(target.channelName || '-');
+  // 링크 텍스트: 메타 광고는 광고 이름 원본(adTitle), 그 외는 채널명.
+  const channel = esc(target.adTitle || target.channelName || '-');
   const author = esc(comment.username || '-');
   const text = esc(truncate(String(comment.text || '').replace(/\s+/g, ' ').trim()));
   const companyPart = (isViral && company) ? ` (${company})` : '';

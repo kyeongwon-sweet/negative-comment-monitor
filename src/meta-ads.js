@@ -113,6 +113,7 @@ export async function buildMetaAdEntries(config, events, fetchImpl = fetch) {
           isManagedAccount: true,
           metaMediaId: mediaId === 'unknown' ? '' : mediaId,
           metaAdId: String(event.ad_id || ''),
+          adTitle: String(event.ad_title || ''),
           extraAssignees: videoAssigneeId ? [videoAssigneeId] : [],
         },
         comments: [],
