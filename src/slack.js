@@ -165,11 +165,23 @@ export async function sendAlert(config, target, comment, fetchImpl = fetch, thre
 //
 //   담당자님 하기 게시물 댓글 관리 부탁 드립니다!
 //   <게시물 URL들>
-export function buildViralCopyMessage(company, urls) {
-  const head = String(company || '').trim() || '-';
-  const list = [...new Set((Array.isArray(urls) ? urls : []).filter(Boolean))].join('\n');
-  // 코드블록으로 감싸 Slack 자체 [복사] 버튼(데스크톱·웹) 노출 → 담당자가 한 번에 전체 복사.
-  return `\`\`\`\n[${head}]\n\n담당자님 하기 게시물에 광고의심 및 부정댓글 관리 부탁 드립니다!\n${list}\n\`\`\``;
+// items: [{ url, nickname, text }] — 부정댓글별로 "링크 / 닉네임 / 댓글내용" 한 줄. (url+text로 중복 제거)
+// 코드블록으로 감싸 Slack 자체 [복사] 버튼 노출. 코드블록을 깨는 백틱은 제거.
+export function buildViralCopyMessage(company, items) {
+  const head = String(company || '').replace(/`/g, '').trim() || '-';
+  const seen = new Set();
+  const lines = [];
+  for (const it of (Array.isArray(items) ? items : [])) {
+    const url = String(it?.url || '').trim();
+    const nick = (String(it?.nickname || '').replace(/`/g, '').trim()) || '-';
+    const text = String(it?.text || '').replace(/`/g, '').replace(/\s+/g, ' ').trim();
+    if (!url && !text) continue;
+    const key = `${url}|${text}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    lines.push(`${url} / ${nick} / ${text}`);
+  }
+  return `\`\`\`\n[${head}]\n\n담당자님 하기 게시물에 광고의심 및 부정댓글 관리 부탁 드립니다!\n${lines.join('\n')}\n\`\`\``;
 }
 
 // 스레드에 일반 텍스트 답글 발송(복사용 메시지 등). 링크 미리보기(unfurl) 끔.

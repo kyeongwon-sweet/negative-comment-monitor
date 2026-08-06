@@ -69,13 +69,13 @@ test('alert card: 메타 광고는 링크 텍스트에 광고 이름 원본(adTi
   );
   assert.ok(blocks[2].text.text.startsWith(`<https://www.instagram.com/p/x/|${ad}>`));
 });
-test('buildViralCopyMessage: 업체별 복사용 메시지 형식 + URL 중복 제거', () => {
+test('buildViralCopyMessage: 업체별 링크/닉네임/댓글내용 + 중복 제거', () => {
   const msg = buildViralCopyMessage('루나앤코코', [
-    'https://www.instagram.com/p/DbVfEk8E9Lp/',
-    'https://www.instagram.com/p/DbVfEk8E9Lp/',
-    'https://www.instagram.com/p/XYZ/',
+    { url: 'https://insta/p/A/', nickname: 'user1', text: '광고 별로' },
+    { url: 'https://insta/p/A/', nickname: 'user1', text: '광고 별로' }, // 중복 제거
+    { url: 'https://insta/p/B/', nickname: 'user2', text: '맛없어요' },
   ]);
-  assert.equal(msg, '```\n[루나앤코코]\n\n담당자님 하기 게시물에 광고의심 및 부정댓글 관리 부탁 드립니다!\nhttps://www.instagram.com/p/DbVfEk8E9Lp/\nhttps://www.instagram.com/p/XYZ/\n```');
+  assert.equal(msg, '```\n[루나앤코코]\n\n담당자님 하기 게시물에 광고의심 및 부정댓글 관리 부탁 드립니다!\nhttps://insta/p/A/ / user1 / 광고 별로\nhttps://insta/p/B/ / user2 / 맛없어요\n```');
 });
 test('productLabel: jd=쫀득바, p=파인트, 그 외=기타', () => {
   assert.equal(productLabel('jd'), '쫀득바');
