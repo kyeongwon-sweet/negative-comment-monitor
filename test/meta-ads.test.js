@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildMetaAdEntries,
+  isConversionAd,
   loadMetaAdsConfig,
   loadPendingMetaAdEvents,
   markMetaAdEventsProcessed,
@@ -61,6 +62,24 @@ test('buildMetaAdEntries groups Webhook comments and enriches the permalink', as
   assert.equal(entries[0].target.channelCategory, '인지 광고');
   assert.equal(entries[0].comments.length, 2);
   assert.equal(entries[0].comments[0].metaEventId, 1);
+});
+
+test('isConversionAd: 소재명 토큰에 전환이면 true, 인지면 false', () => {
+  assert.equal(isConversionAd('[26.06]F_I_P애_전환_상시_혜택강조형_박지연_260623_빙과_홍정민'), true);
+  assert.equal(isConversionAd('[26.07]F_V_JD멜_인지_쫀득바출시_인물리뷰형_260731_빙과_정요한'), false);
+  assert.equal(isConversionAd(''), false);
+  assert.equal(isConversionAd(null), false);
+});
+
+test('buildMetaAdEntries: 전환 광고 이벤트는 분류에서 제외(드롭)', async () => {
+  const fetchImpl = async () => ({ ok: true, json: async () => [] }); // 토큰 없음 → permalink 폴백
+  const entries = await buildMetaAdEntries(CFG, [
+    { id: 10, comment_id: 'k1', ig_user_id: 'ig1', media_id: 'm1', ad_id: 'ad1', ad_title: '[26.06]F_I_P애_전환_상시_x', username: 'u', comment_text: '별로' },
+    { id: 11, comment_id: 'k2', ig_user_id: 'ig1', media_id: 'm2', ad_id: 'ad2', ad_title: '[26.07]F_V_JD멜_인지_x_정요한', username: 'u2', comment_text: '별로' },
+  ], fetchImpl);
+  const ids = entries.flatMap((e) => e.comments.map((c) => c.id));
+  assert.ok(!ids.includes('k1'), '전환 광고 댓글은 제외되어야 함');
+  assert.ok(ids.includes('k2'), '인지 광고 댓글은 유지되어야 함');
 });
 
 test('buildMetaAdEntries still classifies when no stored token exists', async () => {

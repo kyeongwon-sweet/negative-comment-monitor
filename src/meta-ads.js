@@ -10,6 +10,12 @@ function parseVideoAssignees(raw) {
 }
 export const DEFAULT_META_GRAPH = 'https://graph.facebook.com/v26.0';
 
+// 소재명 카테고리 토큰이 '전환'이면 전환(conversion) 광고 = 우리 봇 대상 아님(김유진 별도관리).
+// 전환은 아예 분류(LLM)하지 않아 토큰을 아낀다. 예) "[26.06]F_I_P애_전환_상시_..." → true
+export function isConversionAd(adTitle) {
+  return String(adTitle || '').split('_').map((s) => s.trim()).includes('전환');
+}
+
 function required(env, name) {
   const value = String(env[name] || '').trim();
   if (!value) throw new Error(`Missing environment variable: ${name}`);
@@ -93,7 +99,10 @@ export async function buildMetaAdEntries(config, events, fetchImpl = fetch) {
 
   const fallbackUrl = `https://www.instagram.com/${encodeURIComponent(config.metaAdsInstagramUsername)}/`;
   const grouped = new Map();
+  let skippedConversion = 0;
   for (const event of events) {
+    // 전환 광고는 분류하지 않고 건너뛴다(토큰 절약). meta-ads-run이 eventIds로 processed 마킹해 큐는 비운다.
+    if (isConversionAd(event.ad_title)) { skippedConversion += 1; continue; }
     const mediaId = String(event.media_id || event.original_media_id || 'unknown');
     const key = `${mediaId}|${event.ad_id}`;
     const media = mediaById.get(mediaId) || {};
@@ -130,6 +139,7 @@ export async function buildMetaAdEntries(config, events, fetchImpl = fetch) {
       metaEventId: event.id,
     });
   }
+  if (skippedConversion > 0) console.error(`[meta-ads] 전환 광고 ${skippedConversion}건 분류 제외(토큰 절약)`);
   return [...grouped.values()];
 }
 
