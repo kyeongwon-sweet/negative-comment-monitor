@@ -51,14 +51,24 @@ test('videoAssigneeFromAdTitle: 광고명 마지막 이름을 Slack ID로 매핑
   assert.equal(videoAssigneeFromAdTitle('', map), '');
   assert.equal(videoAssigneeFromAdTitle('단일세그먼트', map), ''); // '_' 없음 → 미매핑
 });
-test('alert card: extraAssignees(영상 담당자)를 기본 담당자와 함께 태그', () => {
+test('alert card(메타 광고): 카드 담당자는 제작자(영상담당자)만, 황경원 제외', () => {
   const blocks = buildAlertBlocks(
-    { url: 'https://example.com', channelCategory: '인지 광고', productName: 'JD', extraAssignees: ['U_VIDEO'] },
+    { url: 'https://example.com', channelCategory: '인지 광고', productName: 'JD', source: 'meta_ads', extraAssignees: ['U_VIDEO'] },
     { id: 'c1', platform: 'instagram', text: '라라스윗 별로', risk: {} },
     undefined,
     assignees,
   );
-  assert.ok(blocks.some((b) => b.text?.text === '*담당자*\n<@U_OTHER> <@U_VIDEO>'));
+  assert.ok(blocks.some((b) => b.text?.text === '*담당자*\n<@U_VIDEO>'));
+  assert.ok(!blocks.some((b) => b.text?.text?.includes('U_OTHER')));
+});
+test('alert card(메타 광고): 제작자 매핑 없으면 황경원(other)으로 폴백', () => {
+  const blocks = buildAlertBlocks(
+    { url: 'https://example.com', channelCategory: '인지 광고', productName: 'JD', source: 'meta_ads', extraAssignees: [] },
+    { id: 'c1', platform: 'instagram', text: '라라스윗 별로', risk: {} },
+    undefined,
+    assignees,
+  );
+  assert.ok(blocks.some((b) => b.text?.text === '*담당자*\n<@U_OTHER>'));
 });
 test('alert card: 메타 광고는 링크 텍스트에 광고 이름 원본(adTitle) 사용', () => {
   const ad = '[26.07]F_V_JD멜_인지_쫀득바출시_인물리뷰형_main.릴스_이나연.X_1P_김유진_260731_빙과_정요한';

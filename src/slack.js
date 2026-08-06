@@ -115,9 +115,15 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   const text = esc(truncate(String(comment.text || '').replace(/\s+/g, ' ').trim()));
   const companyPart = (isViral && company) ? ` (${company})` : '';
   const mainLine = `<${target.url}|${channel}>${companyPart} / ${author} / ${text}`;
-  const assigneeId = assigneeForTarget(target, assignees);
-  // 담당자 = 기본 담당자 + 추가 태그(예: 메타 광고의 영상 담당자). 중복·빈값 제거.
-  const assigneeIds = [...new Set([assigneeId, ...(Array.isArray(target.extraAssignees) ? target.extraAssignees : [])].filter(Boolean))];
+  const baseAssignee = assigneeForTarget(target, assignees);
+  const extras = (Array.isArray(target.extraAssignees) ? target.extraAssignees : []).filter(Boolean);
+  // 메타 광고 카드는 제작자(영상담당자)만 태그한다(부모 스레드 담당자=황경원은 별도 유지).
+  //   - 제작자가 매핑되면 그 사람만, 매핑 없으면 황경원(other)으로 폴백해 담당자 공란 방지.
+  // 그 외 채널은 기존대로 기본 담당자 + 추가 태그.
+  const isMetaAd = String(target?.source || '') === 'meta_ads';
+  const assigneeIds = isMetaAd
+    ? [...new Set((extras.length ? extras : (baseAssignee ? [baseAssignee] : [])))]
+    : [...new Set([baseAssignee, ...extras].filter(Boolean))];
   return [
     { type: 'header', text: { type: 'plain_text', text: `🚨 부정댓글 감지 — ${comment.platform}` } },
     { type: 'section', text: { type: 'mrkdwn', text: `*[${esc(productLabel(productGroup(target.productName)))}] ${esc(target.channelCategory || '-')}*` } },
