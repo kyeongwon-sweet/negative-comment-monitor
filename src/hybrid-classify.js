@@ -16,8 +16,11 @@ const LLM_BATCH = 25; // 실행 전체 문맥 후보를 25개 단위로 통합�
 async function prepareLocal(comments, target, config, stats, fetchImpl) {
   const out = comments.map((comment) => ({ ...classifyNegativeComment(comment, target), engine: 'keyword' }));
   const reviewIndexes = [];
+  // 메타 광고 지면은 '모든 댓글이 그 제품 얘기'다. 브랜드명 미언급·신종 표현(예: "수돗물 향")도
+  // 놓치지 않게 키워드 게이트를 건너뛰고 전 댓글을 LLM 문맥 판정으로 보낸다(볼륨 적음, 리콜 우선).
+  const reviewAll = String(target?.source || '') === 'meta_ads';
   for (let index = 0; index < comments.length; index += 1) {
-    if (needsContextualReview(comments[index], target)) reviewIndexes.push(index);
+    if (reviewAll || needsContextualReview(comments[index], target)) reviewIndexes.push(index);
   }
   if (!reviewIndexes.length || !config.anthropicKey) return { out, pending: [], classifierHash: null };
 
