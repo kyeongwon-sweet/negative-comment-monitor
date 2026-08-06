@@ -96,9 +96,11 @@ jobs:
           DELTA_ENABLED: 'true'
           DRY_RUN: 'false'
       - name: Process queued Meta Instagram ad comments
-        # 기존 15분 웨이크 실행을 재사용한다. 별도 workflow/runner를 만들지 않아 Actions 비용을 늘리지 않는다.
-        # 일반 모니터가 실패하거나 intensive gate가 스킵이어도 광고 댓글 대기열은 독립 처리한다.
-        if: ${{ always() }}
+        # 인지 광고 부정댓글은 '아침 일일 스캔'(09:1x KST) 회차에만 하루 1회 배치 발송한다.
+        # = 기존 부정댓글 관리 시간에 정렬. 웹훅은 하루 종일 meta_ad_comment_events 큐에 쌓이고
+        # 아침 첫 회차가 큐를 비운다(같은 아침 09:26/39/52 회차는 큐가 비어 멱등 no-op).
+        # always()로 앞 단계 실패/스킵과 무관하게 독립 실행하되, 아침 크론·수동 실행에서만 동작.
+        if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '13,26,39,52 0 * * *')) }}
         run: node src/meta-ads-run.js
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
