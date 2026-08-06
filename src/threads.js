@@ -88,3 +88,60 @@ export async function markCompletedThreads(config, kstDate, emoji = '완료느�
     return 0;
   }
 }
+
+// 카드 URL 집합 추출: 알림카드(actions 버튼)의 button value(JSON)에서 게시물 url.
+function cardPostUrls_(msgs, parentTs) {
+  const urls = new Set();
+  for (const m of msgs) {
+    if (m.ts === parentTs) continue;
+    const act = (m.blocks || []).find((b) => b.type === 'actions');
+    if (!act) continue;
+    try {
+      const u = JSON.parse(act.elements?.[0]?.value || '{}').url;
+      if (u) urls.add(String(u));
+    } catch { /* 무시 */ }
+  }
+  return urls;
+}
+
+// 고아 복사메시지 정리: 카드가 완료/숨김으로 삭제돼 '복사메시지만 남은' 경우 그 복사메시지를 지운다.
+// 복사메시지의 모든 게시물 URL이 스레드 내 살아있는 카드에 없으면(=고아) 삭제. 매 실행 끝에 호출.
+export async function cleanupOrphanedCopyMessages(config, kstDate, fetchImpl = fetch) {
+  if (!threadsEnabled(config)) return 0;
+  try {
+    const url = `${config.supabaseUrl}/rest/v1/alert_threads?select=slack_ts`
+      + `&kst_date=eq.${encodeURIComponent(kstDate)}`
+      + `&slack_channel_id=eq.${encodeURIComponent(config.slackChannelId)}`;
+    const res = await fetchImpl(url, { headers: headers(config) });
+    if (!res.ok) return 0;
+    const rows = await res.json();
+    let deleted = 0;
+    for (const r of rows) {
+      const ts = r.slack_ts;
+      if (!ts) continue;
+      const rep = await fetchImpl(
+        `https://slack.com/api/conversations.replies?channel=${encodeURIComponent(config.slackChannelId)}&ts=${encodeURIComponent(ts)}&limit=100`,
+        { headers: { authorization: `Bearer ${config.slackBotToken}` } },
+      ).then((x) => x.json()).catch(() => ({}));
+      const msgs = rep.messages || [];
+      if (msgs.length < 2) continue;
+      const cardUrls = cardPostUrls_(msgs, ts);
+      for (const m of msgs) {
+        if (m.ts === ts || !/^```/.test(m.text || '')) continue;
+        const urls = m.text.match(/https?:\/\/[^\s`<>|]+/g) || [];
+        if (!urls.length) continue;
+        // 하나라도 살아있는 카드가 있으면 유지, 전부 없으면(고아) 삭제.
+        if (urls.some((u) => cardUrls.has(u))) continue;
+        const del = await fetchImpl('https://slack.com/api/chat.delete', {
+          method: 'POST',
+          headers: { authorization: `Bearer ${config.slackBotToken}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ channel: config.slackChannelId, ts: m.ts }),
+        }).then((x) => x.json()).catch(() => ({}));
+        if (del.ok) deleted += 1;
+      }
+    }
+    return deleted;
+  } catch {
+    return 0;
+  }
+}

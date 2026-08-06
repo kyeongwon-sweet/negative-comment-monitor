@@ -11,7 +11,7 @@ import { commentFingerprint, loadRecentlyAlertedPostKeys, loadSeenFingerprints, 
 import { estimateUsd } from './pricing.js';
 import { computeClassifierHash, purgeCache } from './cache.js';
 import { falsePositiveStats } from './review.js';
-import { ensureDailyThread, markCompletedThreads } from './threads.js';
+import { ensureDailyThread, markCompletedThreads, cleanupOrphanedCopyMessages } from './threads.js';
 import { assigneeForTarget, productGroup, productLabel } from './slack.js';
 import { APIFY_LOW_BALANCE_USD, DEFAULT_COST_THRESHOLDS, estimateApifyUsd, fetchApifyUsage, maybeAlertApifyLow, maybeAlertCosts, postApifyLowWarning, postCostWarning, recordRunCost, runKey, sumDailyCost } from './cost.js';
 
@@ -246,6 +246,9 @@ export async function runMonitor(config = loadConfig()) {
   // 오늘 스레드 중 답글 0개(전부 처리)인데 완료 반응 없는 것에 :완료느낌표: 백업 부착(best-effort).
   if (!config.dryRun) {
     try {
+      // 카드가 처리(완료/숨김)로 삭제돼 복사메시지만 남은 고아 먼저 정리 → 이후 0답글 스레드에 완료느낌표.
+      const cleaned = await cleanupOrphanedCopyMessages(config, kstDateKey(runNow));
+      if (cleaned) console.error(`[thread] 고아 복사메시지 ${cleaned}개 삭제`);
       const marked = await markCompletedThreads(config, kstDateKey(runNow));
       if (marked) console.error(`[thread] 완료 스레드 ${marked}개에 완료느낌표 부착`);
     } catch (error) {

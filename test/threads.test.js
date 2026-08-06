@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildThreadParentText, ensureDailyThread, markCompletedThreads } from '../src/threads.js';
+import { buildThreadParentText, ensureDailyThread, markCompletedThreads, cleanupOrphanedCopyMessages } from '../src/threads.js';
 
 const CFG = { supabaseUrl: 'https://db.example', supabaseKey: 'svc', slackBotToken: 'tok', slackChannelId: 'C0BHD9S69JA' };
 
@@ -87,4 +87,24 @@ test('markCompletedThreads: replies 배열이 부모만 반환돼도 reply_count
   const marked = await markCompletedThreads(CFG, '2026-07-30', '완료느낌표', fetchImpl);
   assert.equal(marked, 0);
   assert.deepEqual(added, []);
+});
+
+test('cleanupOrphanedCopyMessages: 카드 없는 게시물의 복사메시지만 삭제', async () => {
+  const CFG = { supabaseUrl: 'https://db', supabaseKey: 'k', slackBotToken: 'tok', slackChannelId: 'C1' };
+  const deleted = [];
+  const cardBlock = { type: 'actions', elements: [{ value: JSON.stringify({ url: 'https://insta/p/A/' }) }] };
+  const fetchImpl = async (u, o) => {
+    if (/alert_threads/.test(u)) return { ok: true, json: async () => [{ slack_ts: 'T0' }] };
+    if (/conversations\.replies/.test(u)) return { json: async () => ({ messages: [
+      { ts: 'T0' },
+      { ts: 'c1', blocks: [cardBlock] },                                     // 살아있는 카드(A)
+      { ts: 'copyA', text: '```\n[업체]\n\n요청\nhttps://insta/p/A/\n```' }, // A 복사 → 유지
+      { ts: 'copyB', text: '```\n[업체]\n\n요청\nhttps://insta/p/B/\n```' }, // B 복사(고아) → 삭제
+    ] }) };
+    if (/chat\.delete/.test(u)) { deleted.push(JSON.parse(o.body).ts); return { json: async () => ({ ok: true }) }; }
+    return { ok: true, json: async () => ({}) };
+  };
+  const n = await cleanupOrphanedCopyMessages(CFG, '2026-08-06', fetchImpl);
+  assert.equal(n, 1);
+  assert.deepEqual(deleted, ['copyB']);
 });
