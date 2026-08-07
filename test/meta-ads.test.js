@@ -7,6 +7,7 @@ import {
   loadPendingMetaAdEvents,
   markMetaAdEventsProcessed,
 } from '../src/meta-ads.js';
+import { inMorningWindow } from '../src/meta-ads-run.js';
 
 const CFG = {
   supabaseUrl: 'https://db.test',
@@ -62,6 +63,15 @@ test('buildMetaAdEntries groups Webhook comments and enriches the permalink', as
   assert.equal(entries[0].target.channelCategory, '인지 광고');
   assert.equal(entries[0].comments.length, 2);
   assert.equal(entries[0].comments[0].metaEventId, 1);
+});
+
+test('inMorningWindow: KST 9시대만 true, 그 외 false, FORCE는 시간 무관 true', () => {
+  const kst9 = Date.parse('2026-08-07T00:30:00Z');  // +9h = 09:30 KST
+  const kstNoon = Date.parse('2026-08-07T03:00:00Z'); // +9h = 12:00 KST
+  assert.equal(inMorningWindow(kst9, {}), true);
+  assert.equal(inMorningWindow(kstNoon, {}), false);
+  assert.equal(inMorningWindow(kstNoon, { META_ADS_FORCE: 'true' }), true);
+  assert.equal(inMorningWindow(Date.parse('2026-08-07T01:00:00Z'), { META_ADS_WINDOW_HOUR: '10' }), true); // 10 KST, window=10
 });
 
 test('isConversionAd: 소재명 토큰에 전환이면 true, 인지면 false', () => {

@@ -16,7 +16,20 @@ import {
   markMetaAdEventsProcessed,
 } from './meta-ads.js';
 
+// 인지 광고는 '아침 배치'로만 발송한다(부정댓글 관리 시간 정렬). 단, 특정 아침 크론에 의존하면
+// GitHub이 그 크론을 드롭할 때 배치가 통째로 누락된다(실측: 아침 크론 드롭 사고). 그래서 안정적인
+// 15분 웨이크를 그대로 타되 여기서 'KST 아침 시간대'에만 실제 처리하도록 게이트한다(자가치유).
+//   - META_ADS_FORCE=true(수동 실행) 또는 KST 시(hour)==META_ADS_WINDOW_HOUR(기본 9)일 때만 동작.
+//   - 그 외 시간대는 큐에 그대로 두고 아무 것도 하지 않는다(LLM·발송 없음).
+export function inMorningWindow(now = Date.now(), env = process.env) {
+  if (String(env.META_ADS_FORCE || '').toLowerCase() === 'true') return true;
+  const target = Number(env.META_ADS_WINDOW_HOUR || 9);
+  const kstHour = new Date(now + 9 * 3600 * 1000).getUTCHours();
+  return kstHour === target;
+}
+
 export async function runMetaAds(config = loadMetaAdsConfig(), fetchImpl = fetch, now = Date.now()) {
+  if (!inMorningWindow(now)) return { pendingEvents: 0, entries: 0, sentAlerts: 0, processedEvents: 0, skipped: 'outside-morning-window' };
   const events = await loadPendingMetaAdEvents(config, 100, fetchImpl);
   const eventIds = events.map((event) => event.id);
   const summary = { pendingEvents: events.length, entries: 0, sentAlerts: 0, processedEvents: 0 };

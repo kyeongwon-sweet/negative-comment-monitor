@@ -96,11 +96,12 @@ jobs:
           DELTA_ENABLED: 'true'
           DRY_RUN: 'false'
       - name: Process queued Meta Instagram ad comments
-        # 인지 광고 부정댓글은 '아침 일일 스캔'(09:1x KST) 회차에만 하루 1회 배치 발송한다.
-        # = 기존 부정댓글 관리 시간에 정렬. 웹훅은 하루 종일 meta_ad_comment_events 큐에 쌓이고
-        # 아침 첫 회차가 큐를 비운다(같은 아침 09:26/39/52 회차는 큐가 비어 멱등 no-op).
-        # always()로 앞 단계 실패/스킵과 무관하게 독립 실행하되, 아침 크론·수동 실행에서만 동작.
-        if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '13,26,39,52 0 * * *')) }}
+        # 인지 광고 부정댓글은 '아침 배치'로만 발송(부정댓글 관리 시간 정렬). 웹훅은 하루 종일 큐에 쌓임.
+        # ⚠️ 특정 아침 크론(13,26,39,52)에만 걸면 GitHub이 그 크론을 드롭할 때 배치가 통째로 누락된다(실측 사고).
+        # → always()로 모든 웨이크(주로 안정적인 */15)에서 실행하되, meta-ads-run.js가 KST 9시대에만 실제
+        #   동작하도록 자체 게이트(inMorningWindow). 아침대 15분 웨이크 4회가 재시도 역할 = 자가치유.
+        #   workflow_dispatch는 META_ADS_FORCE로 시간 무관 강제 실행.
+        if: ${{ always() }}
         run: node src/meta-ads-run.js
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -116,6 +117,9 @@ jobs:
           META_ADS_CHANNEL_CATEGORY: 인지 광고
           META_ADS_INSTAGRAM_USERNAME: lalasweet_icecream
           META_AD_VIDEO_ASSIGNEES: ${{ vars.META_AD_VIDEO_ASSIGNEES }}
+          # 아침 배치 창(KST 9시대만 실제 발송). 수동 실행(workflow_dispatch)은 시간 무관 강제.
+          META_ADS_WINDOW_HOUR: '9'
+          META_ADS_FORCE: ${{ github.event_name == 'workflow_dispatch' }}
           DRY_RUN: 'false'
       - name: Notify Slack on failure
         if: ${{ failure() }}
