@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { actionDefinitions, assigneeForChannelCategory, assigneeForTarget, buildAlertBlocks, buildViralCopyMessage, productGroup, productLabel, sendAlert, verifySlackSignature, videoAssigneeFromAdTitle } from '../src/slack.js';
+import { actionDefinitions, assigneeForChannelCategory, assigneeForTarget, buildAlertBlocks, buildViralCopyMessage, commentDeepLink, productGroup, productLabel, sendAlert, verifySlackSignature, videoAssigneeFromAdTitle } from '../src/slack.js';
 
 const assignees = {
   satellite: 'U_SATELLITE',
@@ -51,6 +51,14 @@ test('videoAssigneeFromAdTitle: 광고명 마지막 이름을 Slack ID로 매핑
   assert.equal(videoAssigneeFromAdTitle('', map), '');
   assert.equal(videoAssigneeFromAdTitle('단일세그먼트', map), ''); // '_' 없음 → 미매핑
 });
+test('commentDeepLink: 인스타 게시물+숫자 댓글id → 댓글 직링크, 그 외 원본', () => {
+  assert.equal(commentDeepLink('https://www.instagram.com/p/ABC/', 'instagram', '123'), 'https://www.instagram.com/p/ABC/c/123/');
+  assert.equal(commentDeepLink('https://www.instagram.com/reel/XYZ/?utm=1', 'instagram', '456'), 'https://www.instagram.com/reel/XYZ/c/456/');
+  assert.equal(commentDeepLink('https://www.instagram.com/p/ABC/', 'youtube', '123'), 'https://www.instagram.com/p/ABC/'); // 인스타 아님
+  assert.equal(commentDeepLink('https://www.instagram.com/p/ABC/', 'instagram', 'abc'), 'https://www.instagram.com/p/ABC/'); // 숫자 아님
+  assert.equal(commentDeepLink('https://www.instagram.com/lalasweet_icecream/', 'instagram', '123'), 'https://www.instagram.com/lalasweet_icecream/'); // 게시물 permalink 아님(폴백 계정URL)
+});
+
 test('alert card(메타 광고): 카드 담당자는 제작자(영상담당자)만, 황경원 제외', () => {
   const blocks = buildAlertBlocks(
     { url: 'https://example.com', channelCategory: '인지 광고', productName: 'JD', source: 'meta_ads', extraAssignees: ['U_VIDEO'] },

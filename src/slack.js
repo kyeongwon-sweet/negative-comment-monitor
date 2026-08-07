@@ -76,6 +76,19 @@ export function assigneeForTarget(target, assignees = {}) {
   return assignees.other || '';
 }
 
+// 인스타그램 게시물 permalink + 댓글 id → 댓글 직링크(그 댓글로 점프). 예:
+//   https://www.instagram.com/p/ABC/  +  123  →  https://www.instagram.com/p/ABC/c/123/
+// instagram + 숫자 comment id일 때만. 그 외(유튜브/틱톡/비표준 URL)는 원본 URL 유지.
+// 공개 지면 댓글은 점프됨. 광고 전용 지면 댓글은 여전히 안 보이지만 원본 대비 손해 없음.
+export function commentDeepLink(url, platform, commentId) {
+  const u = String(url || '').trim();
+  const cid = String(commentId || '').trim();
+  if (String(platform || '') !== 'instagram' || !/^\d+$/.test(cid)) return u;
+  const m = u.match(/^(https?:\/\/(?:www\.)?instagram\.com\/(?:p|reel|tv)\/[^/?#]+)\/?/i);
+  if (!m) return u;
+  return `${m[1]}/c/${cid}/`;
+}
+
 function esc(text) {
   return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -114,7 +127,9 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   const author = esc(comment.username || '-');
   const text = esc(truncate(String(comment.text || '').replace(/\s+/g, ' ').trim()));
   const companyPart = (isViral && company) ? ` (${company})` : '';
-  const mainLine = `<${target.url}|${channel}>${companyPart} / ${author} / ${text}`;
+  // 링크는 댓글 직링크(instagram + 숫자 comment id일 때). 공개 지면 댓글은 클릭 시 그 댓글로 점프.
+  const linkUrl = commentDeepLink(target.url, comment.platform, comment.id);
+  const mainLine = `<${linkUrl}|${channel}>${companyPart} / ${author} / ${text}`;
   const baseAssignee = assigneeForTarget(target, assignees);
   const extras = (Array.isArray(target.extraAssignees) ? target.extraAssignees : []).filter(Boolean);
   // 메타 광고 카드는 제작자(영상담당자)만 태그한다(부모 스레드 담당자=황경원은 별도 유지).
