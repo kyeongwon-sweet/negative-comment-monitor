@@ -1,0 +1,39 @@
+name: Meta ad batch watchdog
+
+# 인지 광고 아침 배치(monitor.yml의 meta-ads 스텝, KST 8~11창)가 오늘 실제로 돌았는지 결과로 확인.
+# 아침 창 이전 수신 웹훅 댓글이 미처리로 남아있으면 = 배치 누락 → monitor.yml 강제 실행 + Slack 경고.
+# ⚠️ UTC 0시(KST 9)는 크론 드롭 구간이라 피하고, 창 이후 신뢰 시간대에 실행.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'   # 13:00 KST — 아침 창(8~11) 이후 충분한 버퍼
+    - cron: '0 7 * * *'   # 16:00 KST — 첫 체크 지연/드롭 대비 백업
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: meta-ad-batch-watchdog
+  cancel-in-progress: false
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node src/meta-batch-watchdog.js
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          META_ADS_WINDOW_START: '8'
