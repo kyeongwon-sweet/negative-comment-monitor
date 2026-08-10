@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractPostKey, filterChangedTargets, filterNoSignalRescueTargets, filterDeepScanTargets, summarizeDelta } from '../src/delta.js';
+import { extractPostKey, filterChangedTargets, filterBaselineTargets, filterNoSignalRescueTargets, filterDeepScanTargets, summarizeDelta } from '../src/delta.js';
 
 test('extractPostKey: 플랫폼별 게시물 ID 추출', () => {
   assert.equal(extractPostKey('https://www.instagram.com/p/DaSY7BxE6pT/'), 'ig:DaSY7BxE6pT');
@@ -39,15 +39,16 @@ test('filterChangedTargets: 첫확인/변화/신규글(신호없어도)은 통�
 });
 
 test('summarizeDelta: 사유별 집계', () => {
-  const targets = [{ url: 'a' }, { url: 'b' }, { url: 'c' }, { url: 'd' }, { url: 'f' }];
+  const targets = [{ url: 'a' }, { url: 'b' }, { url: 'c' }, { url: 'd' }, { url: 'f' }, { url: 'g' }];
   const counts = {
     a: { current: 5, last: null },  // firstScan
     b: { current: 12, last: 10 },   // changed(증가)
     c: { current: 8, last: 8 },     // unchanged
     d: { current: 3, last: 9 },     // changed(감소)
     f: { current: null, last: null }, // noSignal
+    g: { current: 0, last: null },  // baseline(current=0 신규)
   };
-  assert.deepEqual(summarizeDelta(targets, counts), { noSignal: 1, unchanged: 1, firstScan: 1, changed: 2, scrape: 3 });
+  assert.deepEqual(summarizeDelta(targets, counts), { noSignal: 1, unchanged: 1, firstScan: 1, changed: 2, baseline: 1, scrape: 3 });
 });
 
 test('filterChangedTargets: firstScanLimit은 첫확인만 댓글수 높은 순으로 제한하고 변화글은 유지', () => {
@@ -67,6 +68,23 @@ test('filterChangedTargets: firstScanLimit은 첫확인만 댓글수 높은 순�
   };
   const out = filterChangedTargets(targets, counts, { firstScanLimit: 2 }).map((t) => t.url);
   assert.deepEqual(out, ['changed-a', 'changed-b', 'first-high', 'first-mid']);
+});
+
+test('filterBaselineTargets: current=0 신규글만 baseline(무스크레이프), firstScan/changed에서 제외', () => {
+  const targets = [
+    { url: 'zero-new' },      // current=0 미확인 → baseline
+    { url: 'pos-new' },       // current=5 미확인 → firstScan
+    { url: 'zero-checked' },  // current=0 확인됨 → unchanged(제외)
+  ];
+  const counts = {
+    'zero-new': { postId: '1', current: 0, last: null },
+    'pos-new': { postId: '2', current: 5, last: null },
+    'zero-checked': { postId: '3', current: 0, last: 0, lastCheckedAt: '2026-07-27T00:00:00Z' },
+  };
+  assert.deepEqual(filterBaselineTargets(targets, counts).map((t) => t.url), ['zero-new']);
+  const scrape = filterChangedTargets(targets, counts, { firstScanLimit: 60 }).map((t) => t.url);
+  assert.ok(!scrape.includes('zero-new'), 'baseline은 스크레이프 제외');
+  assert.ok(scrape.includes('pos-new'), 'current>0 신규는 firstScan');
 });
 
 test('filterNoSignalRescueTargets: 확인 이력 있는 noSignal만, 가장 오래 안 본 것 먼저(stale-first)', () => {

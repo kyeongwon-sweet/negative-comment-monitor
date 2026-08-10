@@ -77,7 +77,9 @@ function deltaReason_(target, counts) {
   // ?좉퇋湲(DB ?깅줉??+ ?꾩쭅 ??踰덈룄 ?ㅼ틪 ????? ?볤????좏샇媛 ?꾩쭅 ?놁뼱??1???ㅼ틪?쒕떎.
   // ??쒕낫??comments_count ?섏쭛 吏?곗쑝濡??좉퇋湲??媛먯떆?먯꽌 ?꾨씫?섎뜕 媛?諛⑹?. ?ㅼ틪?섎㈃ last_checked_at??
   // 湲곕줉???ㅼ쓬遺?곕뒗 ?ъ뒪罹??????ш낵湲??놁쓬). postId ?녿뒗(DB 誘몃벑濡? 湲? 湲곕줉 遺덇????쒖쇅.
-  if (c.last == null && !c.lastCheckedAt && c.postId) return 'firstScan';
+  // 신규글(미확인)인데 current=0(댓글 0)이면 스크레이프 불필요 → baseline(last_count=0)만 기록해
+  // 비용 절감. 이후 댓글이 생기면 current>0이 되어 changed로 감지된다.
+  if (c.last == null && !c.lastCheckedAt && c.postId) return (c.current != null && Number(c.current) === 0) ? 'baseline' : 'firstScan';
   if (c.current == null) return '';   // 洹????좏샇 ?놁쓬 ??skip(鍮꾩슜 ?덉쟾)
   if (c.last == null) return 'firstScan';        // 泥??뺤씤(?좏샇 ?덉쓬) ??理쒓렐 ?볤? 1???ㅼ틪
   return c.current !== c.last ? 'changed' : '';            // ?댄썑??利앷?쨌媛먯냼 紐⑤몢 ?ъ뒪罹???젣濡?移댁슫??以꾩뼱?????볤? 媛?? 以묐났? fingerprint dedup 諛⑹?)
@@ -97,7 +99,8 @@ function targetDateMs_(target) {
 export function filterChangedTargets(targets, counts, options = {}) {
   const firstScanLimit = Number(options.firstScanLimit);
   if (!Number.isFinite(firstScanLimit) || firstScanLimit < 0) {
-    return targets.filter((t) => deltaReason_(t, counts));
+    // 'baseline'(current=0 신규)은 스크레이프 대상 아님 — changed/firstScan만.
+    return targets.filter((t) => { const r = deltaReason_(t, counts); return r === 'changed' || r === 'firstScan'; });
   }
   const changed = [];
   const firstScan = [];
@@ -112,6 +115,11 @@ export function filterChangedTargets(targets, counts, options = {}) {
     .slice(0, Math.max(0, firstScanLimit))
     .map((item) => item.target);
   return [...changed, ...limitedFirstScan];
+}
+
+// current=0(댓글 0) 신규글 = 스크레이프 없이 last_count=0 baseline만 기록할 대상(비용 절감).
+export function filterBaselineTargets(targets, counts) {
+  return targets.filter((t) => deltaReason_(t, counts) === 'baseline');
 }
 
 export function filterNoSignalRescueTargets(targets, counts, options = {}) {
@@ -179,15 +187,15 @@ export function filterChangedTargetsUnlimited(targets, counts) {
 
 // 델타 스킵 사유별 집계(로그·요약용).
 export function summarizeDelta(targets, counts) {
-  let noSignal = 0, unchanged = 0, firstScan = 0, changed = 0;
+  let noSignal = 0, unchanged = 0, firstScan = 0, changed = 0, baseline = 0;
   for (const t of targets) {
     const c = counts[t.url] || {};
     if (c.current == null) noSignal++;
-    else if (c.last == null) firstScan++;
+    else if (c.last == null) { if (Number(c.current) === 0) baseline++; else firstScan++; } // current=0 신규는 baseline(무스크레이프)
     else if (c.current !== c.last) changed++;
     else unchanged++;
   }
-  return { noSignal, unchanged, firstScan, changed, scrape: firstScan + changed };
+  return { noSignal, unchanged, firstScan, changed, baseline, scrape: firstScan + changed };
 }
 
 // 스크레이프 성공한 대상의 last_count를 현재값으로 갱신(다음 실행부터 증가분만).

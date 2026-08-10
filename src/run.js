@@ -6,7 +6,7 @@ import { detectPlatform, filterEligibleSponsorships, groupApifyTargets } from '.
 import { classifyTargetsBatched } from './hybrid-classify.js';
 import { sendAlert, buildViralCopyMessage, postThreadText } from './slack.js';
 import { filterDueTargets, isEvergreenCategory, kstDateKey } from './schedule.js';
-import { loadCommentCounts, filterChangedTargets, filterNoSignalRescueTargets, filterDeepScanTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
+import { loadCommentCounts, filterChangedTargets, filterBaselineTargets, filterNoSignalRescueTargets, filterDeepScanTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
 import { commentFingerprint, loadRecentlyAlertedPostKeys, loadSeenFingerprints, recordAlert } from './dedup.js';
 import { estimateUsd } from './pricing.js';
 import { computeClassifierHash, purgeCache } from './cache.js';
@@ -65,12 +65,14 @@ export async function runMonitor(config = loadConfig()) {
   // 정기 확인은 댓글 수 증가분만 과금한다. 최근 부정댓글이 있는 집중 대상은
   // 대시보드 댓글 수 갱신을 기다리지 않고 15분마다 직접 수집한다.
   let targets = dueTargets;
+  let baselineTargets = [];
   let deltaSkipped = 0;
   let summary_deltaBreakdown = null;
   if (config.deltaEnabled && config.supabaseUrl && config.supabaseKey) {
     try {
       if (!Object.keys(counts).length) counts = await loadCommentCounts(config, dueTargets);
       const changed = filterChangedTargets(dueTargets, counts, { firstScanLimit: config.firstScanLimit });
+      baselineTargets = filterBaselineTargets(dueTargets, counts); // current=0 신규 = 무스크레이프 baseline
       const noSignalRescue = filterNoSignalRescueTargets(dueTargets, counts, { limit: config.noSignalScanLimit });
       const deepScan = filterDeepScanTargets(dueTargets, counts, {
         limit: config.deepScanLimit,
@@ -297,10 +299,12 @@ export async function runMonitor(config = loadConfig()) {
   }
 
   if (summary_deltaBreakdown) summary.deltaBreakdown = summary_deltaBreakdown;
-  // 성공적으로 스크레이프한 게시물의 댓글 수 기준선 갱신(다음 실행부터 증가분만).
-  if (config.deltaEnabled && config.supabaseUrl && config.supabaseKey && scrapedTargets.length && !config.dryRun) {
+  // 스크레이프분 + baseline(current=0 신규, 무스크레이프)의 last_count 기준선 갱신(다음 실행부터 증가분만).
+  // baseline은 recordChecks가 counts.current(=0)를 그대로 기록 → 재firstScan 없이 0 기준선만 남긴다.
+  const toRecord = [...scrapedTargets, ...baselineTargets];
+  if (config.deltaEnabled && config.supabaseUrl && config.supabaseKey && toRecord.length && !config.dryRun) {
     try {
-      summary.checksUpdated = await recordChecks(config, scrapedTargets, counts);
+      summary.checksUpdated = await recordChecks(config, toRecord, counts);
     } catch (error) {
       console.error('[delta] last_count 갱신 실패:', error.message);
     }
