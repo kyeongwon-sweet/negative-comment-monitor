@@ -124,8 +124,11 @@ export function filterNoSignalRescueTargets(targets, counts, options = {}) {
       // 신규 noSignal 글은 firstScanLimit 대기열에서 처리해 firstScan 비용상한을 우회하지 않게 한다.
       return Boolean(c.postId) && c.current == null && Boolean(c.lastCheckedAt);
     })
-    .map((target, index) => ({ target, index, dateMs: targetDateMs_(target) }))
-    .sort((a, b) => b.dateMs - a.dateMs || a.index - b.index)
+    // stale-first 공정 순환: 가장 오래 안 본 것부터 rescue. (과거엔 게시일 최신순이라 옛 noSignal
+    // 게시물이 신규글에 계속 밀려 영영 재스캔 안 되던 블라인드 스팟이 있었음.)
+    // lastCheckedAt 오름차순 → 모든 noSignal 게시물이 돌아가며 스캔된다.
+    .map((target, index) => ({ target, index, lastMs: Date.parse((counts[target.url] || {}).lastCheckedAt || '') || 0 }))
+    .sort((a, b) => a.lastMs - b.lastMs || a.index - b.index)
     .slice(0, Math.max(0, limit))
     .map((item) => item.target);
 }

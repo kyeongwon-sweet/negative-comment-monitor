@@ -69,21 +69,22 @@ test('filterChangedTargets: firstScanLimit은 첫확인만 댓글수 높은 순�
   assert.deepEqual(out, ['changed-a', 'changed-b', 'first-high', 'first-mid']);
 });
 
-test('filterNoSignalRescueTargets: 이미 확인 이력이 있는 noSignal만 최신순 제한 rescue', () => {
+test('filterNoSignalRescueTargets: 확인 이력 있는 noSignal만, 가장 오래 안 본 것 먼저(stale-first)', () => {
   const targets = [
-    { url: 'old-nosignal', uploadedAt: '2026-07-20T00:00:00Z' },
-    { url: 'new-nosignal', uploadedAt: '2026-07-28T00:00:00Z' },
-    { url: 'fresh-nosignal', uploadedAt: '2026-07-29T00:00:00Z' },
+    { url: 'stale-nosignal', uploadedAt: '2026-07-20T00:00:00Z' },
+    { url: 'recent-nosignal', uploadedAt: '2026-07-29T00:00:00Z' },
+    { url: 'fresh-never', uploadedAt: '2026-07-29T00:00:00Z' },
     { url: 'changed', uploadedAt: '2026-07-30T00:00:00Z' },
   ];
   const counts = {
-    'old-nosignal': { postId: '1', current: null, last: null, lastCheckedAt: '2026-07-27T00:00:00Z' },
-    'new-nosignal': { postId: '2', current: null, last: null, lastCheckedAt: '2026-07-27T00:00:00Z' },
-    'fresh-nosignal': { postId: '3', current: null, last: null },
-    changed: { postId: '4', current: 2, last: 1, lastCheckedAt: '2026-07-27T00:00:00Z' },
+    'stale-nosignal': { postId: '1', current: null, last: null, lastCheckedAt: '2026-07-24T00:00:00Z' },  // 가장 오래 안 봄
+    'recent-nosignal': { postId: '2', current: null, last: null, lastCheckedAt: '2026-07-28T00:00:00Z' }, // 최근에 봄
+    'fresh-never': { postId: '3', current: null, last: null },  // lastCheckedAt 없음 → firstScan 대기열(rescue 제외)
+    changed: { postId: '4', current: 2, last: 1, lastCheckedAt: '2026-07-27T00:00:00Z' },  // 신호 있음 → 제외
   };
   const out = filterNoSignalRescueTargets(targets, counts, { limit: 1 }).map((t) => t.url);
-  assert.deepEqual(out, ['new-nosignal']);
+  // 게시일은 recent가 더 최신이지만, '오래 안 본' stale-nosignal이 우선 rescue돼야 한다(공정 순환).
+  assert.deepEqual(out, ['stale-nosignal']);
 });
 
 test('filterDeepScanTargets: high-comment posts are limited by cadence and marked deepScan', () => {
