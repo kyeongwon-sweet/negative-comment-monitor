@@ -85,6 +85,6 @@ export async function runMetaBatchWatchdog(env = process.env, now = Date.now(), 
   return { warned: true, dispatched };
 }
 
-if (import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`) {
+if (process.argv[1] && import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`) {
   runMetaBatchWatchdog().catch((error) => { console.error(error.message); process.exitCode = 1; });
 }
