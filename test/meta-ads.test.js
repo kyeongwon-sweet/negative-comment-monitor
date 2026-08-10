@@ -65,13 +65,18 @@ test('buildMetaAdEntries groups Webhook comments and enriches the permalink', as
   assert.equal(entries[0].comments[0].metaEventId, 1);
 });
 
-test('inMorningWindow: KST 9시대만 true, 그 외 false, FORCE는 시간 무관 true', () => {
+test('inMorningWindow: KST 8~11시 창 true, 그 외 false, FORCE는 시간 무관 true', () => {
+  const kst8 = Date.parse('2026-08-07T23:30:00Z');  // +9h = 08:30 KST (전날 23:30 UTC)
   const kst9 = Date.parse('2026-08-07T00:30:00Z');  // +9h = 09:30 KST
+  const kst11 = Date.parse('2026-08-07T02:30:00Z'); // +9h = 11:30 KST
   const kstNoon = Date.parse('2026-08-07T03:00:00Z'); // +9h = 12:00 KST
+  const kst7 = Date.parse('2026-08-06T22:30:00Z');  // +9h = 07:30 KST
+  assert.equal(inMorningWindow(kst8, {}), true);
   assert.equal(inMorningWindow(kst9, {}), true);
-  assert.equal(inMorningWindow(kstNoon, {}), false);
+  assert.equal(inMorningWindow(kst11, {}), true);
+  assert.equal(inMorningWindow(kstNoon, {}), false); // 12시=창 밖
+  assert.equal(inMorningWindow(kst7, {}), false);    // 7시=창 밖
   assert.equal(inMorningWindow(kstNoon, { META_ADS_FORCE: 'true' }), true);
-  assert.equal(inMorningWindow(Date.parse('2026-08-07T01:00:00Z'), { META_ADS_WINDOW_HOUR: '10' }), true); // 10 KST, window=10
 });
 
 test('isConversionAd: 소재명 토큰에 전환이면 true, 인지면 false', () => {

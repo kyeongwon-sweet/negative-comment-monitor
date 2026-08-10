@@ -21,11 +21,16 @@ import {
 // 15분 웨이크를 그대로 타되 여기서 'KST 아침 시간대'에만 실제 처리하도록 게이트한다(자가치유).
 //   - META_ADS_FORCE=true(수동 실행) 또는 KST 시(hour)==META_ADS_WINDOW_HOUR(기본 9)일 때만 동작.
 //   - 그 외 시간대는 큐에 그대로 두고 아무 것도 하지 않는다(LLM·발송 없음).
+// ⚠️ KST 09시 == UTC 00시 = GitHub 크론 최혼잡 시간대(대량 드롭). 실측: 최근 실행 중 KST 9시만 0건.
+// 단일 시(9)로 게이트하면 그 시간 웨이크가 다 드롭돼 배치가 통째로 누락된다(주말 30건 적체 사고).
+// → 죽은 UTC-0(KST 9)를 포함하되 앞뒤로 넓혀(KST 8~11) 실제로 도는 웨이크(UTC 23/1/2)를 타게 한다.
+// 큐-비우기로 멱등: 창 내 첫 웨이크가 적체분 발송, 이후 웨이크는 신규분만. FORCE는 시간 무관 강제.
 export function inMorningWindow(now = Date.now(), env = process.env) {
   if (String(env.META_ADS_FORCE || '').toLowerCase() === 'true') return true;
-  const target = Number(env.META_ADS_WINDOW_HOUR || 9);
+  const start = Number(env.META_ADS_WINDOW_START || 8);
+  const end = Number(env.META_ADS_WINDOW_END || 11);
   const kstHour = new Date(now + 9 * 3600 * 1000).getUTCHours();
-  return kstHour === target;
+  return kstHour >= start && kstHour <= end;
 }
 
 export async function runMetaAds(config = loadMetaAdsConfig(), fetchImpl = fetch, now = Date.now()) {

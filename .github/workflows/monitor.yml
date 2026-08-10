@@ -117,8 +117,10 @@ jobs:
           META_ADS_CHANNEL_CATEGORY: 인지 광고
           META_ADS_INSTAGRAM_USERNAME: lalasweet_icecream
           META_AD_VIDEO_ASSIGNEES: ${{ vars.META_AD_VIDEO_ASSIGNEES }}
-          # 아침 배치 창(KST 9시대만 실제 발송). 수동 실행(workflow_dispatch)은 시간 무관 강제.
-          META_ADS_WINDOW_HOUR: '9'
+          # 아침 배치 창(KST 8~11시). ⚠️ KST 9시(UTC0)는 GitHub 크론 대량 드롭 구간이라 단일 9시 게이트
+          # 금지 — 앞뒤로 넓혀 실제 도는 웨이크(UTC 23/1/2)를 타게 한다. 수동 실행은 FORCE로 시간 무관.
+          META_ADS_WINDOW_START: '8'
+          META_ADS_WINDOW_END: '11'
           META_ADS_FORCE: ${{ github.event_name == 'workflow_dispatch' }}
           DRY_RUN: 'false'
       - name: Notify Slack on failure
