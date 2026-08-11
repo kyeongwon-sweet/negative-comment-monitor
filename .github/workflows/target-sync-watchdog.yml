@@ -1,0 +1,39 @@
+name: Target sync watchdog
+
+# 봇은 GAS 시트 타겟만 감시한다. DB 신규글이 시트에 반영 안 되면(pullFromDB 지연/실패, GAS 캐시)
+# 봇이 그 글을 못 봐 부정댓글이 미감시된다(실측 사고). DB↔GAS 교차검증으로 결과를 직접 감시.
+# ⚠️ UTC 0시(KST 9)는 크론 드롭 구간이라 피하고 신뢰 시간대에 실행. DB+GAS만 조회(수집 비용 0).
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'   # 13:00 KST
+    - cron: '0 13 * * *'  # 22:00 KST
+
+permissions:
+  contents: read
+
+concurrency:
+  group: target-sync-watchdog
+  cancel-in-progress: false
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node src/target-sync-watchdog.js
+        env:
+          GAS_WEB_APP_URL: ${{ secrets.GAS_WEB_APP_URL }}
+          GAS_VERIFY_TOKEN: ${{ secrets.GAS_VERIFY_TOKEN }}
+          TARGET_BATCH_SIZE: ${{ vars.TARGET_BATCH_SIZE }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          TARGET_SYNC_MIN_GAP: '10'
+          TARGET_SYNC_GRACE_HOURS: '4'
