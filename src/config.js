@@ -51,7 +51,8 @@ export function loadConfig(env = process.env) {
     sourceSheetName: String(env.SOURCE_SHEET_NAME || '콘텐츠 대시보드 연동').trim(),
     excludedChannelCategory: String(env.EXCLUDED_CHANNEL_CATEGORY || '무상시딩').trim(),
     managedChannelCategories: String(env.MANAGED_CHANNEL_CATEGORIES || '온드미디어,위성채널').split(',').map((value) => value.trim()).filter(Boolean),
-    targetBatchSize: Number(env.TARGET_BATCH_SIZE || 20),
+    // GAS에서 evergreen(온드/위성) 보조 상한으로 쓰인다. 낮으면 전체 대상이 조용히 잘린다.
+    targetBatchSize: Number(env.TARGET_BATCH_SIZE || 1000),
     firstScanLimit: Number(env.FIRST_SCAN_LIMIT || 60),
     noSignalScanLimit: Number(env.NO_SIGNAL_SCAN_LIMIT || 20),
     deepScanLimit: Number(env.DEEP_SCAN_LIMIT || 15),

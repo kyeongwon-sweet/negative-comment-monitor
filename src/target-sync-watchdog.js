@@ -1,6 +1,6 @@
 // 타겟 동기화 결과 워치독 — 별도 워크플로에서 신뢰 시간대(KST 13/22)에 실행.
 // 봇은 GAS 시트 타겟만 감시하므로, DB(대시보드)에 신규글이 추가돼도 시트 동기화(pullFromDB)가
-// 지연/실패하거나 GAS 응답이 캐시되면 봇이 그 글을 못 본다(실측: 신규 98건 미감시 사고).
+// 지연/실패하거나 GAS 대상 상한·엔드포인트가 어긋나면 봇이 그 글을 못 본다(실측: 신규 98건 미감시 사고).
 // → '봇이 감시하는 카테고리의 신규 활성글(댓글 있음)이 유예시간 지나도 봇 GAS 타겟에 없으면' 경고.
 // DB + GAS만 조회(Apify/Anthropic 없음). 정상이면 조용히 종료.
 import { fetchTargets } from './gas.js';
@@ -31,7 +31,7 @@ export function buildGapMessage(now, gaps, assigneeOther = '') {
     '⚠️ *신규글 감시 누락 의심 (DB↔모니터링 시트 동기화 갭)*',
     `오늘(${kstDate(now)}) DB엔 있고 댓글도 있는데 봇 GAS 타겟엔 없는 신규 활성글 ${gaps.length}건 (유예 초과).`,
     '채널별: ' + Object.entries(byCat).map(([c, n]) => `${c} ${n}`).join(' · '),
-    'DB→시트 동기화(pullFromDB) 지연/실패 또는 GAS 응답 캐시를 확인하세요.',
+    'DB→시트 동기화(pullFromDB) 지연/실패 또는 GAS 대상 상한·엔드포인트 불일치를 확인하세요.',
     owner ? `담당자: <@${owner}>` : '',
   ].filter(Boolean).join('\n');
 }
@@ -69,7 +69,7 @@ export async function runTargetSyncWatchdog(env = process.env, now = Date.now(),
   const minGap = Number(env.TARGET_SYNC_MIN_GAP || 10);
   const gasConfig = {
     gasWebAppUrl: env.GAS_WEB_APP_URL, gasVerifyToken: env.GAS_VERIFY_TOKEN,
-    targetBatchSize: Number(env.TARGET_BATCH_SIZE || 300), gasFetchRetries: Number(env.GAS_FETCH_RETRIES || 4),
+    targetBatchSize: Number(env.TARGET_BATCH_SIZE || 1000), gasFetchRetries: Number(env.GAS_FETCH_RETRIES || 4),
   };
   const targets = await fetchTargets(gasConfig, fetchImpl);
   const targetKeys = new Set(targets.map((t) => extractPostKey(t.url)).filter(Boolean));

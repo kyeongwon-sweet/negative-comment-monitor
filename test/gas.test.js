@@ -5,9 +5,33 @@ import { fetchTargets, resolveTargetUrls } from '../src/gas.js';
 const CFG = { gasWebAppUrl: 'https://script.google.com/x/exec', gasVerifyToken: 'tok', targetBatchSize: 300 };
 
 test('fetchTargets: 정상 JSON이면 targets 반환', async () => {
-  const fetchImpl = async () => ({ ok: true, text: async () => JSON.stringify({ ok: true, result: { targets: [{ url: 'u1' }] } }) });
+  let requestedUrl;
+  let requestedOptions;
+  const fetchImpl = async (url, options) => {
+    requestedUrl = url;
+    requestedOptions = options;
+    return { ok: true, text: async () => JSON.stringify({ ok: true, result: { targets: [{ url: 'u1' }], total: 1 } }) };
+  };
   const out = await fetchTargets(CFG, fetchImpl);
   assert.deepEqual(out, [{ url: 'u1' }]);
+  assert.equal(requestedUrl.searchParams.get('limit'), '300');
+  assert.match(requestedUrl.searchParams.get('_cb'), /^\d+$/);
+  assert.equal(requestedOptions.cache, 'no-store');
+  assert.equal(requestedOptions.headers['cache-control'], 'no-cache');
+});
+
+test('fetchTargets: GAS total보다 반환 targets가 적으면 조용히 감시하지 않고 실패', async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    text: async () => JSON.stringify({
+      ok: true,
+      result: { targets: Array.from({ length: 699 }, (_, i) => ({ url: `u${i}` })), total: 817 },
+    }),
+  });
+  await assert.rejects(
+    () => fetchTargets({ ...CFG, gasFetchRetries: 1 }, fetchImpl),
+    /returned=699, total=817, limit=300/,
+  );
 });
 
 test('fetchTargets: GAS가 HTML 오류 페이지 주면 원인 담긴 명확한 오류로 throw(#7 시트 헤더 등)', async () => {

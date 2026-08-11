@@ -72,14 +72,30 @@ export async function fetchTargets(config, fetchImpl = fetch) {
     action: 'sponsoredTargets',
     key: config.gasVerifyToken,
     limit: config.targetBatchSize,
+    // Apps Script/중간 프록시가 같은 GET을 재사용하지 못하게 매 호출을 고유하게 만든다.
+    // 서버가 no-store를 반환해도 클라이언트 쪽 방어를 함께 둔다.
+    _cb: Date.now(),
   });
   const maxAttempts = Math.max(1, Number(config.gasFetchRetries || 4));
   let lastError;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const response = await fetchImpl(url, { method: 'GET', redirect: 'follow' });
+      const response = await fetchImpl(url, {
+        method: 'GET',
+        redirect: 'follow',
+        cache: 'no-store',
+        headers: { 'cache-control': 'no-cache', pragma: 'no-cache' },
+      });
       const payload = await readJson(response);
-      return resolveTargetUrls(payload.result?.targets || [], fetchImpl);
+      const targets = payload.result?.targets || [];
+      const total = Number(payload.result?.total);
+      if (Number.isFinite(total) && total > targets.length) {
+        throw new Error(
+          `GAS 대상이 상한으로 잘렸습니다: returned=${targets.length}, total=${total}, limit=${config.targetBatchSize}. `
+          + 'TARGET_BATCH_SIZE를 올리거나 GAS evergreen 상한을 확인하세요.',
+        );
+      }
+      return resolveTargetUrls(targets, fetchImpl);
     } catch (error) {
       lastError = error;
       if (attempt >= maxAttempts) break;
