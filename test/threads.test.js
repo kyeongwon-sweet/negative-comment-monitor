@@ -49,24 +49,25 @@ test('ensureDailyThread: 비활성/실패는 null(최상위 발송 폴백)', asy
   assert.equal(await ensureDailyThread(CFG, { kstDate: '2026-07-23', assignee: 'U1' }, f), null);
 });
 
-test('markCompletedThreads: 답글0+미반응 스레드만 완료느낌표, 미처리·이미반응은 건너뜀', async () => {
+test('markCompletedThreads: 미처리 카드(버튼) 없으면 완료느낌표(무시·숨김 처리분 남아도), 미처리·이미반응은 스킵', async () => {
   const CFG = { supabaseUrl: 'https://db', supabaseKey: 'k', slackBotToken: 'tok', slackChannelId: 'C1' };
-  // 스레드 3개: T0=답글0·반응없음(→달림), T1=답글있음(→스킵), T2=답글0·이미반응(→스킵)
+  // T0=답글0(전부 삭제,→달림), T1=미처리 카드(버튼 있음,→스킵), T2=이미반응(→스킵), T3=처리분만(버튼 제거,→달림)
   const added = [];
   const fetchImpl = async (u, o) => {
-    if (/alert_threads/.test(u)) return { ok: true, json: async () => [{ slack_ts: 'T0' }, { slack_ts: 'T1' }, { slack_ts: 'T2' }] };
+    if (/alert_threads/.test(u)) return { ok: true, json: async () => [{ slack_ts: 'T0' }, { slack_ts: 'T1' }, { slack_ts: 'T2' }, { slack_ts: 'T3' }] };
     if (/conversations\.replies/.test(u)) {
       const ts = new URL(u).searchParams.get('ts');
       if (ts === 'T0') return { json: async () => ({ messages: [{ ts: 'T0', reactions: [] }] }) };
-      if (ts === 'T1') return { json: async () => ({ messages: [{ ts: 'T1' }, { ts: 'r1' }] }) };
+      if (ts === 'T1') return { json: async () => ({ messages: [{ ts: 'T1', reactions: [] }, { ts: 'r1', blocks: [{ type: 'section' }, { type: 'actions' }] }] }) };
       if (ts === 'T2') return { json: async () => ({ messages: [{ ts: 'T2', reactions: [{ name: '완료느낌표' }] }] }) };
+      if (ts === 'T3') return { json: async () => ({ messages: [{ ts: 'T3', reactions: [] }, { ts: 'r3', blocks: [{ type: 'section' }, { type: 'context' }] }] }) };
     }
     if (/reactions\.add/.test(u)) { added.push(JSON.parse(o.body).timestamp); return { json: async () => ({ ok: true }) }; }
     return { ok: true, json: async () => ({}) };
   };
   const marked = await markCompletedThreads(CFG, '2026-07-28', '완료느낌표', fetchImpl);
-  assert.equal(marked, 1);
-  assert.deepEqual(added, ['T0']); // 답글0+미반응만
+  assert.equal(marked, 2);
+  assert.deepEqual(added.sort(), ['T0', 'T3']); // 미처리 카드 없는 T0(전부삭제)·T3(무시/숨김처리)만
 });
 
 test('markCompletedThreads: 비활성/조회실패는 0(무해)', async () => {
