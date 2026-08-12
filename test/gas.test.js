@@ -20,7 +20,7 @@ test('fetchTargets: 정상 JSON이면 targets 반환', async () => {
   assert.equal(requestedOptions.headers['cache-control'], 'no-cache');
 });
 
-test('fetchTargets: GAS total보다 반환 targets가 적으면 조용히 감시하지 않고 실패', async () => {
+test('fetchTargets: 상한(batch cap) truncation이면 실패(returned≥limit & total>returned)', async () => {
   const fetchImpl = async () => ({
     ok: true,
     text: async () => JSON.stringify({
@@ -32,6 +32,19 @@ test('fetchTargets: GAS total보다 반환 targets가 적으면 조용히 감시
     () => fetchTargets({ ...CFG, gasFetchRetries: 1 }, fetchImpl),
     /returned=699, total=817, limit=300/,
   );
+});
+
+test('fetchTargets: 상한과 무관한 소량 불일치(returned≪limit)는 run을 죽이지 않고 받은 대상으로 진행', async () => {
+  // 실측 장애: GAS가 823행 중 822만 간헐 반환(1행 드롭). limit=1000이라 상한 truncation 아님 → 진행해야 함.
+  const fetchImpl = async () => ({
+    ok: true,
+    text: async () => JSON.stringify({
+      ok: true,
+      result: { targets: Array.from({ length: 822 }, (_, i) => ({ url: `u${i}` })), total: 823 },
+    }),
+  });
+  const out = await fetchTargets({ ...CFG, targetBatchSize: 1000, gasFetchRetries: 1 }, fetchImpl);
+  assert.equal(out.length, 822);
 });
 
 test('fetchTargets: GAS가 HTML 오류 페이지 주면 원인 담긴 명확한 오류로 throw(#7 시트 헤더 등)', async () => {

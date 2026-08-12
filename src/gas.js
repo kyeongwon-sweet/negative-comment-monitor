@@ -89,10 +89,22 @@ export async function fetchTargets(config, fetchImpl = fetch) {
       const payload = await readJson(response);
       const targets = payload.result?.targets || [];
       const total = Number(payload.result?.total);
-      if (Number.isFinite(total) && total > targets.length) {
+      const cap = Number(config.targetBatchSize);
+      // 진짜 상한(batch cap) truncation일 때만 전체 실패(699/817 재발 방지): 받은 대상이 상한에
+      // 도달했는데 total이 그보다 크면 = 상한에 잘린 것 → fail-loud.
+      if (Number.isFinite(total) && total > targets.length && Number.isFinite(cap) && targets.length >= cap) {
         throw new Error(
           `GAS 대상이 상한으로 잘렸습니다: returned=${targets.length}, total=${total}, limit=${config.targetBatchSize}. `
           + 'TARGET_BATCH_SIZE를 올리거나 GAS evergreen 상한을 확인하세요.',
+        );
+      }
+      // 상한과 무관한 소량 불일치(GAS가 특정 행을 간헐적으로 드롭, returned≪limit)는 전체 모니터링을
+      // 중단하지 않는다 — 받은 대상으로 진행하고 경고만 남긴다(로그=비-침묵). 진짜 감시 누락은
+      // target-sync-watchdog가 DB↔GAS 대조로 독립 감지·알림하므로 여기서 run을 죽일 필요가 없다.
+      if (Number.isFinite(total) && total > targets.length) {
+        console.error(
+          `[gas] 대상 일부 누락(상한 아님): returned=${targets.length}, total=${total}, limit=${config.targetBatchSize}. `
+          + '받은 대상으로 진행합니다(감시 누락 감지는 target-sync-watchdog).',
         );
       }
       return resolveTargetUrls(targets, fetchImpl);
