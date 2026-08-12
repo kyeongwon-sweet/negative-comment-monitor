@@ -30,12 +30,12 @@ test('fetchTargets: 상한(batch cap) truncation이면 실패(returned≥limit &
   });
   await assert.rejects(
     () => fetchTargets({ ...CFG, gasFetchRetries: 1 }, fetchImpl),
-    /returned=699, total=817, limit=300/,
+    /returned=699, expected=817, limit=300/,
   );
 });
 
 test('fetchTargets: 상한과 무관한 소량 불일치(returned≪limit)는 run을 죽이지 않고 받은 대상으로 진행', async () => {
-  // 실측 장애: GAS가 823행 중 822만 간헐 반환(1행 드롭). limit=1000이라 상한 truncation 아님 → 진행해야 함.
+  // 구 응답(메타 없음): total=dedup 전. limit=1000이라 상한 truncation 아님 → 진행해야 함.
   const fetchImpl = async () => ({
     ok: true,
     text: async () => JSON.stringify({
@@ -45,6 +45,40 @@ test('fetchTargets: 상한과 무관한 소량 불일치(returned≪limit)는 ru
   });
   const out = await fetchTargets({ ...CFG, targetBatchSize: 1000, gasFetchRetries: 1 }, fetchImpl);
   assert.equal(out.length, 822);
+});
+
+test('fetchTargets: GAS v83(total=targets.length)+dedup 1건은 정상 통과(실패·경고 없음)', async () => {
+  // 실측(v83): total=822=targets, meta.rawEligibleCount=823, duplicateCount=1 → 기대(823-1)=822=returned → 정상.
+  const fetchImpl = async () => ({
+    ok: true,
+    text: async () => JSON.stringify({
+      ok: true,
+      result: {
+        targets: Array.from({ length: 822 }, (_, i) => ({ url: `u${i}` })),
+        total: 822, meta: { rawEligibleCount: 823, duplicateCount: 1 },
+      },
+    }),
+  });
+  const out = await fetchTargets({ ...CFG, targetBatchSize: 1000, gasFetchRetries: 1 }, fetchImpl);
+  assert.equal(out.length, 822);
+});
+
+test('fetchTargets: v83에서 total=targets.length여도 상한 잘림은 rawEligible−dup로 감지해 실패', async () => {
+  // dedup(2) 제외 기대 1003인데 상한(1000)에 걸려 1000만 반환 → 잘림 → fail-loud(699/817 방어 복원).
+  const fetchImpl = async () => ({
+    ok: true,
+    text: async () => JSON.stringify({
+      ok: true,
+      result: {
+        targets: Array.from({ length: 1000 }, (_, i) => ({ url: `u${i}` })),
+        total: 1000, meta: { rawEligibleCount: 1005, duplicateCount: 2 },
+      },
+    }),
+  });
+  await assert.rejects(
+    () => fetchTargets({ ...CFG, targetBatchSize: 1000, gasFetchRetries: 1 }, fetchImpl),
+    /returned=1000, expected=1003, limit=1000/,
+  );
 });
 
 test('fetchTargets: GAS가 HTML 오류 페이지 주면 원인 담긴 명확한 오류로 throw(#7 시트 헤더 등)', async () => {
