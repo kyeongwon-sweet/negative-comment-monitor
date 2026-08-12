@@ -37,7 +37,11 @@ export function loadMetaAdsConfig(env = process.env) {
     supabaseKey: required(env, 'SUPABASE_SERVICE_ROLE_KEY'),
     slackChannelId: String(env.SLACK_CHANNEL_ID || 'C0BHD9S69JA').trim(),
     slackBotToken: required(env, 'SLACK_BOT_TOKEN'),
-    slackAssignees: { other: String(env.SLACK_ASSIGNEE_OTHER || 'U0B2Y0ZC8QZ').trim() },
+    slackAssignees: {
+      // other = 비용경고 등 운영 알림 기본 담당자(황경원). 인지 광고 부정댓글 담당자는 awareness로 분리.
+      other: String(env.SLACK_ASSIGNEE_OTHER || 'U0B2Y0ZC8QZ').trim(),
+      awareness: String(env.SLACK_ASSIGNEE_AWARENESS || '').trim(),
+    },
     managedChannelCategories: [],
     brandContext: String(env.BRAND_CONTEXT || '라라스윗 쫀득바').trim(),
     anthropicKey: String(env.ANTHROPIC_API_KEY || '').trim(),

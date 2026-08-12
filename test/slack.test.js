@@ -8,6 +8,7 @@ const assignees = {
   viralBanner: 'U_BANNER',
   viralVideoOwned: 'U_VIDEO_OWNED',
   other: 'U_OTHER',
+  awareness: 'U_AWARENESS',
   sponsorship: 'U_SPONSORSHIP',
   jd: { sponsorship: 'U_JD_SPON', viralBanner: 'U_JD_BANNER', viralVideo: 'U_JD_VIDEO', satellite: 'U_JD_SAT' },
   p: { viralBanner: 'U_P_BANNER', viralVideo: 'U_P_VIDEO' },
@@ -69,14 +70,15 @@ test('alert card(메타 광고): 카드 담당자는 제작자(영상담당자)�
   assert.ok(blocks.some((b) => b.text?.text === '*담당자*\n<@U_VIDEO>'));
   assert.ok(!blocks.some((b) => b.text?.text?.includes('U_OTHER')));
 });
-test('alert card(메타 광고): 제작자 매핑 없으면 황경원(other)으로 폴백', () => {
-  const blocks = buildAlertBlocks(
-    { url: 'https://example.com', channelCategory: '인지 광고', productName: 'JD', source: 'meta_ads', extraAssignees: [] },
-    { id: 'c1', platform: 'instagram', text: '라라스윗 별로', risk: {} },
-    undefined,
-    assignees,
-  );
-  assert.ok(blocks.some((b) => b.text?.text === '*담당자*\n<@U_OTHER>'));
+test('alert card(메타 광고): 제작자 매핑 없으면 인지 광고 담당자(awareness)로, 미지정 시 other 폴백', () => {
+  const target = { url: 'https://example.com', channelCategory: '인지 광고', productName: 'JD', source: 'meta_ads', extraAssignees: [] };
+  const comment = { id: 'c1', platform: 'instagram', text: '라라스윗 별로', risk: {} };
+  // 제작자(extraAssignees) 없으면 인지 광고 전용 담당자(awareness = 이재원)
+  const withAwareness = buildAlertBlocks(target, comment, undefined, assignees);
+  assert.ok(withAwareness.some((b) => b.text?.text === '*담당자*\n<@U_AWARENESS>'));
+  // awareness 미지정이면 기존대로 other(황경원)로 폴백
+  const noAwareness = buildAlertBlocks(target, comment, undefined, { other: 'U_OTHER' });
+  assert.ok(noAwareness.some((b) => b.text?.text === '*담당자*\n<@U_OTHER>'));
 });
 test('alert card: 메타 광고는 링크 텍스트에 광고 이름 원본(adTitle) 사용', () => {
   const ad = '[26.07]F_V_JD멜_인지_쫀득바출시_인물리뷰형_main.릴스_이나연.X_1P_김유진_260731_빙과_정요한';
@@ -118,6 +120,10 @@ test('assigneeForTarget: 상품×카테고리 라우팅 + 미지정은 카테고
   assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '온드미디어' }, assignees), 'U_OTHER');
   // 상품 정보 없음 → 기타 → 황경원(other)
   assert.equal(assigneeForTarget({ channelCategory: '유상협찬' }, assignees), 'U_OTHER');
+  // 인지(메타) 광고는 상품군 무관 전용 담당자(awareness). 미지정 시 other로 폴백.
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '인지 광고' }, assignees), 'U_AWARENESS');
+  assert.equal(assigneeForTarget({ channelCategory: '인지 광고' }, assignees), 'U_AWARENESS');
+  assert.equal(assigneeForTarget({ channelCategory: '인지 광고' }, { other: 'U_OTHER' }), 'U_OTHER');
 });
 test('alert card category line shows product label (상품 × 카테고리)', () => {
   const blocks = buildAlertBlocks(

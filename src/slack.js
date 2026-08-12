@@ -64,6 +64,7 @@ export function assigneeForTarget(target, assignees = {}) {
   const isVideo = category.includes('바이럴') && category.includes('영상');
   const isSatellite = category.includes('위성채널');
   const isSponsorship = category.includes('협찬');
+  const isAwareness = category.includes('인지'); // 인지(메타) 광고 부정댓글 전용 담당자
   if (group === 'jd') {
     if (isSponsorship && assignees.jd?.sponsorship) return assignees.jd.sponsorship;
     if (isBanner && assignees.jd?.viralBanner) return assignees.jd.viralBanner;
@@ -73,6 +74,8 @@ export function assigneeForTarget(target, assignees = {}) {
     if (isBanner && assignees.p?.viralBanner) return assignees.p.viralBanner;
     if (isVideo && assignees.p?.viralVideo) return assignees.p.viralVideo;
   }
+  // 인지 광고는 상품군과 무관하게 전용 담당자로. 미지정이면 기존 기본값(other)로 폴백.
+  if (isAwareness && assignees.awareness) return assignees.awareness;
   return assignees.other || '';
 }
 
