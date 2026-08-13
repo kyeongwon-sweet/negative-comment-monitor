@@ -1,3 +1,5 @@
+import { extractPostKey } from './delta.js';
+
 function headers(config, extra = {}) {
   return { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, ...extra };
 }
@@ -94,19 +96,42 @@ export async function markCompletedThreads(config, kstDate, emoji = '완료느�
   }
 }
 
-// 카드 URL 집합 추출: 알림카드(actions 버튼)의 button value(JSON)에서 게시물 url.
-function cardPostUrls_(msgs, parentTs) {
-  const urls = new Set();
+// 게시물 참조: 원본 url + 정규화 키(딥링크 .../c/댓글id/ 와 게시물 url을 동일 키로 매칭).
+function postRefs_(url) {
+  const raw = String(url || '').trim();
+  const refs = [];
+  if (raw) refs.push(raw);
+  const k = extractPostKey(raw);
+  if (k) refs.push(k);
+  return refs;
+}
+
+// 살아있는 카드의 게시물 참조 집합. 카드 = blocks 있는 (부모·복사 아닌) 답글.
+// ⚠️ 카드 생존을 'actions 버튼 존재'로 판단하면 [무시]·[승인] 등 버튼만 제거하고 카드는 남기는
+//    처리를 '삭제된 카드'로 오판해, 그 게시물의 복사메시지를 고아로 잘못 지운다(실측 사고).
+//    → 버튼(actions value)뿐 아니라 남아있는 섹션 텍스트의 딥링크 url도 함께 수집한다.
+//    (카드 메시지가 스레드에 존재하면 = 살아있음. 완료/숨김으로 삭제된 카드만 msgs에서 사라진다.)
+function cardPostRefs_(msgs, parentTs) {
+  const refs = new Set();
   for (const m of msgs) {
     if (m.ts === parentTs) continue;
-    const act = (m.blocks || []).find((b) => b.type === 'actions');
-    if (!act) continue;
-    try {
-      const u = JSON.parse(act.elements?.[0]?.value || '{}').url;
-      if (u) urls.add(String(u));
-    } catch { /* 무시 */ }
+    const blocks = Array.isArray(m.blocks) ? m.blocks : [];
+    if (!blocks.length) continue; // 복사메시지(텍스트)·기타는 카드가 아님
+    const act = blocks.find((b) => b.type === 'actions');
+    if (act) {
+      try {
+        const u = JSON.parse(act.elements?.[0]?.value || '{}').url;
+        for (const rref of postRefs_(u)) refs.add(rref);
+      } catch { /* 무시 */ }
+    }
+    for (const b of blocks) {
+      const text = b?.text?.text || '';
+      for (const u of text.match(/https?:\/\/[^\s`<>|)]+/g) || []) {
+        for (const rref of postRefs_(u)) refs.add(rref);
+      }
+    }
   }
-  return urls;
+  return refs;
 }
 
 // 고아 복사메시지 정리: 카드가 완료/숨김으로 삭제돼 '복사메시지만 남은' 경우 그 복사메시지를 지운다.
@@ -130,13 +155,14 @@ export async function cleanupOrphanedCopyMessages(config, kstDate, fetchImpl = f
       ).then((x) => x.json()).catch(() => ({}));
       const msgs = rep.messages || [];
       if (msgs.length < 2) continue;
-      const cardUrls = cardPostUrls_(msgs, ts);
+      const cardRefs = cardPostRefs_(msgs, ts);
       for (const m of msgs) {
         if (m.ts === ts || !/^```/.test(m.text || '')) continue;
         const urls = m.text.match(/https?:\/\/[^\s`<>|]+/g) || [];
         if (!urls.length) continue;
-        // 하나라도 살아있는 카드가 있으면 유지, 전부 없으면(고아) 삭제.
-        if (urls.some((u) => cardUrls.has(u))) continue;
+        const refs = urls.flatMap(postRefs_);
+        // 하나라도 살아있는 카드(무시로 버튼 빠진 카드 포함)와 매칭되면 유지, 전부 없으면(고아=카드 삭제됨) 삭제.
+        if (refs.some((rref) => cardRefs.has(rref))) continue;
         const del = await fetchImpl('https://slack.com/api/chat.delete', {
           method: 'POST',
           headers: { authorization: `Bearer ${config.slackBotToken}`, 'content-type': 'application/json' },

@@ -109,3 +109,27 @@ test('cleanupOrphanedCopyMessages: 카드 없는 게시물의 복사메시지만
   assert.equal(n, 1);
   assert.deepEqual(deleted, ['copyB']);
 });
+
+test('cleanupOrphanedCopyMessages: 무시로 버튼 빠진 카드도 살아있음 → 복사메시지 유지(딥링크 키 매칭)', async () => {
+  const CFG = { supabaseUrl: 'https://db', supabaseKey: 'k', slackBotToken: 'tok', slackChannelId: 'C1' };
+  const deleted = [];
+  // 무시(오탐) 처리된 카드: actions 버튼 없이 section에 딥링크(.../p/AAA/c/123/)만 남는다.
+  const ignoredCard = { ts: 'card', blocks: [
+    { type: 'section', text: { type: 'mrkdwn', text: '<https://www.instagram.com/p/AAA/c/123/|user> / 댓글' } },
+    { type: 'context', elements: [{ type: 'mrkdwn', text: '무시(오탐)' }] },
+  ] };
+  const fetchImpl = async (u, o) => {
+    if (/alert_threads/.test(u)) return { ok: true, json: async () => [{ slack_ts: 'T0' }] };
+    if (/conversations\.replies/.test(u)) return { json: async () => ({ messages: [
+      { ts: 'T0' },
+      ignoredCard,                                                                          // 무시 카드(AAA) — 살아있음
+      { ts: 'copyAAA', text: '```\n[업체]\n\n요청\nhttps://www.instagram.com/p/AAA/\n```' }, // AAA 복사 → 유지
+      { ts: 'copyBBB', text: '```\n[업체]\n\n요청\nhttps://www.instagram.com/p/BBB/\n```' }, // BBB 카드 없음(고아) → 삭제
+    ] }) };
+    if (/chat\.delete/.test(u)) { deleted.push(JSON.parse(o.body).ts); return { json: async () => ({ ok: true }) }; }
+    return { ok: true, json: async () => ({}) };
+  };
+  const n = await cleanupOrphanedCopyMessages(CFG, '2026-08-13', fetchImpl);
+  assert.equal(n, 1);
+  assert.deepEqual(deleted, ['copyBBB']); // 무시 카드의 복사(AAA)는 유지, 카드 없는 BBB만 삭제
+});
