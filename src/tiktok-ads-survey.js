@@ -48,11 +48,7 @@ export async function surveyTikTokAds(config = loadTikTokAdsConfig(), fetchImpl 
   const collected = await buildTikTokAdEntries(surveyConfig, fetchImpl, now);
   collected.windowDays = surveyConfig.tiktokAdsLookbackDays;
   const stats = { calls: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
-  const classificationEntries = collected.entries.map((entry) => ({
-    ...entry,
-    target: { ...entry.target, source: 'meta_ads' },
-  }));
-  const risks = await classifyTargetsBatched(classificationEntries, surveyConfig, undefined, stats, fetchImpl);
+  const risks = await classifyTargetsBatched(collected.entries, surveyConfig, undefined, stats, fetchImpl);
   const alerts = [];
   for (let entryIndex = 0; entryIndex < collected.entries.length; entryIndex += 1) {
     const entry = collected.entries[entryIndex];

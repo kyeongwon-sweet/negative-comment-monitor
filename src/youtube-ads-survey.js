@@ -50,12 +50,7 @@ export async function surveyYouTubeAds(config = loadYouTubeAdsConfig(), fetchImp
   const collected = await buildYouTubeAdEntries(surveyConfig, fetchImpl, now);
   collected.windowDays = surveyConfig.youtubeAdsLookbackDays;
   const stats = { calls: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
-  const classificationEntries = collected.entries.map((entry) => ({
-    ...entry,
-    // 인지 광고는 제품 문맥이 확정돼 있으므로 운영 경로처럼 모든 댓글을 문맥 분류한다.
-    target: { ...entry.target, source: 'meta_ads' },
-  }));
-  const risks = await classifyTargetsBatched(classificationEntries, surveyConfig, undefined, stats, fetchImpl);
+  const risks = await classifyTargetsBatched(collected.entries, surveyConfig, undefined, stats, fetchImpl);
   const alerts = [];
   for (let entryIndex = 0; entryIndex < collected.entries.length; entryIndex += 1) {
     const entry = collected.entries[entryIndex];

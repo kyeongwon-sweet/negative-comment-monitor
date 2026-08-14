@@ -24,6 +24,22 @@ test('calls the LLM only for ambiguous comments and keeps immediate rules local'
   assert.equal(results[2].engine, 'keyword');
 });
 
+test('광고 source(meta/tiktok/youtube)는 전 댓글을 LLM 문맥판정으로 보낸다(reviewAll 일반화)', async () => {
+  const comments = [{ text: '라라스윗 맛있어요' }, { text: '잘 먹었습니다' }]; // 키워드로는 둘 다 정상
+  // 일반 target: 정상 댓글은 LLM에 안 보냄(키워드로 종결)
+  let plainCalled = false;
+  await classifyCommentsHybrid(comments, { brandName: '라라스윗' }, { anthropicKey: 'key' },
+    async (items) => { plainCalled = true; return items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' })); });
+  assert.equal(plainCalled, false);
+  // 광고 source: 제품 문맥 확정 지면이라 전 댓글을 LLM 문맥판정으로
+  for (const source of ['meta_ads', 'tiktok_ads', 'youtube_ads']) {
+    let received = null;
+    await classifyCommentsHybrid(comments, { brandName: '라라스윗', source }, { anthropicKey: 'key' },
+      async (items) => { received = items; return items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' })); });
+    assert.equal(received?.length, 2, `${source}는 전 댓글(2개)을 LLM으로 보내야 함`);
+  }
+});
+
 test('threads the usage stats accumulator through to the LLM classifier', async () => {
   let receivedStats;
   const stats = { calls: 0 };

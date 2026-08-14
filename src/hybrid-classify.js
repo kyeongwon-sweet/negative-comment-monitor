@@ -11,14 +11,18 @@ function humanFalsePositiveResult() {
 
 const LLM_BATCH = 25; // 실행 전체 문맥 후보를 25개 단위로 통합해 LLM 호출 수를 줄인다.
 
+// 광고(메타·틱톡·유튜브) 지면은 '모든 댓글이 그 제품 얘기'라 전 댓글을 LLM 문맥판정으로 보낸다.
+// 이 집합에 source를 추가하면 어댑터가 분류용으로 source를 위조(meta_ads 복제)할 필요가 없다.
+const AD_COMMENT_SOURCES = new Set(['meta_ads', 'tiktok_ads', 'youtube_ads']);
+
 // 한 게시물: 키워드 분류 + 문맥 후보 판별 + 캐시 조회. LLM이 필요한 캐시 미스만 pending으로 돌려준다.
 // 캐시 관련 어떤 실패든 classifierHash=null로 두고 실시간 분류로 진행(누락 방지 우선).
 async function prepareLocal(comments, target, config, stats, fetchImpl) {
   const out = comments.map((comment) => ({ ...classifyNegativeComment(comment, target), engine: 'keyword' }));
   const reviewIndexes = [];
-  // 메타 광고 지면은 '모든 댓글이 그 제품 얘기'다. 브랜드명 미언급·신종 표현(예: "수돗물 향")도
+  // 광고 지면(메타·틱톡·유튜브)은 '모든 댓글이 그 제품 얘기'다. 브랜드명 미언급·신종 표현(예: "수돗물 향")도
   // 놓치지 않게 키워드 게이트를 건너뛰고 전 댓글을 LLM 문맥 판정으로 보낸다(볼륨 적음, 리콜 우선).
-  const reviewAll = String(target?.source || '') === 'meta_ads';
+  const reviewAll = AD_COMMENT_SOURCES.has(String(target?.source || ''));
   for (let index = 0; index < comments.length; index += 1) {
     if (reviewAll || needsContextualReview(comments[index], target)) reviewIndexes.push(index);
   }

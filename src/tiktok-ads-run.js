@@ -61,14 +61,8 @@ export async function runTikTokAds(config = loadTikTokAdsConfig(), fetchImpl = f
   }
 
   const llmStats = { calls: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
-  // 다크 광고 댓글은 메타 인지광고와 마찬가지로 제품 문맥이 이미 확정되어 있다.
-  // 기존 분류기의 광고 전량 문맥검토 경로를 분류 시점에만 재사용하되,
-  // 알림·DB에는 원본 source=tiktok_ads를 유지해 플랫폼별 후속 처리를 구분한다.
-  const classificationEntries = collected.entries.map((entry) => ({
-    ...entry,
-    target: { ...entry.target, source: 'meta_ads' },
-  }));
-  const risksPerEntry = await classifyTargetsBatched(classificationEntries, config, undefined, llmStats, fetchImpl);
+  // 다크 광고(source=tiktok_ads)는 hybrid-classify의 AD_COMMENT_SOURCES에 포함되어 전 댓글 문맥검토됨.
+  const risksPerEntry = await classifyTargetsBatched(collected.entries, config, undefined, llmStats, fetchImpl);
   let classifierHash = null;
   try { classifierHash = computeClassifierHash(config); } catch { classifierHash = null; }
 

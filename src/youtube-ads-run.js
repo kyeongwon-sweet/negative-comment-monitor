@@ -88,13 +88,8 @@ export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl =
   }
 
   const llmStats = { calls: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
-  // 인지 광고는 제품 문맥이 확정되어 있으므로 Meta 광고와 같은 전량 문맥 분류 경로를 재사용한다.
-  // 알림/DB source는 youtube_ads로 보존해 후속 플랫폼 처리와 감사 기록을 분리한다.
-  const classificationEntries = collected.entries.map((entry) => ({
-    ...entry,
-    target: { ...entry.target, source: 'meta_ads' },
-  }));
-  const risksPerEntry = await classifyTargetsBatched(classificationEntries, config, undefined, llmStats, fetchImpl);
+  // 광고(source=youtube_ads)는 hybrid-classify의 AD_COMMENT_SOURCES에 포함되어 전 댓글 문맥검토됨.
+  const risksPerEntry = await classifyTargetsBatched(collected.entries, config, undefined, llmStats, fetchImpl);
   let classifierHash = null;
   try { classifierHash = computeClassifierHash(config); } catch { classifierHash = null; }
 
