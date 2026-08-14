@@ -129,7 +129,7 @@ test('buildYouTubeAdEntries discovers manager child, ad video, top comment and a
   assert.equal(calls.filter((call) => call.url.hostname === 'oauth2.googleapis.com').length, 2);
 });
 
-test('owned-channel filter excludes Google Ads videos uploaded by another channel', async () => {
+test('Google Ads campaign videos remain collectible when the ad upload channel differs', async () => {
   const config = { ...CFG, googleAdsCustomerIds: ['8151438670'] };
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(String(input));
@@ -141,12 +141,22 @@ test('owned-channel filter excludes Google Ads videos uploaded by another channe
       return jsonResponse([{ results: [] }]);
     }
     if (url.pathname.endsWith('/channels')) return jsonResponse({ items: [{ id: 'channel-1', snippet: { title: '라라스윗' } }] });
-    if (url.pathname.endsWith('/videos')) return jsonResponse({ items: [{ id: 'foreign1', snippet: { channelId: 'other-channel', title: '타채널' } }] });
+    if (url.pathname.endsWith('/videos')) return jsonResponse({ items: [{ id: 'foreign1', snippet: { channelId: 'other-channel', channelTitle: 'Google Ads 영상', title: '광고 영상' } }] });
+    if (url.pathname.endsWith('/commentThreads')) return jsonResponse({ items: [{
+      id: 'thread1',
+      snippet: {
+        totalReplyCount: 0,
+        topLevelComment: { id: 'top1', snippet: { authorDisplayName: 'u1', textOriginal: '별로', publishedAt: '2026-08-14T01:00:00Z' } },
+      },
+    }] });
     throw new Error(`unexpected URL ${url}`);
   };
-  const result = await buildYouTubeAdEntries(config, fetchImpl);
-  assert.equal(result.videos, 0);
-  assert.equal(result.entries.length, 0);
+  const result = await buildYouTubeAdEntries(config, fetchImpl, Date.parse('2026-08-14T09:00:00Z'));
+  assert.equal(result.videos, 1);
+  assert.equal(result.ownedVideos, 0);
+  assert.equal(result.externalVideos, 1);
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0].target.isManagedAccount, false);
 });
 
 test('inYouTubeAdsWindow and daily ledger key follow the shared resilient morning policy', () => {

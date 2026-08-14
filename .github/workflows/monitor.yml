@@ -162,8 +162,8 @@ jobs:
           TIKTOK_ADS_FORCE: ${{ github.event_name == 'workflow_dispatch' }}
           DRY_RUN: 'false'
       - name: Poll YouTube awareness ad comments
-        # Google Ads 관리자 산하 활성 일반 계정에서 캠페인명에 '빙과'가 포함된 영상만 찾고,
-        # 채널 소유자 OAuth로 비공개/일부공개 영상 댓글과 답글을 읽는다. KST 하루 1회 멱등 실행.
+        # Google Ads 관리자 산하 활성 일반 계정에서 설정 키워드가 포함된 캠페인 영상을 찾고,
+        # 채널 OAuth로 조회 가능한 광고 영상 댓글과 답글을 읽는다. KST 하루 1회 멱등 실행.
         if: ${{ always() }}
         run: node src/youtube-ads-run.js
         env:
