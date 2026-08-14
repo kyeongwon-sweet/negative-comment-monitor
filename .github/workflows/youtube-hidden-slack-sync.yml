@@ -1,0 +1,32 @@
+name: Sync hidden YouTube Slack cards
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Enter SYNC_ALL_HIDDEN_YOUTUBE_CARDS
+        required: true
+        type: string
+
+jobs:
+  sync:
+    if: ${{ inputs.confirmation == 'SYNC_ALL_HIDDEN_YOUTUBE_CARDS' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Replace hidden YouTube alert cards with audit-only status
+        run: node src/youtube-hidden-slack-sync.js
+        env:
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          YOUTUBE_HIDDEN_SLACK_SYNC_CONFIRM: ${{ inputs.confirmation }}
+          YOUTUBE_HIDDEN_SLACK_DELAY_MS: '1100'

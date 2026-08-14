@@ -1,0 +1,39 @@
+name: YouTube owner single comment hide
+
+on:
+  workflow_dispatch:
+    inputs:
+      slack_channel_id:
+        description: Verified Slack channel ID used to resolve the DB alert
+        required: true
+        type: string
+      slack_ts:
+        description: Verified Slack message timestamp used to resolve the DB alert
+        required: true
+        type: string
+
+jobs:
+  moderate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Hide one DB-backed YouTube alert
+        run: node src/youtube-owner-moderation.js
+        env:
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          YOUTUBE_OWNER_BULK_HIDE_DRY_RUN: 'false'
+          YOUTUBE_OWNER_BULK_HIDE_CONFIRM: HIDE_ONE_YOUTUBE_AD_ALERT
+          YOUTUBE_OWNER_ALERT_SLACK_CHANNEL_ID: ${{ inputs.slack_channel_id }}
+          YOUTUBE_OWNER_ALERT_SLACK_TS: ${{ inputs.slack_ts }}
+          YOUTUBE_OWNER_BULK_HIDE_ACTOR: slack-owner-oauth
+          YOUTUBE_HIDDEN_SLACK_DELAY_MS: '1'
