@@ -3,7 +3,8 @@ import { extractPostKey } from './delta.js';
 
 export function commentFingerprint(target, comment) {
   const platform = String(comment.platform || target.platform || '').toLowerCase();
-  const post = extractPostKey(target.url) || String(target.url || '').trim();
+  // 다크 광고처럼 공개 게시물 URL이 없는 소스는 어댑터가 안정적인 네이티브 키를 제공한다.
+  const post = String(target.postKey || '').trim() || extractPostKey(target.url) || String(target.url || '').trim();
   const commentId = String(comment.id || '').trim();
   const identity = commentId
     ? `${platform}|${post}|id:${commentId}`

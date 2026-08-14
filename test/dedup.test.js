@@ -15,6 +15,13 @@ test('commentFingerprint falls back to immutable comment fields when ID is absen
   assert.notEqual(commentFingerprint(target, a), commentFingerprint(target, b));
 });
 
+test('commentFingerprint prefers adapter native postKey for dark ads without a public URL', () => {
+  const comment = { id: 'c1', platform: 'tiktok', text: 'bad' };
+  const a = commentFingerprint({ url: 'https://ads.tiktok.com/', postKey: 'ttad:ad-1' }, comment);
+  const b = commentFingerprint({ url: 'https://ads.tiktok.com/', postKey: 'ttad:ad-2' }, comment);
+  assert.notEqual(a, b);
+});
+
 test('loadSeenFingerprints returns recorded values', async () => {
   const config = { supabaseUrl: 'https://db.test', supabaseKey: 'key' };
   const fetchImpl = async () => ({ ok: true, json: async () => [{ fingerprint: 'a' }] });

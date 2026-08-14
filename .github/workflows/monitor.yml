@@ -132,6 +132,35 @@ jobs:
           META_ADS_WINDOW_END: '11'
           META_ADS_FORCE: ${{ github.event_name == 'workflow_dispatch' }}
           DRY_RUN: 'false'
+      - name: Poll TikTok awareness ad comments
+        # TikTok Marketing API는 웹훅 대신 폴링. Meta와 같은 KST 8~11 자가치유 창을 사용한다.
+        # 캠페인명에 AD_CAMPAIGN_NAME_FILTER(기본 '빙과')가 포함된 광고만 수집한다.
+        if: ${{ always() }}
+        run: node src/tiktok-ads-run.js
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: claude-haiku-4-5-20251001
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_AWARENESS: ${{ vars.SLACK_ASSIGNEE_AWARENESS }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TIKTOK_APP_ID: ${{ vars.TIKTOK_APP_ID }}
+          TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
+          TIKTOK_ADVERTISER_ID: ${{ vars.TIKTOK_ADVERTISER_ID }}
+          AD_CAMPAIGN_NAME_FILTER: ${{ vars.AD_CAMPAIGN_NAME_FILTER }}
+          TIKTOK_ADS_PRODUCT_NAME: JD
+          TIKTOK_ADS_CHANNEL_CATEGORY: 인지 광고
+          TIKTOK_ADS_LOOKBACK_DAYS: '7'
+          TIKTOK_ADS_ALERT_AFTER: ${{ vars.TIKTOK_ADS_ALERT_AFTER }}
+          TIKTOK_ADS_MAX_COMMENTS_PER_ADGROUP: '100'
+          TIKTOK_ADS_CONCURRENCY: '1'
+          TIKTOK_ADS_REQUEST_DELAY_MS: '1000'
+          TIKTOK_ADS_WINDOW_START: '8'
+          TIKTOK_ADS_WINDOW_END: '11'
+          TIKTOK_ADS_FORCE: ${{ github.event_name == 'workflow_dispatch' }}
+          DRY_RUN: 'false'
       - name: Notify Slack on failure
         if: ${{ failure() }}
         continue-on-error: true
