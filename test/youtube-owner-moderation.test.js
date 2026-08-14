@@ -100,6 +100,8 @@ test('현재 노출 댓글만 소유자 토큰으로 rejected 처리하고 성�
   assert.equal(moderation.length, 2);
   assert.ok(moderation.every((call) => new URL(call.url).searchParams.get('moderationStatus') === 'rejected'));
   assert.ok(moderation.every((call) => call.init.method === 'POST'));
+  const commentReads = calls.filter((call) => call.url.includes('/comments?'));
+  assert.ok(commentReads.every((call) => !new URL(call.url).searchParams.has('maxResults')));
   const patches = calls.filter((call) => call.init.method === 'PATCH');
   assert.ok(patches.every((call) => JSON.parse(call.init.body).review_decision === 'hidden'));
 });
