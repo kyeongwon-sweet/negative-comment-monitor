@@ -1,4 +1,5 @@
 import { loadMetaAdsConfig } from './meta-ads.js';
+import { campaignNameMatchesFilter } from './normalize.js';
 
 export const YOUTUBE_AD_SOURCE = 'youtube_ads';
 export const DEFAULT_GOOGLE_ADS_API_BASE = 'https://googleads.googleapis.com';
@@ -128,7 +129,7 @@ export async function fetchMatchingGoogleAdsCampaigns(config, customerId, access
       type: String(row.campaign?.advertisingChannelType || ''),
       subtype: String(row.campaign?.advertisingChannelSubType || ''),
     }))
-    .filter((campaign) => campaign.id && (!keyword || campaign.name.includes(keyword)));
+    .filter((campaign) => campaign.id && campaignNameMatchesFilter(campaign.name, keyword));
 }
 
 function gaqlIdList(ids) {

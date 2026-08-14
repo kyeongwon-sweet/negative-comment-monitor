@@ -42,6 +42,15 @@ test('filterTikTokCampaigns keeps only names containing 빙과', () => {
   assert.deepEqual(campaigns.map((x) => x.campaign_id), ['1']);
 });
 
+test('filterTikTokCampaigns: 다중 키워드(빙과,쫀득바)로 두 명명 규칙 모두 매칭', () => {
+  const campaigns = filterTikTokCampaigns([
+    { campaign_id: '1', campaign_name: '[빙과] 인지' },
+    { campaign_id: '2', campaign_name: '쫀득바 출시 영상' },
+    { campaign_id: '3', campaign_name: '전환 상시' },
+  ], '빙과,쫀득바');
+  assert.deepEqual(campaigns.map((x) => x.campaign_id), ['1', '2']);
+});
+
 test('buildTikTokAdEntriesFromComments normalizes comments, replies and skips hidden/unrelated rows', () => {
   const entries = buildTikTokAdEntriesFromComments(CFG, [
     { comment_id: 'c1', content: '별로', campaign_name: '[빙과] 인지', ad_id: 'a1', adgroup_id: 'g1', ad_name: '광고1', tiktok_item_id: '123456', user_name: 'u', create_time: '1' },

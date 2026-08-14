@@ -1,4 +1,5 @@
 import { loadMetaAdsConfig } from './meta-ads.js';
+import { campaignNameMatchesFilter } from './normalize.js';
 
 export const TIKTOK_AD_SOURCE = 'tiktok_ads';
 export const DEFAULT_TIKTOK_API_BASE = 'https://business-api.tiktok.com/open_api/v1.3';
@@ -94,10 +95,8 @@ export async function fetchTikTokCampaigns(config, fetchImpl = fetch) {
 }
 
 export function filterTikTokCampaigns(campaigns, keyword) {
-  const needle = String(keyword || '').trim();
-  if (!needle) return Array.isArray(campaigns) ? campaigns : [];
   return (Array.isArray(campaigns) ? campaigns : [])
-    .filter((campaign) => String(campaign.campaign_name || '').includes(needle));
+    .filter((campaign) => campaignNameMatchesFilter(campaign.campaign_name, keyword));
 }
 
 export async function fetchTikTokAds(config, campaignIds, fetchImpl = fetch) {
@@ -175,7 +174,7 @@ export function buildTikTokAdEntriesFromComments(config, comments, allowedAdIds 
   for (const raw of (Array.isArray(comments) ? comments : [])) {
     const adId = String(raw.ad_id || '').trim();
     if (allowed && (!adId || !allowed.has(adId))) continue;
-    if (!String(raw.campaign_name || '').includes(config.tiktokCampaignNameFilter)) continue;
+    if (!campaignNameMatchesFilter(raw.campaign_name, config.tiktokCampaignNameFilter)) continue;
     if (String(raw.comment_status || '').toUpperCase() === 'HIDDEN') continue;
     const commentId = String(raw.comment_id || '').trim();
     const text = String(raw.content || '').trim();
