@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { isManagedChannel } from './routing.js';
+import { isManagedChannel, isAdCommentSource } from './routing.js';
 
 const DEFAULT_COMPLETED_THREAD_EMOJI = '\uC644\uB8CC\uB290\uB08C\uD45C';
 const managedActions = [['숨김', 'hide', 'danger'], ['승인', 'approve', 'primary'], ['보류', 'hold'], ['숨김해제', 'unhide']];
@@ -136,11 +136,11 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   const mainLine = `<${linkUrl}|${channel}>${companyPart} / ${author} / ${text}`;
   const baseAssignee = assigneeForTarget(target, assignees);
   const extras = (Array.isArray(target.extraAssignees) ? target.extraAssignees : []).filter(Boolean);
-  // 메타 광고 카드는 제작자(영상담당자)만 태그한다(부모 스레드 담당자=황경원은 별도 유지).
-  //   - 제작자가 매핑되면 그 사람만, 매핑 없으면 황경원(other)으로 폴백해 담당자 공란 방지.
+  // 인지 광고(메타·틱톡·유튜브) 카드는 제작자(영상담당자)만 태그한다(부모 스레드 담당자는 별도 유지).
+  //   - 제작자가 매핑되면 그 사람만, 매핑 없으면 baseAssignee(awareness)로 폴백해 담당자 공란 방지.
   // 그 외 채널은 기존대로 기본 담당자 + 추가 태그.
-  const isMetaAd = String(target?.source || '') === 'meta_ads';
-  const assigneeIds = isMetaAd
+  const isAdComment = isAdCommentSource(target);
+  const assigneeIds = isAdComment
     ? [...new Set((extras.length ? extras : (baseAssignee ? [baseAssignee] : [])))]
     : [...new Set([baseAssignee, ...extras].filter(Boolean))];
   return [

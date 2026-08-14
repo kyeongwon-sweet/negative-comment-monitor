@@ -83,6 +83,17 @@ test('alert card(메타 광고): 제작자 매핑 없으면 인지 광고 담당
   const noAwareness = buildAlertBlocks(target, comment, undefined, { other: 'U_OTHER' });
   assert.ok(noAwareness.some((b) => b.text?.text === '*담당자*\n<@U_OTHER>'));
 });
+test('alert card(틱톡·유튜브 광고): 메타와 동일하게 제작자만 태그(awareness 카드 중복 제외)', () => {
+  for (const source of ['tiktok_ads', 'youtube_ads']) {
+    const blocks = buildAlertBlocks(
+      { url: 'https://example.com', channelCategory: '인지 광고', productName: 'JD', source, extraAssignees: ['U_VIDEO'] },
+      { id: 'c1', platform: source === 'tiktok_ads' ? 'tiktok' : 'youtube', text: '별로', risk: {} },
+      undefined, assignees,
+    );
+    assert.ok(blocks.some((b) => b.text?.text === '*담당자*\n<@U_VIDEO>'), `${source} 카드는 제작자만`);
+    assert.ok(!blocks.some((b) => b.text?.text?.includes('U_AWARENESS')), `${source} 카드에 awareness 중복 태그 없어야`);
+  }
+});
 test('alert card: 메타 광고는 링크 텍스트에 광고 이름 원본(adTitle) 사용', () => {
   const ad = '[26.07]F_V_JD멜_인지_쫀득바출시_인물리뷰형_main.릴스_이나연.X_1P_김유진_260731_빙과_정요한';
   const blocks = buildAlertBlocks(

@@ -1,3 +1,10 @@
+// 인지 광고(메타·틱톡·유튜브) 댓글 source 집합. 단일 소스로 두고 slack(카드=제작자만 태그)과
+// hybrid-classify(전 댓글 문맥판정=reviewAll)가 공유해 3플랫폼 동작을 통일한다. 신규 플랫폼은 여기만 추가.
+export const AD_COMMENT_SOURCES = new Set(['meta_ads', 'tiktok_ads', 'youtube_ads']);
+export function isAdCommentSource(target) {
+  return AD_COMMENT_SOURCES.has(String(target?.source || ''));
+}
+
 export function detectPlatform(url) {
   const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
   if (host === 'instagram.com') return 'instagram';
