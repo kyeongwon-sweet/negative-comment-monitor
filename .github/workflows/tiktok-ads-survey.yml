@@ -1,0 +1,51 @@
+name: TikTok ad comment full survey
+run-name: TikTok ad comment full survey (${{ inputs.lookback_days }}d)
+
+on:
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: Lookback days (1-30)
+        required: true
+        type: choice
+        options: ['7', '14', '30']
+        default: '30'
+
+concurrency:
+  group: tiktok-ad-comment-full-survey
+  cancel-in-progress: false
+
+jobs:
+  survey:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts
+      - name: Read and classify all TikTok awareness-ad comments
+        run: node src/tiktok-ads-survey.js
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: claude-haiku-4-5-20251001
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_AWARENESS: ${{ vars.SLACK_ASSIGNEE_AWARENESS }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TIKTOK_APP_ID: ${{ vars.TIKTOK_APP_ID }}
+          TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
+          TIKTOK_ADVERTISER_ID: ${{ vars.TIKTOK_ADVERTISER_ID }}
+          AD_CAMPAIGN_NAME_FILTER: ${{ vars.AD_CAMPAIGN_NAME_FILTER }}
+          TIKTOK_ADS_PRODUCT_NAME: JD
+          TIKTOK_ADS_CHANNEL_CATEGORY: 인지 광고
+          TIKTOK_ADS_LOOKBACK_DAYS: ${{ inputs.lookback_days }}
+          TIKTOK_ADS_MAX_COMMENTS_PER_ADGROUP: '1000'
+          TIKTOK_ADS_CONCURRENCY: '5'
+          TIKTOK_ADS_REQUEST_DELAY_MS: '250'
+          DRY_RUN: 'true'
