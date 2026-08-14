@@ -30,8 +30,8 @@ async function loadYouTubeAlerts(config, fetchImpl = fetch) {
     url.searchParams.set('limit', '1000');
     const response = await fetchImpl(url, {
       headers: {
-        apikey: config.supabaseServiceRoleKey,
-        Authorization: `Bearer ${config.supabaseServiceRoleKey}`,
+        apikey: config.supabaseKey,
+        Authorization: `Bearer ${config.supabaseKey}`,
       },
     });
     if (!response.ok) throw new Error(`YouTube alert audit query failed (${response.status})`);
