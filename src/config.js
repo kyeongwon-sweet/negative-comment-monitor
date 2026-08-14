@@ -10,7 +10,23 @@ function json(env, name, fallback = {}) {
   try { return JSON.parse(raw); } catch (error) { throw new Error(`${name} must be valid JSON: ${error.message}`); }
 }
 
-export function loadConfig(env = process.env) {
+function kstDate(ms) {
+  return new Date(ms + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+export function scheduledRoutingActive(effectiveDateKst, now = Date.now()) {
+  const date = String(effectiveDateKst || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) && kstDate(now) >= date;
+}
+
+function scheduledAssignee(env, currentName, nextName, active) {
+  const current = String(env[currentName] || '').trim();
+  const next = String(env[nextName] || '').trim();
+  return active && next ? next : current;
+}
+
+export function loadConfig(env = process.env, now = Date.now()) {
+  const nextRoutingActive = scheduledRoutingActive(env.SLACK_ROUTING_EFFECTIVE_DATE_KST, now);
   return {
     gasWebAppUrl: required(env, 'GAS_WEB_APP_URL'),
     gasVerifyToken: required(env, 'GAS_VERIFY_TOKEN'),
@@ -27,10 +43,10 @@ export function loadConfig(env = process.env) {
       sponsorship: String(env.SLACK_ASSIGNEE_SPONSORSHIP || '').trim(),
       // 상품별 담당자(상품 코드 × 카테고리). 미지정 조합/상품은 위 카테고리 기본값으로 폴백.
       jd: {
-        sponsorship: String(env.SLACK_ASSIGNEE_JD_SPONSORSHIP || '').trim(),
-        viralBanner: String(env.SLACK_ASSIGNEE_JD_VIRAL_BANNER || '').trim(),
-        viralVideo: String(env.SLACK_ASSIGNEE_JD_VIRAL_VIDEO || '').trim(),
-        satellite: String(env.SLACK_ASSIGNEE_JD_SATELLITE || '').trim(),
+        sponsorship: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_SPONSORSHIP', 'SLACK_ASSIGNEE_JD_SPONSORSHIP_NEXT', nextRoutingActive),
+        viralBanner: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_VIRAL_BANNER', 'SLACK_ASSIGNEE_JD_VIRAL_BANNER_NEXT', nextRoutingActive),
+        viralVideo: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_VIRAL_VIDEO', 'SLACK_ASSIGNEE_JD_VIRAL_VIDEO_NEXT', nextRoutingActive),
+        satellite: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_SATELLITE', 'SLACK_ASSIGNEE_JD_SATELLITE_NEXT', nextRoutingActive),
       },
       p: {
         viralBanner: String(env.SLACK_ASSIGNEE_P_VIRAL_BANNER || '').trim(),
