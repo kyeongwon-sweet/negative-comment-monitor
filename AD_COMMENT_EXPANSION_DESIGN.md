@@ -73,11 +73,13 @@ TIKTOK_ADS_WINDOW_START/END (메타와 동일 기본 8/11), TIKTOK_ADS_FORCE
 
 ## 4. 유튜브 어댑터 (경로 A)
 
-### 소스
-- 광고 영상 = **우리 채널의 비공개 업로드**. 
-- 채널 소유자 OAuth → **uploads 재생목록**(`channels.list` contentDetails.relatedPlaylists.uploads → `playlistItems.list`)으로 비공개 포함 전 업로드 나열 → **광고 소재 영상만 필터**.
-  - ⚠️ **광고 소재 식별 규칙 필요**(§7 오픈): 영상 제목/설명 명명규칙, 태그, 또는 유지되는 영상ID 리스트.
-- 영상별 **`commentThreads.list`(part=snippet, videoId, order=time)** 로 최신 댓글 조회.
+### 소스 (식별 = "구글애즈 계정으로 올린 모든 영상")
+사용자 결정: 광고 소재 = **Google Ads 계정으로 올린 모든 영상**. 명명규칙/수동리스트 아님. 두 방법이 있고, ⚠️ **대리신호 함정 주의**(아래):
+
+- **경로 B(권장·정본): Google Ads API로 영상 자산 나열.** 광고계정 OAuth → 광고에 쓰인 YouTube 영상 자산의 `video_id` 목록을 **정확히** 확보 → 그 영상만 감시. "구글애즈 영상"의 **정본 소스**.
+- **경로 A(단축): 채널 uploads 중 '비공개' 필터.** 채널 소유자 OAuth → uploads 재생목록 나열 → `privacyStatus='unlisted'`만. 인증 1개로 간단하지만 **"비공개 = 구글애즈 영상"은 대리신호**다. 유기적 비공개 업로드가 섞이거나 광고 영상이 공개면 오탐/누락. ([[proxy-signal-vs-real-state]] 교훈)
+- **구현 시 검증**: 실계정에서 "채널 비공개 업로드 집합"과 "Google Ads 영상 자산 집합"이 **일치하는지** 대조. 일치하면 경로 A로 단순화 가능(채널 OAuth만), 불일치면 경로 B(Google Ads API OAuth 추가)로 확정. → 인증 범위가 이 검증 결과로 갈림.
+- 확정된 영상별 **`commentThreads.list`(part=snippet, videoId, order=time)** 로 최신 댓글 조회.
 
 ### 매핑
 - `target.platform='youtube'`, `source='youtube_ads'`, `channelCategory='인지 광고'`, `url`=`https://www.youtube.com/watch?v={id}`(또는 shorts), `adTitle`=영상 제목.
@@ -106,13 +108,14 @@ YT_ADS_CHANNEL_ID, YT_ADS_WINDOW_START/END, YT_ADS_FORCE
 - 틱톡: 댓글 관리 API의 hide 지원 시 추가. 유튜브: `comments.setModerationStatus`(채널 OAuth). 
 - 1차(감지·알림) 먼저, 숨김은 2차. `source`(`tiktok_ads`/`youtube_ads`)로 분기.
 
-## 7. 착수 전 확정 필요 (오픈 결정)
+## 7. 확정된 결정 (2026-08-14 사용자)
 
-1. **담당자**: 틱톡/유튜브 광고 부정댓글 담당자 = 메타와 동일 **이재원(awareness)** 재사용? 아니면 플랫폼별 신규 슬롯? (기본 제안: 재사용)
-2. **스레드 분리**: `channelCategory='인지 광고'`로 두면 제품별 인지 광고 스레드에 **플랫폼 혼합**(카드에 플랫폼 표기). 플랫폼별 분리 원하면 `'인지 광고 (틱톡)'` 등 카테고리 분리.
-3. **틱톡**: 광고계정 ID·접근 주체, **광고 전용 vs Spark 필터 기준**.
-4. **유튜브**: **광고 소재 영상 식별 규칙**(명명규칙/태그/영상ID 리스트 중 택1).
-5. 승인 후 각 플랫폼 개발자 앱·OAuth·(틱톡)심사 진행.
+1. **담당자**: 틱톡/유튜브 모두 **이재원(awareness) 재사용** ✅. `channelCategory`에 '인지' 포함 → `assigneeForTarget`이 그대로 awareness로 라우팅(코드 변경 없음).
+2. **스레드**: **`인지 광고` 하나로 통합** ✅. `channelCategory='인지 광고'` 유지 → 제품별 인지 광고 스레드에 메타·틱톡·유튜브 카드가 **함께** 쌓임(카드에 플랫폼 표기). 별도 카테고리 안 만듦.
+3. **틱톡 광고계정(advertiser) ID**: 확보됨 ✅. ⚠️ **repo가 PUBLIC이라 값은 문서에 미기재** — 구현 시 GitHub 시크릿 `TIKTOK_ADVERTISER_ID`로 주입. 광고 전용 vs Spark 필터: 광고 유형 필드로 광고 전용만(구현 시 확정).
+4. **유튜브 식별**: **"구글애즈 계정으로 올린 모든 영상"을 대상** ✅ → §4 갱신 참고. 명명규칙/수동리스트 아님.
+
+승인 후 각 플랫폼 개발자 앱·OAuth·(틱톡)심사 진행.
 
 ## 8. 롤아웃 순서 (권고)
 
