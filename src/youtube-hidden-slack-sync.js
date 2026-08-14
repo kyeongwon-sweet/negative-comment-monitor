@@ -25,7 +25,9 @@ async function writeSummary(result) {
     `- DB hidden 행: ${result.hiddenRows}`,
     `- Slack 갱신 대상: ${result.eligible}`,
     `- 갱신 성공: ${result.updated}`,
+    `- 원본 메시지 없음/수정 불가: ${result.unavailable}`,
     `- 갱신 실패: ${result.failed}`,
+    `- 실패 원인: ${JSON.stringify(result.failureReasons)}`,
     '',
   ].join('\n'), 'utf8');
 }

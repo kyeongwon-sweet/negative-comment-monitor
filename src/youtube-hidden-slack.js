@@ -48,6 +48,7 @@ async function updateOne(config, row, fetchImpl, now) {
   if (response.ok && payload.ok) return { ok: true };
   return {
     ok: false,
+    error: String(payload.error || `http_${response.status || 0}`).slice(0, 80),
     ratelimited: response.status === 429 || payload.error === 'ratelimited',
     retryAfterMs: Math.max(1000, Number(response.headers?.get?.('retry-after') || 1) * 1000),
   };
@@ -57,7 +58,9 @@ export async function syncHiddenYouTubeSlackCards(config, rows, fetchImpl = fetc
   if (!config.slackBotToken) throw new Error('SLACK_BOT_TOKEN is required for YouTube Slack status sync');
   const eligible = rows.filter((row) => row.slack_channel_id && row.slack_ts);
   let updated = 0;
+  let unavailable = 0;
   let failed = 0;
+  const failureReasons = {};
   for (let index = 0; index < eligible.length; index += 1) {
     const row = eligible[index];
     let result = await updateOne(config, row, fetchImpl, now);
@@ -66,8 +69,13 @@ export async function syncHiddenYouTubeSlackCards(config, rows, fetchImpl = fetc
       result = await updateOne(config, row, fetchImpl, now);
     }
     if (result.ok) updated += 1;
-    else failed += 1;
+    else if (result.error === 'message_not_found' || result.error === 'cant_update_message') unavailable += 1;
+    else {
+      failed += 1;
+      const reason = result.error || 'unknown';
+      failureReasons[reason] = (failureReasons[reason] || 0) + 1;
+    }
     if (index < eligible.length - 1 && config.slackUpdateDelayMs > 0) await sleep(config.slackUpdateDelayMs);
   }
-  return { eligible: eligible.length, updated, failed };
+  return { eligible: eligible.length, updated, unavailable, failed, failureReasons };
 }
