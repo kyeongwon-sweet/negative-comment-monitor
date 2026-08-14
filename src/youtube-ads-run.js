@@ -10,6 +10,28 @@ import { estimateUsd } from './pricing.js';
 import { maybeAlertCosts, postCostWarning, recordRunCost, sumDailyCost } from './cost.js';
 import { buildYouTubeAdEntries, loadYouTubeAdsConfig } from './youtube-ads.js';
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function retrySlackRateLimit(action, {
+  maxRetries = 5,
+  retryDelayMs = 3000,
+  sleep = wait,
+} = {}) {
+  let lastError;
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    try {
+      return await action();
+    } catch (error) {
+      lastError = error;
+      if (!/Slack API:\s*ratelimited/i.test(String(error?.message || '')) || attempt === maxRetries) throw error;
+      await sleep(retryDelayMs * (attempt + 1));
+    }
+  }
+  throw lastError;
+}
+
 export function inYouTubeAdsWindow(now = Date.now(), env = process.env) {
   if (String(env.YOUTUBE_ADS_FORCE || '').toLowerCase() === 'true') return true;
   const start = Number(env.YOUTUBE_ADS_WINDOW_START || 8);
@@ -48,7 +70,13 @@ export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl =
   }
 
   const collected = await buildYouTubeAdEntries(config, fetchImpl, now);
-  const summary = { ...collected, entries: collected.entries.length, sentAlerts: 0 };
+  const summary = {
+    ...collected,
+    entries: collected.entries.length,
+    sentAlerts: 0,
+    managedAlerts: 0,
+    externalAlerts: 0,
+  };
   if (!collected.entries.length) {
     if (!config.dryRun) {
       await recordRunCost(config, {
@@ -98,16 +126,22 @@ export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl =
       if (seen.has(fingerprint)) continue;
       if (!config.dryRun) {
         const threadTs = await resolveThreadTs(target);
-        const slack = await sendAlert(config, target, comment, fetchImpl, threadTs);
+        if (config.youtubeAdsAlertDelayMs > 0) await wait(config.youtubeAdsAlertDelayMs);
+        const slack = await retrySlackRateLimit(
+          () => sendAlert(config, target, comment, fetchImpl, threadTs),
+          { maxRetries: config.youtubeAdsSlackRetries },
+        );
         await recordAlert(config, target, comment, fingerprint, slack.ts, classifierHash, fetchImpl);
       }
       summary.sentAlerts += 1;
+      if (target.isManagedAccount) summary.managedAlerts += 1;
+      else summary.externalAlerts += 1;
     }
   }
 
   const estimatedUsd = estimateUsd(llmStats, config.anthropicModel);
   summary.llm = { ...llmStats, estUsd: Number(estimatedUsd.toFixed(5)) };
-  console.error(`[youtube-ads] customers=${summary.customers} campaigns=${summary.campaigns} assets=${summary.assets} videos=${summary.videos} owned=${summary.ownedVideos || 0} external=${summary.externalVideos || 0} comments=${summary.comments} alerts=${summary.sentAlerts} llmCalls=${llmStats.calls} est=$${estimatedUsd.toFixed(5)}`);
+  console.error(`[youtube-ads] customers=${summary.customers} campaigns=${summary.campaigns} assets=${summary.assets} videos=${summary.videos} owned=${summary.ownedVideos || 0} external=${summary.externalVideos || 0} comments=${summary.comments} alerts=${summary.sentAlerts} managedAlerts=${summary.managedAlerts} externalAlerts=${summary.externalAlerts} llmCalls=${llmStats.calls} est=$${estimatedUsd.toFixed(5)}`);
 
   if (!config.dryRun) {
     try {

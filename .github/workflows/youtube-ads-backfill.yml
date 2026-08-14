@@ -1,0 +1,68 @@
+name: YouTube ad comment alert backfill
+run-name: YouTube ad comment alert backfill (${{ inputs.lookback_days }}d)
+
+on:
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: Lookback days to publish (7-90)
+        required: true
+        type: choice
+        options: ['7', '14', '30', '90']
+        default: '30'
+
+concurrency:
+  group: youtube-ad-comment-alert-backfill
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts
+      - name: Publish unseen YouTube awareness-ad alerts
+        run: node src/youtube-ads-run.js
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: claude-haiku-4-5-20251001
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_AWARENESS: ${{ vars.SLACK_ASSIGNEE_AWARENESS }}
+          SLACK_ROUTING_EFFECTIVE_DATE_KST: ${{ vars.SLACK_ROUTING_EFFECTIVE_DATE_KST }}
+          SLACK_ASSIGNEE_AWARENESS_NEXT: ${{ vars.SLACK_ASSIGNEE_AWARENESS_NEXT }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GOOGLE_ADS_DEVELOPER_TOKEN: ${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          GOOGLE_ADS_REFRESH_TOKEN: ${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}
+          YOUTUBE_ADS_REFRESH_TOKEN: ${{ secrets.YOUTUBE_ADS_REFRESH_TOKEN }}
+          GOOGLE_ADS_LOGIN_CUSTOMER_ID: ${{ vars.GOOGLE_ADS_LOGIN_CUSTOMER_ID }}
+          YOUTUBE_ADS_CHANNEL_ID: ${{ vars.YOUTUBE_ADS_CHANNEL_ID }}
+          AD_CAMPAIGN_NAME_FILTER: ${{ vars.AD_CAMPAIGN_NAME_FILTER }}
+          YOUTUBE_ADS_PRODUCT_NAME: JD
+          YOUTUBE_ADS_CHANNEL_CATEGORY: 인지 광고
+          YOUTUBE_ADS_LOOKBACK_DAYS: ${{ inputs.lookback_days }}
+          YOUTUBE_ADS_MAX_THREAD_PAGES: '100'
+          YOUTUBE_ADS_ALERT_AFTER: ''
+          YOUTUBE_ADS_ALERT_DELAY_MS: '1200'
+          YOUTUBE_ADS_SLACK_RETRIES: '6'
+          YOUTUBE_ADS_FORCE: 'true'
+          DRY_RUN: 'false'
+      - name: Notify Slack on failure
+        if: ${{ failure() }}
+        continue-on-error: true
+        run: node src/notify-failure.js
+        env:
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          FAILURE_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}

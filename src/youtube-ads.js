@@ -18,6 +18,12 @@ function positiveInt(value, fallback, max = Number.MAX_SAFE_INTEGER) {
   return Math.min(max, Math.floor(parsed));
 }
 
+function nonnegativeInt(value, fallback, max = Number.MAX_SAFE_INTEGER) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.min(max, Math.floor(parsed));
+}
+
 function digits(value) {
   return String(value || '').replace(/\D/g, '');
 }
@@ -55,6 +61,10 @@ export function loadYouTubeAdsConfig(env = process.env) {
     youtubeAdsLookbackDays: positiveInt(env.YOUTUBE_ADS_LOOKBACK_DAYS, 14, 90),
     youtubeAdsMaxThreadPages: positiveInt(env.YOUTUBE_ADS_MAX_THREAD_PAGES, 10, 100),
     youtubeAdsAlertAfter: String(env.YOUTUBE_ADS_ALERT_AFTER || '').trim(),
+    // 대량 과거 알림은 Slack 채널별 전송 제한을 넘지 않도록 메시지 사이를 띄운다.
+    // 정기 실행은 소량이므로 기본 0ms, 수동 백필 워크플로만 1.2초를 사용한다.
+    youtubeAdsAlertDelayMs: nonnegativeInt(env.YOUTUBE_ADS_ALERT_DELAY_MS, 0, 10_000),
+    youtubeAdsSlackRetries: positiveInt(env.YOUTUBE_ADS_SLACK_RETRIES, 5, 10),
   };
 }
 
