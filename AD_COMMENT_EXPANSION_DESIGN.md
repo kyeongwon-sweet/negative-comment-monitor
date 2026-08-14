@@ -43,9 +43,10 @@
 
 **메타와 다른 점**: 웹훅 큐 테이블(`meta_ad_comment_events`)이 없다. 폴링으로 매 실행 시 **현재 댓글을 직접 조회**하고, **재알림 방지는 기존 fingerprint dedup**로 처리(별도 processed 마킹 불필요). 단, API 호출량·비용 절감을 위해 "이번에 새로 본 댓글만" 거르는 얕은 워터마크(마지막 처리 시각/코멘트ID)를 플랫폼별 소형 테이블에 둘 수 있음(선택, 2.1 참고).
 
-### 2.1 (선택) 폴링 워터마크
-- 매 폴링마다 광고별 전체 댓글을 LLM에 넣으면 비용↑. dedup은 발송은 막지만 **LLM 호출은 이미 일어남**.
-- 권고: 광고별 `last_seen_comment_at`(또는 마지막 코멘트ID)를 `ad_poll_state`(신규 소형 테이블: platform, ad_ref, last_seen_at, updated_at)에 저장 → 그 이후 댓글만 분류. 초기 1회는 전체.
+### 2.1 폴링 워터마크 (**사실상 필수** — Codex 지적)
+- 매 폴링마다 광고별 전체 댓글을 LLM에 넣으면 비용↑. dedup은 발송은 막지만 **LLM 호출은 이미 일어남**. → 선택 아님, **필수**.
+- 광고별 `last_seen_comment_at`(또는 마지막 코멘트ID)를 `ad_poll_state`(신규 소형 테이블: platform, ad_ref, last_seen_at, updated_at)에 저장 → 그 이후 댓글만 분류. 초기 1회는 전체.
+- ⚠️ **워터마크는 "처리 성공 후"에만 갱신**하고, **짧은 중첩 구간(look-back overlap)**을 둔다(예: last_seen − 수 분). 실패 시 미갱신으로 재시도, 경계 시각 댓글 유실 방지. dedup fingerprint가 중첩분 재발송을 막으므로 안전.
 
 ## 3. 틱톡 어댑터 (1순위)
 
@@ -133,3 +134,17 @@ YT_ADS_CHANNEL_ID, YT_ADS_WINDOW_START/END, YT_ADS_FORCE
 ## 10. 계약(유지)
 
 GAS 메타필드(rawEligibleCount/duplicateCount), 인지=이재원, 비용/기본=황경원, 데드존 브래킷+heartbeat, repo PUBLIC, 처리이력 보존, 삭제 전 검증 — 전부 유지. 신규 플랫폼은 위 어댑터로만 추가(파이프라인 불변).
+
+## 11. 구현 전 필수 기술조건 (Codex 보완)
+
+1. **틱톡 dedup 키 = 광고/소재 ID 기반.** 다크 틱톡 광고는 공개 `/video/{id}` URL이 없을 수 있음 → `extractPostKey(url)`가 null/폴백이 되어 URL 기반 fingerprint가 충돌 위험. **`ad_id`(또는 creative_id) + `comment_id`로 안정적 고유 키**를 만들 것. 카드 링크는 메타처럼 폴백(광고계정/프로필) 사용.
+2. **`productName` 명시 → 기존 스레드 라우팅.** 두 어댑터의 `target.productName`을 설정해 `productLabel(productGroup(productName))`이 **'쫀득바'**로 해석되게 해야 인지 광고 스레드로 정확히 병합됨(메타는 `metaAdsProductName='JD'→'쫀득바'`). 구현 시 productGroup 매핑 실측 확인(결과가 '쫀득바' 라벨이면 OK).
+3. **폴링 워터마크 필수** — §2.1 참고(처리 성공 후 갱신 + 짧은 중첩).
+4. **YouTube 답글 전체 수집**: `commentThreads.list`만으로 대댓글이 잘릴 수 있음 → 필요 시 `comments.list`(parentId)로 보완.
+5. **틱톡 권한·다크 지원 범위 사전 검증**: 댓글 **조회·숨김** 권한과 **다크 광고 지원 여부**를 공식 API 문서 + 실제 광고계정으로 구현 전 검증(과대약속 금지).
+
+## 12. 계정·자격증명 (값은 로컬 비공개 메모리 — PUBLIC repo 미기재)
+
+- 틱톡 advertiser ID: 확보됨 → 시크릿 `TIKTOK_ADVERTISER_ID`.
+- Google Ads Manager(MCC) 계정: 확보됨(경로 B 사용 시) → 시크릿 `GOOGLE_ADS_MANAGER_ID`.
+- 실제 값은 `[[ad-comment-expansion-plan]]` 로컬 메모리 참조. 구현 시 GitHub 시크릿으로만 주입.
