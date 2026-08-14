@@ -161,6 +161,37 @@ jobs:
           TIKTOK_ADS_WINDOW_END: '11'
           TIKTOK_ADS_FORCE: ${{ github.event_name == 'workflow_dispatch' }}
           DRY_RUN: 'false'
+      - name: Poll YouTube awareness ad comments
+        # Google Ads 관리자 산하 활성 일반 계정에서 캠페인명에 '빙과'가 포함된 영상만 찾고,
+        # 채널 소유자 OAuth로 비공개/일부공개 영상 댓글과 답글을 읽는다. KST 하루 1회 멱등 실행.
+        if: ${{ always() }}
+        run: node src/youtube-ads-run.js
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: claude-haiku-4-5-20251001
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_AWARENESS: ${{ vars.SLACK_ASSIGNEE_AWARENESS }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GOOGLE_ADS_DEVELOPER_TOKEN: ${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          GOOGLE_ADS_REFRESH_TOKEN: ${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}
+          YOUTUBE_ADS_REFRESH_TOKEN: ${{ secrets.YOUTUBE_ADS_REFRESH_TOKEN }}
+          GOOGLE_ADS_LOGIN_CUSTOMER_ID: ${{ vars.GOOGLE_ADS_LOGIN_CUSTOMER_ID }}
+          YOUTUBE_ADS_CHANNEL_ID: ${{ vars.YOUTUBE_ADS_CHANNEL_ID }}
+          AD_CAMPAIGN_NAME_FILTER: ${{ vars.AD_CAMPAIGN_NAME_FILTER }}
+          YOUTUBE_ADS_PRODUCT_NAME: JD
+          YOUTUBE_ADS_CHANNEL_CATEGORY: 인지 광고
+          YOUTUBE_ADS_LOOKBACK_DAYS: '14'
+          YOUTUBE_ADS_MAX_THREAD_PAGES: '10'
+          YOUTUBE_ADS_ALERT_AFTER: ${{ vars.YOUTUBE_ADS_ALERT_AFTER }}
+          YOUTUBE_ADS_WINDOW_START: '8'
+          YOUTUBE_ADS_WINDOW_END: '11'
+          YOUTUBE_ADS_FORCE: ${{ github.event_name == 'workflow_dispatch' }}
+          DRY_RUN: 'false'
       - name: Notify Slack on failure
         if: ${{ failure() }}
         continue-on-error: true
