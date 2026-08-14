@@ -24,6 +24,39 @@ test('Slack chat.update rate limit은 Retry-After 후 한 번 재시도한다', 
     };
     return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ ok: true }) };
   }, async (ms) => { sleeps.push(ms); });
-  assert.deepEqual(result, { eligible: 1, updated: 1, failed: 0 });
+  assert.deepEqual(result, { eligible: 1, updated: 1, unavailable: 0, failed: 0, failureReasons: {} });
   assert.deepEqual(sleeps, [2000]);
+});
+
+test('삭제됐거나 수정 불가능한 Slack 카드는 실패 대신 unavailable로 집계한다', async () => {
+  const result = await syncHiddenYouTubeSlackCards({
+    slackBotToken: 'token', slackUpdateDelayMs: 0,
+  }, [
+    { slack_channel_id: 'C1', slack_ts: '1.2' },
+    { slack_channel_id: 'C1', slack_ts: '1.3' },
+  ], async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    json: async () => ({ ok: false, error: 'message_not_found' }),
+  }));
+  assert.deepEqual(result, { eligible: 2, updated: 0, unavailable: 2, failed: 0, failureReasons: {} });
+});
+
+test('그 외 Slack 오류는 원인별로 집계한다', async () => {
+  const result = await syncHiddenYouTubeSlackCards({
+    slackBotToken: 'token', slackUpdateDelayMs: 0,
+  }, [{ slack_channel_id: 'C1', slack_ts: '1.2' }], async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    json: async () => ({ ok: false, error: 'not_in_channel' }),
+  }));
+  assert.deepEqual(result, {
+    eligible: 1,
+    updated: 0,
+    unavailable: 0,
+    failed: 1,
+    failureReasons: { not_in_channel: 1 },
+  });
 });
