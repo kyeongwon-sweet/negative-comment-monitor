@@ -94,7 +94,8 @@ async function googleJson(url, accessToken, fetchImpl) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const reasons = (payload?.error?.errors || []).map((item) => item.reason).filter(Boolean);
-    const error = new Error(`YouTube read failed (${response.status})${reasons.length ? `: ${reasons.join(',')}` : ''}`);
+    const resource = new URL(url).pathname.split('/').filter(Boolean).at(-1) || 'read';
+    const error = new Error(`YouTube ${resource} failed (${response.status})${reasons.length ? `: ${reasons.join(',')}` : ''}`);
     error.status = response.status;
     error.reasons = reasons;
     throw error;
@@ -169,7 +170,6 @@ async function listVisibleCommentIds(config, ids, accessToken, fetchImpl) {
     const url = new URL(`${config.youtubeApiBase}/comments`);
     url.searchParams.set('part', 'id');
     url.searchParams.set('id', batch.join(','));
-    url.searchParams.set('maxResults', '50');
     const payload = await googleJson(url, accessToken, fetchImpl);
     for (const item of payload.items || []) if (item.id) visible.add(String(item.id));
   }
