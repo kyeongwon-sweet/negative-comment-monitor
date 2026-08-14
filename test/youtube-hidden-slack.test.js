@@ -4,11 +4,12 @@ import { buildHiddenYouTubeSlackBlocks, syncHiddenYouTubeSlackCards } from '../s
 
 test('숨김 완료 카드는 댓글을 보존하되 버튼 없이 감사 상태만 표시한다', () => {
   const blocks = buildHiddenYouTubeSlackBlocks({
-    post_url: 'https://youtube.com/watch?v=video1',
+    post_url: 'https://youtube.com/watch?v=video1&lc=comment1',
     comment_text: '제품 <별로> & 이상함',
   }, Date.parse('2026-08-14T12:00:00Z'));
   assert.equal(blocks.some((block) => block.type === 'actions'), false);
   assert.match(blocks[0].text.text, /숨김 처리 완료/);
+  assert.match(blocks[0].text.text, /video1&amp;lc=comment1/);
   assert.match(blocks[0].text.text, /&lt;별로&gt; &amp; 이상함/);
 });
 

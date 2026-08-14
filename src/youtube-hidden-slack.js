@@ -12,7 +12,7 @@ function truncate(value, max = 700) {
 }
 
 export function buildHiddenYouTubeSlackBlocks(row, now = Date.now()) {
-  const postUrl = String(row.post_url || '').trim();
+  const postUrl = escapeMrkdwn(String(row.post_url || '').trim());
   const comment = escapeMrkdwn(truncate(row.comment_text || ''));
   const when = new Date(now + 9 * 60 * 60 * 1000).toISOString().slice(0, 16).replace('T', ' ');
   return [

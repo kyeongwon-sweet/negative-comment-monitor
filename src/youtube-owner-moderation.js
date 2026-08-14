@@ -138,35 +138,73 @@ async function refreshAndVerifyOwner(config, owner, fetchImpl) {
 }
 
 export async function mapVideosToOwners(config, alerts, owners, accessTokens, fetchImpl = fetch) {
-  const videoIds = [...new Set(alerts.map(videoIdFromAlert).filter(Boolean))];
+  const unresolved = new Set(alerts.map(videoIdFromAlert).filter(Boolean));
   const ownerByVideo = new Map();
+  const ownerErrors = [];
+  const ownedChannelIds = new Set(owners.map((owner) => owner.channelId));
   for (const owner of owners) {
+    if (!unresolved.size) break;
     const accessToken = accessTokens.get(owner.channelId);
-    for (const ids of chunk(videoIds, 50)) {
+    if (!accessToken) continue;
+    for (const ids of chunk([...unresolved], 50)) {
       const url = new URL(`${config.youtubeApiBase}/videos`);
       url.searchParams.set('part', 'id,snippet');
       url.searchParams.set('id', ids.join(','));
       url.searchParams.set('maxResults', '50');
-      const payload = await googleJson(url, accessToken, fetchImpl);
+      let payload;
+      try {
+        payload = await googleJson(url, accessToken, fetchImpl);
+      } catch (error) {
+        ownerErrors.push({ channelId: owner.channelId, stage: 'videos', error: error.message });
+        break;
+      }
       for (const item of payload.items || []) {
-        if (String(item.snippet?.channelId || '') !== owner.channelId) continue;
-        const existing = ownerByVideo.get(String(item.id));
-        if (existing && existing !== owner.channelId) throw new Error(`Ambiguous YouTube video owner for ${item.id}`);
-        ownerByVideo.set(String(item.id), owner.channelId);
+        const videoId = String(item.id || '');
+        const channelId = String(item.snippet?.channelId || '');
+        if (!videoId) continue;
+        // 공개/일부공개 영상은 첫 번째 유효 토큰의 videos.list 한 번으로도 실제
+        // channelId를 알 수 있다. 비공개라 응답에서 빠진 ID만 다음 소유자 토큰으로 재조회한다.
+        unresolved.delete(videoId);
+        if (!ownedChannelIds.has(channelId)) continue;
+        const existing = ownerByVideo.get(videoId);
+        if (existing && existing !== channelId) throw new Error(`Ambiguous YouTube video owner for ${videoId}`);
+        ownerByVideo.set(videoId, channelId);
       }
     }
   }
-  return ownerByVideo;
+  return { ownerByVideo, ownerErrors };
 }
 
-export function groupAlertsByOwner(alerts, ownerByVideo) {
+const KEEP_REVIEW_DECISIONS = new Set([
+  'false_positive', 'ignore', 'complete', 'approve', 'hold', 'unhide',
+]);
+
+function alertDisposition(alert, { singleAlert = false } = {}) {
+  const decision = String(alert.review_decision || '').trim().toLowerCase();
+  if (decision === 'hidden') return 'hidden';
+  if (KEEP_REVIEW_DECISIONS.has(decision)) return 'human_keep';
+  // [숨김] 클릭은 라우트가 먼저 decision=hide와 실제 Slack 행위자를 기록한 뒤
+  // 단일 워크플로를 호출한다. 이 경우만 숨김 실행 대상으로 남긴다.
+  if (decision === 'hide') return singleAlert ? 'eligible' : 'human_keep';
+  // 알 수 없는 사람 결정이나 결정값 없이 행위자/시각만 있는 행도 fail-closed.
+  if (decision || alert.reviewed_by || alert.reviewed_at) return 'human_keep';
+  return 'eligible';
+}
+
+export function groupAlertsByOwner(alerts, ownerByVideo, options = {}) {
   const groups = new Map();
   let missingCommentId = 0;
   let unmatchedVideo = 0;
   let alreadyMarkedHidden = 0;
+  let skippedHumanDecision = 0;
   for (const alert of alerts) {
-    if (alert.review_decision === 'hidden') {
+    const disposition = alertDisposition(alert, options);
+    if (disposition === 'hidden') {
       alreadyMarkedHidden += 1;
+      continue;
+    }
+    if (disposition === 'human_keep') {
+      skippedHumanDecision += 1;
       continue;
     }
     if (!String(alert.comment_id || '').trim()) {
@@ -181,7 +219,7 @@ export function groupAlertsByOwner(alerts, ownerByVideo) {
     if (!groups.has(owner)) groups.set(owner, []);
     groups.get(owner).push(alert);
   }
-  return { groups, missingCommentId, unmatchedVideo, alreadyMarkedHidden };
+  return { groups, missingCommentId, unmatchedVideo, alreadyMarkedHidden, skippedHumanDecision };
 }
 
 async function listVisibleCommentIds(config, ids, accessToken, fetchImpl) {
@@ -194,6 +232,46 @@ async function listVisibleCommentIds(config, ids, accessToken, fetchImpl) {
     for (const item of payload.items || []) if (item.id) visible.add(String(item.id));
   }
   return visible;
+}
+
+function errorInfo(error) {
+  return {
+    status: Number(error?.status) || 0,
+    reasons: Array.isArray(error?.reasons) ? error.reasons : [],
+    message: String(error?.message || 'unknown error').slice(0, 240),
+  };
+}
+
+function isUnavailableError(error) {
+  const info = errorInfo(error);
+  return info.status === 404 || info.reasons.includes('commentNotFound');
+}
+
+async function listVisibleCommentIdsIsolated(config, ids, accessToken, fetchImpl) {
+  const result = { visible: new Set(), unavailable: new Set(), failed: [], channelError: null };
+  async function visit(batch) {
+    if (!batch.length || result.channelError) return;
+    try {
+      const visible = await listVisibleCommentIds(config, batch, accessToken, fetchImpl);
+      for (const id of visible) result.visible.add(id);
+      for (const id of batch) if (!visible.has(id)) result.unavailable.add(id);
+    } catch (error) {
+      if (Number(error?.status) === 403) {
+        result.channelError = errorInfo(error);
+        return;
+      }
+      if (batch.length > 1) {
+        const midpoint = Math.ceil(batch.length / 2);
+        await visit(batch.slice(0, midpoint));
+        await visit(batch.slice(midpoint));
+        return;
+      }
+      if (isUnavailableError(error)) result.unavailable.add(batch[0]);
+      else result.failed.push({ id: batch[0], error: errorInfo(error) });
+    }
+  }
+  for (const batch of chunk(ids, 50)) await visit(batch);
+  return result;
 }
 
 async function rejectComments(config, ids, accessToken, fetchImpl) {
@@ -211,6 +289,60 @@ async function rejectComments(config, ids, accessToken, fetchImpl) {
   error.status = response.status;
   error.reasons = reasons;
   throw error;
+}
+
+async function rejectCommentsIsolated(config, ids, accessToken, fetchImpl, onConfirmed) {
+  const result = {
+    confirmed: [],
+    unavailable: [],
+    failed: [],
+    acceptedUnverified: [],
+    channelError: null,
+  };
+  async function visit(batch) {
+    if (!batch.length || result.channelError) return;
+    try {
+      await rejectComments(config, batch, accessToken, fetchImpl);
+    } catch (error) {
+      if (Number(error?.status) === 403) {
+        result.channelError = errorInfo(error);
+        return;
+      }
+      if (batch.length > 1) {
+        const midpoint = Math.ceil(batch.length / 2);
+        await visit(batch.slice(0, midpoint));
+        await visit(batch.slice(midpoint));
+        return;
+      }
+      if (isUnavailableError(error)) result.unavailable.push(batch[0]);
+      else result.failed.push({ id: batch[0], error: errorInfo(error) });
+      return;
+    }
+
+    // setModerationStatus는 성공 시 본문 없이 204만 반환한다. 공식 API는 rejected
+    // 댓글을 다시 나열하지 않으므로, owner 토큰으로 즉시 재조회해 사라진 ID만 확정한다.
+    // 확인 조회 자체가 실패하면 DB/Slack을 성공으로 바꾸지 않고 다음 실행의 재시도 여지를 남긴다.
+    const verification = await listVisibleCommentIdsIsolated(config, batch, accessToken, fetchImpl);
+    if (verification.channelError) {
+      result.acceptedUnverified.push(...batch);
+      result.channelError = verification.channelError;
+      return;
+    }
+    const unverified = new Set(verification.failed.map((item) => item.id));
+    const confirmed = batch.filter((id) => verification.unavailable.has(id));
+    result.acceptedUnverified.push(...batch.filter((id) => unverified.has(id)));
+    if (confirmed.length) {
+      result.confirmed.push(...confirmed);
+      await onConfirmed(confirmed);
+    }
+
+    // 204 뒤에도 조회되는 댓글은 성공으로 기록하지 않는다. 전파 지연일 수도 있으므로
+    // 즉석 재숨김/이진분할로 쿼터를 태우지 않고 미확인 상태로 남겨 다음 실행이 재검사한다.
+    const stillVisible = batch.filter((id) => verification.visible.has(id));
+    result.acceptedUnverified.push(...stillVisible);
+  }
+  for (const batch of chunk(ids, config.batchSize)) await visit(batch);
+  return result;
 }
 
 function encodedList(values) {
@@ -240,17 +372,17 @@ async function patchRows(config, ids, body, fetchImpl) {
 }
 
 export async function persistHiddenRows(config, alerts, fetchImpl = fetch, now = Date.now()) {
-  const reviewed = alerts.filter((alert) => alert.reviewed_by || alert.reviewed_at).map((alert) => alert.id);
-  const unreviewed = alerts.filter((alert) => !alert.reviewed_by && !alert.reviewed_at).map((alert) => alert.id);
-  let updated = 0;
-  // 사람이 먼저 [무시]/[완료]를 누른 행의 행위자·시각은 감사 이력으로 보존한다.
-  updated += await patchRows(config, reviewed, { review_decision: 'hidden' }, fetchImpl);
-  updated += await patchRows(config, unreviewed, {
+  // 사람의 결정·행위자는 감사 원본이다. [숨김] 클릭 행도 decision=hide와 실제
+  // Slack user를 그대로 두고, 카드의 '숨김 처리 완료' 상태로 플랫폼 결과를 표현한다.
+  // 자동 일괄 숨김으로 아직 사람이 검토하지 않은 행만 서비스 계정 결정으로 기록한다.
+  const unreviewed = alerts
+    .filter((alert) => !alert.review_decision && !alert.reviewed_by && !alert.reviewed_at)
+    .map((alert) => alert.id);
+  return patchRows(config, unreviewed, {
     review_decision: 'hidden',
     reviewed_by: config.actor,
     reviewed_at: new Date(now).toISOString(),
   }, fetchImpl);
-  return updated;
 }
 
 export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModerationConfig(), fetchImpl = fetch, now = Date.now()) {
@@ -258,27 +390,50 @@ export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModera
   if (!owners.length) throw new Error('No stored YouTube owner OAuth tokens');
   const alerts = await loadYouTubeAdAlerts(config, fetchImpl);
   const accessTokens = new Map();
-  for (const owner of owners) accessTokens.set(owner.channelId, await refreshAndVerifyOwner(config, owner, fetchImpl));
-  const ownerByVideo = await mapVideosToOwners(config, alerts, owners, accessTokens, fetchImpl);
-  const grouped = groupAlertsByOwner(alerts, ownerByVideo);
+  const validOwners = [];
+  const ownerTokenFailures = [];
+  for (const owner of owners) {
+    try {
+      accessTokens.set(owner.channelId, await refreshAndVerifyOwner(config, owner, fetchImpl));
+      validOwners.push(owner);
+    } catch (error) {
+      ownerTokenFailures.push({ channelId: owner.channelId, stage: 'token', error: errorInfo(error) });
+    }
+  }
+  if (!validOwners.length) {
+    throw new Error(`All stored YouTube owner OAuth tokens failed (${ownerTokenFailures.length}/${owners.length})`);
+  }
+
+  const candidateAlerts = alerts.filter((alert) => alertDisposition(alert, { singleAlert: config.singleAlert }) === 'eligible');
+  const mapped = await mapVideosToOwners(config, candidateAlerts, validOwners, accessTokens, fetchImpl);
+  const grouped = groupAlertsByOwner(alerts, mapped.ownerByVideo, { singleAlert: config.singleAlert });
   const result = {
     dryRun: config.dryRun,
     totalAlerts: alerts.length,
     ownerTokens: owners.length,
-    matchedVideos: ownerByVideo.size,
+    validOwnerTokens: validOwners.length,
+    ownerTokenFailures,
+    ownerMappingFailures: mapped.ownerErrors,
+    matchedVideos: mapped.ownerByVideo.size,
     missingCommentId: grouped.missingCommentId,
     unmatchedVideo: grouped.unmatchedVideo,
     alreadyMarkedHidden: grouped.alreadyMarkedHidden,
+    skippedHumanDecision: grouped.skippedHumanDecision,
     attempted: 0,
     hidden: 0,
     unavailableOrAlreadyHidden: 0,
+    moderationUnavailable: 0,
+    moderationFailed: 0,
+    acceptedUnverified: 0,
+    channelFailures: 0,
+    persistenceFailed: 0,
     dbUpdated: 0,
     slackUpdated: 0,
     slackUpdateFailed: 0,
     owners: [],
   };
 
-  for (const owner of owners) {
+  for (const owner of validOwners) {
     const ownerAlerts = grouped.groups.get(owner.channelId) || [];
     const rowsByComment = new Map();
     for (const alert of ownerAlerts) {
@@ -287,33 +442,86 @@ export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModera
       rowsByComment.get(id).push(alert);
     }
     const commentIds = [...rowsByComment.keys()];
-    const visible = await listVisibleCommentIds(config, commentIds, accessTokens.get(owner.channelId), fetchImpl);
-    const visibleIds = commentIds.filter((id) => visible.has(id));
-    const unavailable = commentIds.length - visibleIds.length;
-    const hiddenRows = [];
-    if (!config.dryRun) {
-      for (const ids of chunk(visibleIds, config.batchSize)) {
-        await rejectComments(config, ids, accessTokens.get(owner.channelId), fetchImpl);
-        for (const id of ids) hiddenRows.push(...(rowsByComment.get(id) || []));
-      }
-      result.dbUpdated += await persistHiddenRows(config, hiddenRows, fetchImpl, now);
-      if (hiddenRows.length && config.slackBotToken) {
-        const slack = await syncHiddenYouTubeSlackCards(config, hiddenRows, fetchImpl);
-        result.slackUpdated += slack.updated;
-        result.slackUpdateFailed += slack.failed;
-      }
-    }
-    result.attempted += visibleIds.length;
-    result.hidden += config.dryRun ? 0 : visibleIds.length;
-    result.unavailableOrAlreadyHidden += unavailable;
-    result.owners.push({
+    const ownerResult = {
       channelId: owner.channelId,
       alertRows: ownerAlerts.length,
       uniqueComments: commentIds.length,
-      visible: visibleIds.length,
-      hidden: config.dryRun ? 0 : visibleIds.length,
-      unavailableOrAlreadyHidden: unavailable,
-    });
+      visible: 0,
+      hidden: 0,
+      unavailableOrAlreadyHidden: 0,
+      moderationUnavailable: 0,
+      moderationFailed: 0,
+      acceptedUnverified: 0,
+      error: null,
+    };
+    if (!commentIds.length) {
+      result.owners.push(ownerResult);
+      continue;
+    }
+
+    const visibility = await listVisibleCommentIdsIsolated(
+      config,
+      commentIds,
+      accessTokens.get(owner.channelId),
+      fetchImpl,
+    );
+    if (visibility.channelError) {
+      ownerResult.error = { stage: 'list', ...visibility.channelError };
+      result.channelFailures += 1;
+      result.owners.push(ownerResult);
+      continue;
+    }
+    const visibilityFailed = new Set(visibility.failed.map((item) => item.id));
+    const visibleIds = commentIds.filter((id) => visibility.visible.has(id));
+    const unavailable = commentIds.filter((id) => visibility.unavailable.has(id)).length;
+    ownerResult.visible = visibleIds.length;
+    ownerResult.unavailableOrAlreadyHidden = unavailable;
+    ownerResult.moderationFailed += visibilityFailed.size;
+    result.attempted += visibleIds.length;
+    result.unavailableOrAlreadyHidden += unavailable;
+    result.moderationFailed += visibilityFailed.size;
+
+    if (!config.dryRun && visibleIds.length) {
+      const onConfirmed = async (confirmedIds) => {
+        const hiddenRows = confirmedIds.flatMap((id) => rowsByComment.get(id) || []);
+        try {
+          result.dbUpdated += await persistHiddenRows(config, hiddenRows, fetchImpl, now);
+        } catch (error) {
+          result.persistenceFailed += hiddenRows.length;
+          ownerResult.error ||= { stage: 'database', ...errorInfo(error) };
+        }
+        if (hiddenRows.length && config.slackBotToken) {
+          try {
+            const slack = await syncHiddenYouTubeSlackCards(config, hiddenRows, fetchImpl);
+            result.slackUpdated += slack.updated;
+            result.slackUpdateFailed += slack.failed;
+          } catch (error) {
+            result.slackUpdateFailed += hiddenRows.length;
+            ownerResult.error ||= { stage: 'slack', ...errorInfo(error) };
+          }
+        }
+      };
+      const moderation = await rejectCommentsIsolated(
+        config,
+        visibleIds,
+        accessTokens.get(owner.channelId),
+        fetchImpl,
+        onConfirmed,
+      );
+      ownerResult.hidden = moderation.confirmed.length;
+      ownerResult.moderationUnavailable = moderation.unavailable.length;
+      ownerResult.moderationFailed += moderation.failed.length;
+      ownerResult.acceptedUnverified = moderation.acceptedUnverified.length;
+      result.hidden += moderation.confirmed.length;
+      result.moderationUnavailable += moderation.unavailable.length;
+      result.moderationFailed += moderation.failed.length;
+      result.acceptedUnverified += moderation.acceptedUnverified.length;
+      if (moderation.channelError) {
+        ownerResult.error = { stage: 'moderation', ...moderation.channelError };
+        result.channelFailures += 1;
+      }
+    }
+    result.owners.push(ownerResult);
   }
   return result;
 }
@@ -326,15 +534,20 @@ async function writeSummary(result) {
     '',
     `- 모드: ${result.dryRun ? 'DRY RUN' : '실제 숨김'}`,
     `- 전체 YouTube 광고 알림: ${result.totalAlerts}`,
+    `- 사람 결정으로 제외(무시·완료 등): ${result.skippedHumanDecision}`,
     `- 실제 숨김: ${result.hidden}`,
     `- 이미 숨김/삭제되어 조회 불가: ${result.unavailableOrAlreadyHidden}`,
+    `- 숨김 중 삭제·미존재: ${result.moderationUnavailable}`,
+    `- 숨김 실패: ${result.moderationFailed}`,
+    `- API 접수 후 확인 불가: ${result.acceptedUnverified}`,
+    `- 채널 단위 실패: ${result.channelFailures} (토큰 실패 ${result.ownerTokenFailures.length})`,
     `- 소유 채널 미매칭: ${result.unmatchedVideo}`,
     `- DB 갱신: ${result.dbUpdated}`,
     `- Slack 카드 갱신: ${result.slackUpdated} (실패 ${result.slackUpdateFailed})`,
     '',
-    '| 소유 채널 ID | 알림 행 | 고유 댓글 | 현재 노출 | 숨김 | 조회 불가 |',
-    '|---|---:|---:|---:|---:|---:|',
-    ...result.owners.map((owner) => `| ${owner.channelId} | ${owner.alertRows} | ${owner.uniqueComments} | ${owner.visible} | ${owner.hidden} | ${owner.unavailableOrAlreadyHidden} |`),
+    '| 소유 채널 ID | 알림 행 | 고유 댓글 | 현재 노출 | 숨김 | 조회 불가 | 실패 |',
+    '|---|---:|---:|---:|---:|---:|---:|',
+    ...result.owners.map((owner) => `| ${owner.channelId} | ${owner.alertRows} | ${owner.uniqueComments} | ${owner.visible} | ${owner.hidden} | ${owner.unavailableOrAlreadyHidden + owner.moderationUnavailable} | ${owner.moderationFailed + (owner.error ? 1 : 0)} |`),
     '',
     '> 댓글 본문·작성자·댓글 ID·OAuth 토큰은 로그에 기록하지 않습니다.',
     '',
