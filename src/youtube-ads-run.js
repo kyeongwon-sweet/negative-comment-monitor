@@ -9,6 +9,7 @@ import { computeClassifierHash } from './cache.js';
 import { estimateUsd } from './pricing.js';
 import { maybeAlertCosts, postCostWarning, recordRunCost, sumDailyCost } from './cost.js';
 import { buildYouTubeAdEntries, loadYouTubeAdsConfig } from './youtube-ads.js';
+import { inAdMorningWindow, dailyAdRunKey, hasAdRunToday } from './ad-common.js';
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -33,31 +34,15 @@ export async function retrySlackRateLimit(action, {
 }
 
 export function inYouTubeAdsWindow(now = Date.now(), env = process.env) {
-  if (String(env.YOUTUBE_ADS_FORCE || '').toLowerCase() === 'true') return true;
-  const start = Number(env.YOUTUBE_ADS_WINDOW_START || 8);
-  const end = Number(env.YOUTUBE_ADS_WINDOW_END || 11);
-  const kstHour = new Date(now + 9 * 3600 * 1000).getUTCHours();
-  return kstHour >= start && kstHour <= end;
+  return inAdMorningWindow(now, env, 'YOUTUBE_ADS');
 }
 
 export function youtubeDailyRunKey(config, now = Date.now()) {
-  return `daily:youtube-ads:${config.googleAdsLoginCustomerId}:${kstDateKey(now)}`;
+  return dailyAdRunKey('youtube-ads', config.googleAdsLoginCustomerId, now);
 }
 
 export async function hasYouTubeAdsRunToday(config, now = Date.now(), fetchImpl = fetch) {
-  if (!config.supabaseUrl || !config.supabaseKey) return false;
-  try {
-    const key = youtubeDailyRunKey(config, now);
-    const response = await fetchImpl(
-      `${config.supabaseUrl}/rest/v1/cost_usage_ledger?select=run_key&run_key=eq.${encodeURIComponent(key)}&limit=1`,
-      { headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}` } },
-    );
-    if (!response.ok) return false;
-    const rows = await response.json();
-    return Array.isArray(rows) && rows.length > 0;
-  } catch {
-    return false;
-  }
+  return hasAdRunToday(config, youtubeDailyRunKey(config, now), fetchImpl);
 }
 
 export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl = fetch, now = Date.now()) {

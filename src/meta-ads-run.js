@@ -8,6 +8,7 @@ import { kstDateKey } from './schedule.js';
 import { computeClassifierHash } from './cache.js';
 import { estimateUsd } from './pricing.js';
 import { maybeAlertCosts, postCostWarning, recordRunCost, runKey, sumDailyCost } from './cost.js';
+import { inAdMorningWindow } from './ad-common.js';
 import {
   buildMetaAdEntries,
   loadMetaAdsConfig,
@@ -26,11 +27,7 @@ import {
 // → 죽은 UTC-0(KST 9)를 포함하되 앞뒤로 넓혀(KST 8~11) 실제로 도는 웨이크(UTC 23/1/2)를 타게 한다.
 // 큐-비우기로 멱등: 창 내 첫 웨이크가 적체분 발송, 이후 웨이크는 신규분만. FORCE는 시간 무관 강제.
 export function inMorningWindow(now = Date.now(), env = process.env) {
-  if (String(env.META_ADS_FORCE || '').toLowerCase() === 'true') return true;
-  const start = Number(env.META_ADS_WINDOW_START || 8);
-  const end = Number(env.META_ADS_WINDOW_END || 11);
-  const kstHour = new Date(now + 9 * 3600 * 1000).getUTCHours();
-  return kstHour >= start && kstHour <= end;
+  return inAdMorningWindow(now, env, 'META_ADS');
 }
 
 export async function runMetaAds(config = loadMetaAdsConfig(), fetchImpl = fetch, now = Date.now()) {

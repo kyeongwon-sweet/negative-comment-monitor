@@ -9,35 +9,19 @@ import { computeClassifierHash } from './cache.js';
 import { estimateUsd } from './pricing.js';
 import { maybeAlertCosts, postCostWarning, recordRunCost, sumDailyCost } from './cost.js';
 import { buildTikTokAdEntries, loadTikTokAdsConfig } from './tiktok-ads.js';
+import { inAdMorningWindow, dailyAdRunKey, hasAdRunToday } from './ad-common.js';
 
 export function inTikTokAdsWindow(now = Date.now(), env = process.env) {
-  if (String(env.TIKTOK_ADS_FORCE || '').toLowerCase() === 'true') return true;
-  const start = Number(env.TIKTOK_ADS_WINDOW_START || 8);
-  const end = Number(env.TIKTOK_ADS_WINDOW_END || 11);
-  const kstHour = new Date(now + 9 * 3600 * 1000).getUTCHours();
-  return kstHour >= start && kstHour <= end;
+  return inAdMorningWindow(now, env, 'TIKTOK_ADS');
 }
 
 export function tiktokDailyRunKey(config, now = Date.now()) {
-  return `daily:tiktok-ads:${config.tiktokAdvertiserId}:${kstDateKey(now)}`;
+  return dailyAdRunKey('tiktok-ads', config.tiktokAdvertiserId, now);
 }
 
-// monitor.yml은 15분마다 깨어나지만 TikTok 댓글 폴링은 KST 하루 1회만 한다.
-// 성공 원장 행을 확인한 뒤 스킵하며, 조회 실패는 감시 누락보다 중복 폴링이 안전하므로 fail-open 한다.
+// monitor.yml은 15분마다 깨어나지만 TikTok 댓글 폴링은 KST 하루 1회만 한다(성공 원장 확인 후 스킵, 조회실패=fail-open).
 export async function hasTikTokAdsRunToday(config, now = Date.now(), fetchImpl = fetch) {
-  if (!config.supabaseUrl || !config.supabaseKey) return false;
-  try {
-    const key = tiktokDailyRunKey(config, now);
-    const response = await fetchImpl(
-      `${config.supabaseUrl}/rest/v1/cost_usage_ledger?select=run_key&run_key=eq.${encodeURIComponent(key)}&limit=1`,
-      { headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}` } },
-    );
-    if (!response.ok) return false;
-    const rows = await response.json();
-    return Array.isArray(rows) && rows.length > 0;
-  } catch {
-    return false;
-  }
+  return hasAdRunToday(config, tiktokDailyRunKey(config, now), fetchImpl);
 }
 
 export async function runTikTokAds(config = loadTikTokAdsConfig(), fetchImpl = fetch, now = Date.now()) {
