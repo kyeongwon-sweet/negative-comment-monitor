@@ -1,0 +1,37 @@
+name: YouTube owner bulk comment hide
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Read-only inventory; set false only after explicit approval
+        required: true
+        default: true
+        type: boolean
+      confirmation:
+        description: For live mode enter HIDE_ALL_YOUTUBE_AD_ALERTS
+        required: false
+        type: string
+
+jobs:
+  moderate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Moderate stored YouTube ad alerts
+        run: node src/youtube-owner-moderation.js
+        env:
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          YOUTUBE_OWNER_BULK_HIDE_DRY_RUN: ${{ inputs.dry_run }}
+          YOUTUBE_OWNER_BULK_HIDE_CONFIRM: ${{ inputs.confirmation }}
+          YOUTUBE_OWNER_BULK_HIDE_BATCH_SIZE: '50'
+          YOUTUBE_OWNER_BULK_HIDE_ACTOR: codex-bulk-owner-oauth

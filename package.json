@@ -8,6 +8,7 @@
     "start:meta-ads": "node src/meta-ads-run.js",
     "start:tiktok-ads": "node src/tiktok-ads-run.js",
     "start:youtube-ads": "node src/youtube-ads-run.js",
+    "moderate:youtube-owner": "node src/youtube-owner-moderation.js",
     "test": "node --test"
   },
   "engines": {
