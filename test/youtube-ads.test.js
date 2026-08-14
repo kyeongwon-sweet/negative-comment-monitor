@@ -5,7 +5,7 @@ import {
   fetchMatchingGoogleAdsCampaigns,
   loadYouTubeAdsConfig,
 } from '../src/youtube-ads.js';
-import { hasYouTubeAdsRunToday, inYouTubeAdsWindow, youtubeDailyRunKey } from '../src/youtube-ads-run.js';
+import { hasYouTubeAdsRunToday, inYouTubeAdsWindow, retrySlackRateLimit, youtubeDailyRunKey } from '../src/youtube-ads-run.js';
 
 const CFG = {
   googleAdsApiBase: 'https://googleads.test',
@@ -45,6 +45,26 @@ test('loadYouTubeAdsConfig separates Google Ads and channel-owner refresh tokens
   assert.equal(config.youtubeRefreshToken, 'youtube');
   assert.equal(config.youtubeAdsCampaignNameFilter, '빙과');
   assert.equal(config.slackAssignees.awareness, 'U1');
+  assert.equal(config.youtubeAdsAlertDelayMs, 0);
+  assert.equal(config.youtubeAdsSlackRetries, 5);
+});
+
+test('retrySlackRateLimit retries only Slack rate-limit failures', async () => {
+  let calls = 0;
+  const sleeps = [];
+  const result = await retrySlackRateLimit(async () => {
+    calls += 1;
+    if (calls < 3) throw new Error('Slack API: ratelimited');
+    return { ok: true };
+  }, { maxRetries: 4, retryDelayMs: 100, sleep: async (ms) => sleeps.push(ms) });
+  assert.deepEqual(result, { ok: true });
+  assert.equal(calls, 3);
+  assert.deepEqual(sleeps, [100, 200]);
+
+  await assert.rejects(
+    retrySlackRateLimit(async () => { throw new Error('Slack API: invalid_auth'); }),
+    /invalid_auth/,
+  );
 });
 
 test('fetchMatchingGoogleAdsCampaigns enforces the exact 빙과 substring locally', async () => {
