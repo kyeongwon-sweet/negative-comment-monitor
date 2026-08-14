@@ -50,11 +50,18 @@
 
 ## 3. 틱톡 어댑터 (1순위)
 
-### 소스
-- **TikTok Marketing(Business) API — 댓글 관리(Comment Management)**. 광고계정(advertiser) 소유 광고의 댓글 목록 조회.
-- 필요 정보: `TIKTOK_ADVERTISER_ID`, `TIKTOK_ACCESS_TOKEN`(광고계정 OAuth), 앱 `App ID`/`Secret`.
-- 폴링: advertiser의 **광고 목록 조회 → 광고 전용 영상 광고 필터 → 광고별 댓글 목록 조회**.
-  - Spark Ads(공개 부스팅)는 기존 clockworks 스크래퍼로 이미 잡힐 수 있으니 **광고 전용만** 대상(광고 유형 필드로 필터, 이중수집 방지).
+### 소스 — ✅ 공식 API 확정 (2026-08-14 문서검증)
+TikTok Business API v1.3 (`business-api.tiktok.com`) 댓글 엔드포인트(공식 SDK 확인):
+- `GET /open_api/v1.3/comment/list/` — **"Get comments for your ads"**. 필수: `advertiser_id, start_time, end_time, search_field, search_value, access_token`. 선택: `comment_type, comment_status(공개/숨김), sort_*, page*`.
+- `POST /open_api/v1.3/comment/status/update/` — 공개↔**숨김** (→ 카드 [숨김] 버튼이 이걸 호출).
+- `GET /open_api/v1.3/comment/reference/` — 대댓글(관련 댓글). `POST comment/post`(답글)·`comment/delete`(삭제)도 있음.
+- ⇒ **광고 댓글 조회 + 숨김 모두 API 가능**(첫 검색의 "API 없음"은 오답, 공식 SDK로 반증).
+
+**폴링 모델(확정)**: `comment/list`가 **advertiser_id + [start_time,end_time]** 창 기반이라, 광고별 순회 없이 **"advertiser 한 계정에 대해 지난 창 이후 신규 댓글"**을 한 번에 조회 → §2.1 워터마크(마지막 end_time, 짧은 중첩)와 정확히 맞음. `comment_status=public`으로 미처리만 좁힐 수 있음.
+- 필요 정보: `TIKTOK_ADVERTISER_ID`(=`7495670649415843856`, 시크릿), `TIKTOK_ACCESS_TOKEN`(광고계정 OAuth), 앱 `App ID`/`Secret`.
+- Spark Ads(공개 부스팅)는 기존 clockworks 스크래퍼로 이미 잡힐 수 있음 → dedup 키(ad_id+comment_id, §11-1)로 이중수집 무해화(같은 comment_id면 fingerprint 동일).
+
+**실계정 검증 남음(승인된 인증 후)**: ① 정확한 권한 스코프 이름(댓글 관리 permission) ② **다크(비-Spark) 광고 댓글이 comment/list에 실제로 나오는지**(문서상 "your ads"라 포함 유력하나 실측 필요) ③ rate limit ④ search_field 허용값(ad_id/campaign 등).
 
 ### 매핑
 - `target.platform='tiktok'`, `source='tiktok_ads'`, `channelCategory='인지 광고'`(메타와 동일 → 담당자=awareness/이재원, 스레드 병합), `url`=틱톡 영상 URL(`/video/{id}`), `adTitle`=광고 이름(제작자 태그 추출은 메타의 `videoAssigneeFromAdTitle` 재사용 가능 시).
@@ -80,7 +87,8 @@ TIKTOK_ADS_WINDOW_START/END (메타와 동일 기본 8/11), TIKTOK_ADS_FORCE
 - **경로 B(권장·정본): Google Ads API로 영상 자산 나열.** 광고계정 OAuth → 광고에 쓰인 YouTube 영상 자산의 `video_id` 목록을 **정확히** 확보 → 그 영상만 감시. "구글애즈 영상"의 **정본 소스**.
 - **경로 A(단축): 채널 uploads 중 '비공개' 필터.** 채널 소유자 OAuth → uploads 재생목록 나열 → `privacyStatus='unlisted'`만. 인증 1개로 간단하지만 **"비공개 = 구글애즈 영상"은 대리신호**다. 유기적 비공개 업로드가 섞이거나 광고 영상이 공개면 오탐/누락. ([[proxy-signal-vs-real-state]] 교훈)
 - **구현 시 검증**: 실계정에서 "채널 비공개 업로드 집합"과 "Google Ads 영상 자산 집합"이 **일치하는지** 대조. 일치하면 경로 A로 단순화 가능(채널 OAuth만), 불일치면 경로 B(Google Ads API OAuth 추가)로 확정. → 인증 범위가 이 검증 결과로 갈림.
-- 확정된 영상별 **`commentThreads.list`(part=snippet, videoId, order=time)** 로 최신 댓글 조회.
+- 확정된 영상별 **`commentThreads.list`(part=snippet, videoId, order=time)** 로 최신 댓글 조회. 대댓글은 `comments.list(parentId)` 보완(§11-4).
+- ✅ 검증(2026-08-14): 숨김/모더레이션은 **`comments.setModerationStatus`**(값 published/heldForReview/rejected)이며 **채널·영상 소유자 OAuth 필수**. 우리 채널 소유라 충족. 비공개(unlisted) 영상 댓글 읽기는 소유자 OAuth로 가능 예상 → 테스트 영상으로 실측 확정.
 
 ### 매핑
 - `target.platform='youtube'`, `source='youtube_ads'`, `channelCategory='인지 광고'`, `url`=`https://www.youtube.com/watch?v={id}`(또는 shorts), `adTitle`=영상 제목.
