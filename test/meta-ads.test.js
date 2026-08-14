@@ -32,6 +32,17 @@ test('loadMetaAdsConfig only requires Supabase and Slack secrets', () => {
   assert.equal(config.metaGraphBase, 'https://graph.facebook.com/v26.0');
 });
 
+test('awareness routing switches to the next assignee at the configured KST date', () => {
+  const env = {
+    SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc', SLACK_BOT_TOKEN: 'xoxb-test',
+    SLACK_ASSIGNEE_AWARENESS: 'U09RCJ1B9ML',
+    SLACK_ASSIGNEE_AWARENESS_NEXT: 'U0B2Y0ZC8QZ',
+    SLACK_ROUTING_EFFECTIVE_DATE_KST: '2026-08-17',
+  };
+  assert.equal(loadMetaAdsConfig(env, Date.parse('2026-08-16T14:59:59Z')).slackAssignees.awareness, 'U09RCJ1B9ML');
+  assert.equal(loadMetaAdsConfig(env, Date.parse('2026-08-16T15:00:00Z')).slackAssignees.awareness, 'U0B2Y0ZC8QZ');
+});
+
 test('loadPendingMetaAdEvents reads only unprocessed rows in arrival order', async () => {
   let requested = '';
   const events = [{ id: 1, comment_id: 'c1' }];

@@ -39,7 +39,7 @@ export function loadConfig(env = process.env, now = Date.now()) {
       viralBanner: String(env.SLACK_ASSIGNEE_VIRAL_BANNER || '').trim(),
       viralVideoOwned: String(env.SLACK_ASSIGNEE_VIRAL_VIDEO_OWNED || '').trim(),
       other: String(env.SLACK_ASSIGNEE_OTHER || '').trim(),
-      awareness: String(env.SLACK_ASSIGNEE_AWARENESS || '').trim(), // 인지(메타) 광고 부정댓글 담당자
+      awareness: scheduledAssignee(env, 'SLACK_ASSIGNEE_AWARENESS', 'SLACK_ASSIGNEE_AWARENESS_NEXT', nextRoutingActive),
       sponsorship: String(env.SLACK_ASSIGNEE_SPONSORSHIP || '').trim(),
       // 상품별 담당자(상품 코드 × 카테고리). 미지정 조합/상품은 위 카테고리 기본값으로 폴백.
       jd: {

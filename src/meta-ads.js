@@ -1,5 +1,6 @@
 import { loadMetaToken } from './meta-token.js';
 import { videoAssigneeFromAdTitle } from './slack.js';
+import { scheduledRoutingActive } from './config.js';
 
 export const META_AD_SOURCE = 'meta_ads';
 
@@ -31,7 +32,12 @@ function headers(config, extra = {}) {
 }
 
 // Meta 광고댓글 전용 실행은 Apify/GAS 설정을 요구하지 않는다.
-export function loadMetaAdsConfig(env = process.env) {
+export function loadMetaAdsConfig(env = process.env, now = Date.now()) {
+  const currentAwareness = String(env.SLACK_ASSIGNEE_AWARENESS || '').trim();
+  const nextAwareness = String(env.SLACK_ASSIGNEE_AWARENESS_NEXT || '').trim();
+  const awareness = scheduledRoutingActive(env.SLACK_ROUTING_EFFECTIVE_DATE_KST, now) && nextAwareness
+    ? nextAwareness
+    : currentAwareness;
   return {
     supabaseUrl: required(env, 'SUPABASE_URL').replace(/\/$/, ''),
     supabaseKey: required(env, 'SUPABASE_SERVICE_ROLE_KEY'),
@@ -40,7 +46,7 @@ export function loadMetaAdsConfig(env = process.env) {
     slackAssignees: {
       // other = 비용경고 등 운영 알림 기본 담당자(황경원). 인지 광고 부정댓글 담당자는 awareness로 분리.
       other: String(env.SLACK_ASSIGNEE_OTHER || 'U0B2Y0ZC8QZ').trim(),
-      awareness: String(env.SLACK_ASSIGNEE_AWARENESS || '').trim(),
+      awareness,
     },
     managedChannelCategories: [],
     brandContext: String(env.BRAND_CONTEXT || '라라스윗 쫀득바').trim(),

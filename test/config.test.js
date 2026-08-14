@@ -20,6 +20,8 @@ const BASE_ENV = {
   SLACK_ASSIGNEE_JD_VIRAL_VIDEO_NEXT: 'U08S4MCC4HY',
   SLACK_ASSIGNEE_JD_SATELLITE_NEXT: 'U0BEVSGM2CD',
   SLACK_ASSIGNEE_OTHER: 'U0B2Y0ZC8QZ',
+  SLACK_ASSIGNEE_AWARENESS: 'U09RCJ1B9ML',
+  SLACK_ASSIGNEE_AWARENESS_NEXT: 'U0B2Y0ZC8QZ',
 };
 
 test('scheduled routing switches exactly at 2026-08-17 00:00 KST', () => {
@@ -41,6 +43,8 @@ test('JD routing keeps current assignees through Sunday and activates requested 
     satellite: 'U0BEVSGM2CD',
   });
   assert.equal(after.slackAssignees.other, 'U0B2Y0ZC8QZ');
+  assert.equal(before.slackAssignees.awareness, 'U09RCJ1B9ML');
+  assert.equal(after.slackAssignees.awareness, 'U0B2Y0ZC8QZ');
 });
 
 test('missing NEXT value safely falls back to the current assignee after the effective date', () => {
