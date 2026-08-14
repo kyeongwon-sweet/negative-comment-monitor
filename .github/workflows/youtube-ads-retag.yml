@@ -1,22 +1,26 @@
-name: YouTube ad comment full survey
-run-name: YouTube ad comment full survey (${{ inputs.lookback_days }}d)
+name: YouTube awareness alert creative retag
+run-name: YouTube awareness alert creative retag (${{ inputs.kst_date }})
 
 on:
   workflow_dispatch:
     inputs:
+      kst_date:
+        description: KST thread date (YYYY-MM-DD)
+        required: true
+        type: string
       lookback_days:
-        description: Lookback days (7-90)
+        description: YouTube comment lookup days
         required: true
         type: choice
         options: ['7', '14', '30', '90']
         default: '30'
 
 concurrency:
-  group: youtube-ad-comment-full-survey
+  group: youtube-awareness-alert-creative-retag
   cancel-in-progress: false
 
 jobs:
-  survey:
+  retag:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -27,11 +31,10 @@ jobs:
         with:
           node-version: 20
       - run: npm install --ignore-scripts
-      - name: Read and classify all YouTube awareness-ad comments
-        run: node src/youtube-ads-survey.js
+      - name: Update unhandled YouTube cards with creative and producer
+        run: node src/youtube-ads-retag.js
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_MODEL: claude-haiku-4-5-20251001
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
@@ -51,4 +54,5 @@ jobs:
           YOUTUBE_ADS_CHANNEL_CATEGORY: 인지 광고
           YOUTUBE_ADS_LOOKBACK_DAYS: ${{ inputs.lookback_days }}
           YOUTUBE_ADS_MAX_THREAD_PAGES: '100'
-          DRY_RUN: 'true'
+          YOUTUBE_ADS_ALERT_DELAY_MS: '1200'
+          RETAG_KST_DATE: ${{ inputs.kst_date }}

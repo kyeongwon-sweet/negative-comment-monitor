@@ -11,6 +11,8 @@ test('유튜브 전수 조사 요약은 기존 알림과 신규 미처리 후보
     videos: 170,
     ownedVideos: 0,
     externalVideos: 170,
+    namedAdVideos: 160,
+    creatorAssignedVideos: 140,
     comments: 12,
   };
   const alerts = [
@@ -21,6 +23,8 @@ test('유튜브 전수 조사 요약은 기존 알림과 신규 미처리 후보
   const summary = summarizeYouTubeSurvey(collected, alerts, new Set(['a']), { calls: 1, reviewed: 2 }, 0.012345);
   assert.equal(summary.videos, 170);
   assert.equal(summary.comments, 12);
+  assert.equal(summary.namedAdVideos, 160);
+  assert.equal(summary.creatorAssignedVideos, 140);
   assert.equal(summary.classifiedNegative, 3);
   assert.equal(summary.alreadyAlerted, 1);
   assert.equal(summary.unseenNegativeCandidates, 2);
