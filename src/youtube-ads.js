@@ -274,8 +274,15 @@ export async function fetchOwnedYouTubeVideos(config, videoAssets, channelId, ac
       part: 'id,snippet,status', id: ids.slice(offset, offset + 50).join(','), maxResults: 50,
     }, accessToken, fetchImpl);
     for (const item of payload.items || []) {
-      if (String(item.snippet?.channelId || '') !== String(channelId)) continue;
-      videos.push({ ...item, adAsset: assetById.get(item.id) });
+      // Google Ads의 일치 캠페인에 연결된 영상 자산 자체를 수집 신뢰 경계로 삼는다.
+      // Google Ads UI에서 업로드한 영상은 현재 OAuth 채널과 다른 광고용 채널에 귀속될 수 있으므로
+      // 채널 ID가 다르다는 이유만으로 댓글 수집 대상에서 제외하지 않는다. 대신 관리 가능 여부를
+      // 따로 표시해 비소유 영상에 숨김 같은 관리 버튼이 노출되지 않게 한다.
+      videos.push({
+        ...item,
+        adAsset: assetById.get(item.id),
+        isOwnedChannel: String(item.snippet?.channelId || '') === String(channelId),
+      });
     }
   }
   return videos;
@@ -391,7 +398,7 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
         productName: config.youtubeAdsProductName,
         brandName: config.brandContext,
         caption: [title, ...campaignNames].filter(Boolean).join(' / '),
-        isManagedAccount: true,
+        isManagedAccount: Boolean(video.isOwnedChannel),
         adTitle: campaignNames[0] ? `${campaignNames[0]} · ${title}` : title,
         googleAdsCustomerId: video.adAsset?.customerId || '',
         googleAdsCampaignIds: video.adAsset?.campaignIds || [],
@@ -406,6 +413,8 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
     campaigns: campaigns.length,
     assets: assets.length,
     videos: videos.length,
+    ownedVideos: videos.filter((video) => video.isOwnedChannel).length,
+    externalVideos: videos.filter((video) => !video.isOwnedChannel).length,
     comments: commentCount,
     entries,
     channelId: channel.id,

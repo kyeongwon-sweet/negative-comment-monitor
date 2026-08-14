@@ -55,7 +55,7 @@ export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl =
         runKey: youtubeDailyRunKey(config, now), kstDate: kstDateKey(now), apifyUsd: 0, anthropicUsd: 0,
       }, fetchImpl);
     }
-    console.error(`[youtube-ads] customers=${summary.customers} campaigns=${summary.campaigns} assets=${summary.assets} videos=${summary.videos} comments=${summary.comments} alerts=0`);
+    console.error(`[youtube-ads] customers=${summary.customers} campaigns=${summary.campaigns} assets=${summary.assets} videos=${summary.videos} owned=${summary.ownedVideos || 0} external=${summary.externalVideos || 0} comments=${summary.comments} alerts=0`);
     return summary;
   }
 
@@ -107,7 +107,7 @@ export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl =
 
   const estimatedUsd = estimateUsd(llmStats, config.anthropicModel);
   summary.llm = { ...llmStats, estUsd: Number(estimatedUsd.toFixed(5)) };
-  console.error(`[youtube-ads] customers=${summary.customers} campaigns=${summary.campaigns} assets=${summary.assets} videos=${summary.videos} comments=${summary.comments} alerts=${summary.sentAlerts} llmCalls=${llmStats.calls} est=$${estimatedUsd.toFixed(5)}`);
+  console.error(`[youtube-ads] customers=${summary.customers} campaigns=${summary.campaigns} assets=${summary.assets} videos=${summary.videos} owned=${summary.ownedVideos || 0} external=${summary.externalVideos || 0} comments=${summary.comments} alerts=${summary.sentAlerts} llmCalls=${llmStats.calls} est=$${estimatedUsd.toFixed(5)}`);
 
   if (!config.dryRun) {
     try {
