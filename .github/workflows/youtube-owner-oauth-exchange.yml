@@ -1,0 +1,31 @@
+name: YouTube owner OAuth exchange
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_channel_id:
+        description: Exact YouTube channel ID selected during OAuth
+        required: true
+        type: string
+
+jobs:
+  exchange:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Exchange one-time code and verify owner channel
+        run: node src/youtube-owner-oauth-exchange.js
+        env:
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          YOUTUBE_OWNER_AUTH_CODE: ${{ secrets.YOUTUBE_OWNER_AUTH_CODE }}
+          YOUTUBE_OWNER_EXPECTED_CHANNEL_ID: ${{ inputs.expected_channel_id }}
+          GOOGLE_OAUTH_REDIRECT_URI: http://127.0.0.1:53682
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
