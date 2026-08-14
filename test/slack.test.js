@@ -27,6 +27,10 @@ test('Meta ad alerts expose only human hide and ignore actions', () => {
 test('TikTok ad alerts also expose hide and ignore (API 숨김 가능)', () => {
   assert.deepEqual(actionDefinitions({ source: 'tiktok_ads', channelCategory: '인지 광고' }).map((item) => item[1]), ['hide', 'ignore']);
 });
+
+test('YouTube ad alerts expose hide and ignore after owner OAuth connection', () => {
+  assert.deepEqual(actionDefinitions({ source: 'youtube_ads', channelCategory: '인지 광고' }).map((item) => item[1]), ['hide', 'ignore']);
+});
 test('alert blocks include ownership-specific action buttons', () => {
   const blocks = buildAlertBlocks({ row: 1, url: 'https://example.com', channelCategory: '유상협찬' }, { id: 'c1', platform: 'youtube', text: '라라스윗 별로', risk: {} });
   assert.equal(blocks.at(-1).elements.length, 2);

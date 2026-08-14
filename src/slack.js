@@ -11,8 +11,9 @@ function button([text, actionId, style], value) {
 }
 
 export function actionDefinitions(target, managedCategories) {
-  // 광고(메타·틱톡) 댓글은 플랫폼 API로 숨김 가능 → [숨김]/[무시]. (틱톡 숨김 라우트=web injibot-action)
-  if (target?.source === 'meta_ads' || target?.source === 'tiktok_ads') return metaAdActions;
+  // 광고(메타·틱톡·유튜브) 댓글은 플랫폼 API로 숨김 가능 → [숨김]/[무시].
+  // YouTube는 Vercel이 검증된 channel+ts만 Actions에 전달하고, 소유자 OAuth로 비동기 숨김한다.
+  if (['meta_ads', 'tiktok_ads', 'youtube_ads'].includes(target?.source)) return metaAdActions;
   return isManagedChannel(target, managedCategories) ? managedActions : externalActions;
 }
 

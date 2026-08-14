@@ -9,6 +9,7 @@
     "start:tiktok-ads": "node src/tiktok-ads-run.js",
     "start:youtube-ads": "node src/youtube-ads-run.js",
     "moderate:youtube-owner": "node src/youtube-owner-moderation.js",
+    "sync:youtube-hidden-slack": "node src/youtube-hidden-slack-sync.js",
     "test": "node --test"
   },
   "engines": {

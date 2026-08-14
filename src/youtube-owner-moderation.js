@@ -3,8 +3,10 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { extractPostKey } from './delta.js';
 import { refreshGoogleAccessToken } from './youtube-ads.js';
+import { syncHiddenYouTubeSlackCards } from './youtube-hidden-slack.js';
 
 export const YOUTUBE_OWNER_HIDE_CONFIRMATION = 'HIDE_ALL_YOUTUBE_AD_ALERTS';
+export const YOUTUBE_OWNER_SINGLE_HIDE_CONFIRMATION = 'HIDE_ONE_YOUTUBE_AD_ALERT';
 const OWNER_TOKEN_PREFIX = 'youtube_owner:';
 
 function required(env, name) {
@@ -22,8 +24,17 @@ function positiveInt(value, fallback, max) {
 export function loadYouTubeOwnerModerationConfig(env = process.env) {
   const dryRun = String(env.YOUTUBE_OWNER_BULK_HIDE_DRY_RUN || 'true').toLowerCase() !== 'false';
   const confirmation = String(env.YOUTUBE_OWNER_BULK_HIDE_CONFIRM || '').trim();
-  if (!dryRun && confirmation !== YOUTUBE_OWNER_HIDE_CONFIRMATION) {
-    throw new Error(`Destructive YouTube moderation requires YOUTUBE_OWNER_BULK_HIDE_CONFIRM=${YOUTUBE_OWNER_HIDE_CONFIRMATION}`);
+  const alertChannelId = String(env.YOUTUBE_OWNER_ALERT_SLACK_CHANNEL_ID || '').trim();
+  const alertMessageTs = String(env.YOUTUBE_OWNER_ALERT_SLACK_TS || '').trim();
+  if (Boolean(alertChannelId) !== Boolean(alertMessageTs)) {
+    throw new Error('Single YouTube moderation requires both alert Slack channel and timestamp');
+  }
+  const singleAlert = Boolean(alertChannelId && alertMessageTs);
+  const expectedConfirmation = singleAlert
+    ? YOUTUBE_OWNER_SINGLE_HIDE_CONFIRMATION
+    : YOUTUBE_OWNER_HIDE_CONFIRMATION;
+  if (!dryRun && confirmation !== expectedConfirmation) {
+    throw new Error(`Destructive YouTube moderation requires YOUTUBE_OWNER_BULK_HIDE_CONFIRM=${expectedConfirmation}`);
   }
   return {
     googleAdsClientId: required(env, 'GOOGLE_ADS_CLIENT_ID'),
@@ -32,8 +43,13 @@ export function loadYouTubeOwnerModerationConfig(env = process.env) {
     supabaseKey: required(env, 'SUPABASE_SERVICE_ROLE_KEY'),
     youtubeApiBase: String(env.YOUTUBE_API_BASE || 'https://www.googleapis.com/youtube/v3').trim().replace(/\/$/, ''),
     dryRun,
+    singleAlert,
+    alertChannelId,
+    alertMessageTs,
     batchSize: positiveInt(env.YOUTUBE_OWNER_BULK_HIDE_BATCH_SIZE, 50, 50),
     actor: String(env.YOUTUBE_OWNER_BULK_HIDE_ACTOR || 'codex-bulk-owner-oauth').trim(),
+    slackBotToken: String(env.SLACK_BOT_TOKEN || '').trim(),
+    slackUpdateDelayMs: positiveInt(env.YOUTUBE_HIDDEN_SLACK_DELAY_MS, singleAlert ? 1 : 1100, 10_000),
   };
 }
 
@@ -68,10 +84,14 @@ export async function loadYouTubeOwnerTokens(config, fetchImpl = fetch) {
 export async function loadYouTubeAdAlerts(config, fetchImpl = fetch) {
   const rows = [];
   for (let offset = 0; ; offset += 1000) {
-    const pathname = 'negative_comment_alerts'
-      + '?select=id,comment_id,post_url,review_decision,reviewed_by,reviewed_at,slack_channel_id,slack_ts'
+    let pathname = 'negative_comment_alerts'
+      + '?select=id,comment_id,comment_text,post_url,review_decision,reviewed_by,reviewed_at,slack_channel_id,slack_ts'
       + '&source=eq.youtube_ads&order=alerted_at.asc'
       + `&offset=${offset}&limit=1000`;
+    if (config.alertChannelId && config.alertMessageTs) {
+      pathname += `&slack_channel_id=eq.${encodeURIComponent(config.alertChannelId)}`
+        + `&slack_ts=eq.${encodeURIComponent(config.alertMessageTs)}`;
+    }
     const page = await supabaseJson(config, pathname, fetchImpl);
     rows.push(...page);
     if (page.length < 1000) return rows;
@@ -253,6 +273,8 @@ export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModera
     hidden: 0,
     unavailableOrAlreadyHidden: 0,
     dbUpdated: 0,
+    slackUpdated: 0,
+    slackUpdateFailed: 0,
     owners: [],
   };
 
@@ -275,6 +297,11 @@ export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModera
         for (const id of ids) hiddenRows.push(...(rowsByComment.get(id) || []));
       }
       result.dbUpdated += await persistHiddenRows(config, hiddenRows, fetchImpl, now);
+      if (hiddenRows.length && config.slackBotToken) {
+        const slack = await syncHiddenYouTubeSlackCards(config, hiddenRows, fetchImpl);
+        result.slackUpdated += slack.updated;
+        result.slackUpdateFailed += slack.failed;
+      }
     }
     result.attempted += visibleIds.length;
     result.hidden += config.dryRun ? 0 : visibleIds.length;
@@ -303,6 +330,7 @@ async function writeSummary(result) {
     `- 이미 숨김/삭제되어 조회 불가: ${result.unavailableOrAlreadyHidden}`,
     `- 소유 채널 미매칭: ${result.unmatchedVideo}`,
     `- DB 갱신: ${result.dbUpdated}`,
+    `- Slack 카드 갱신: ${result.slackUpdated} (실패 ${result.slackUpdateFailed})`,
     '',
     '| 소유 채널 ID | 알림 행 | 고유 댓글 | 현재 노출 | 숨김 | 조회 불가 |',
     '|---|---:|---:|---:|---:|---:|',

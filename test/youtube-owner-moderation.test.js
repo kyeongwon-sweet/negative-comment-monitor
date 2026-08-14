@@ -5,6 +5,7 @@ import {
   loadYouTubeOwnerModerationConfig,
   moderateYouTubeOwnerAlerts,
   YOUTUBE_OWNER_HIDE_CONFIRMATION,
+  YOUTUBE_OWNER_SINGLE_HIDE_CONFIRMATION,
 } from '../src/youtube-owner-moderation.js';
 
 function response(status, body = {}) {
@@ -38,6 +39,25 @@ test('실제 숨김은 명시적 확인 문구 없이는 시작하지 않는다'
     YOUTUBE_OWNER_BULK_HIDE_DRY_RUN: 'false',
     YOUTUBE_OWNER_BULK_HIDE_CONFIRM: YOUTUBE_OWNER_HIDE_CONFIRMATION,
   }).dryRun, false);
+});
+
+test('단일 Slack 카드 숨김은 별도 확인 문구와 channel+ts 쌍을 요구한다', () => {
+  assert.throws(() => loadYouTubeOwnerModerationConfig({
+    GOOGLE_ADS_CLIENT_ID: 'client', GOOGLE_ADS_CLIENT_SECRET: 'secret',
+    SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'service',
+    YOUTUBE_OWNER_BULK_HIDE_DRY_RUN: 'false',
+    YOUTUBE_OWNER_ALERT_SLACK_CHANNEL_ID: 'C1',
+  }), /both alert Slack channel and timestamp/);
+  const single = loadYouTubeOwnerModerationConfig({
+    GOOGLE_ADS_CLIENT_ID: 'client', GOOGLE_ADS_CLIENT_SECRET: 'secret',
+    SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'service',
+    YOUTUBE_OWNER_BULK_HIDE_DRY_RUN: 'false',
+    YOUTUBE_OWNER_BULK_HIDE_CONFIRM: YOUTUBE_OWNER_SINGLE_HIDE_CONFIRMATION,
+    YOUTUBE_OWNER_ALERT_SLACK_CHANNEL_ID: 'C1',
+    YOUTUBE_OWNER_ALERT_SLACK_TS: '1.2',
+  });
+  assert.equal(single.singleAlert, true);
+  assert.equal(single.alertMessageTs, '1.2');
 });
 
 test('영상 소유 채널별로 알림을 나누고 누락 사유를 집계한다', () => {
