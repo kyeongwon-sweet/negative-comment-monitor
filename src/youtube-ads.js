@@ -1,5 +1,6 @@
 import { loadMetaAdsConfig } from './meta-ads.js';
 import { campaignNameMatchesFilter } from './normalize.js';
+import { videoAssigneeFromAdTitle } from './slack.js';
 
 export const YOUTUBE_AD_SOURCE = 'youtube_ads';
 export const DEFAULT_GOOGLE_ADS_API_BASE = 'https://googleads.googleapis.com';
@@ -153,6 +154,7 @@ function normalizeAssetResult(row) {
   return {
     videoId: id,
     title: String(row.asset?.youtubeVideoAsset?.youtubeVideoTitle || row.asset?.name || ''),
+    adName: String(row.adName || row.adGroupAd?.ad?.name || ''),
     assetResourceName: String(row.asset?.resourceName || ''),
     campaignId: String(row.campaign?.id || ''),
     campaignName: String(row.campaign?.name || ''),
@@ -194,7 +196,7 @@ export async function fetchYouTubeVideoAssets(config, customerId, campaigns, acc
     'asset.youtube_video_asset.youtube_video_id, asset.youtube_video_asset.youtube_video_title',
   ].join(' ');
   const queries = [
-    `SELECT ${commonSelect} FROM ad_group_ad_asset_view WHERE campaign.id IN ${idList} AND asset.type = 'YOUTUBE_VIDEO'`,
+    `SELECT ${commonSelect}, ad_group_ad.ad.name FROM ad_group_ad_asset_view WHERE campaign.id IN ${idList} AND asset.type = 'YOUTUBE_VIDEO'`,
     `SELECT ${commonSelect} FROM asset_group_asset WHERE campaign.id IN ${idList} AND asset.type = 'YOUTUBE_VIDEO'`,
     `SELECT ${commonSelect} FROM campaign_asset WHERE campaign.id IN ${idList} AND asset.type = 'YOUTUBE_VIDEO'`,
   ];
@@ -217,7 +219,9 @@ export async function fetchYouTubeVideoAssets(config, customerId, campaigns, acc
       refs.push(resourceName);
       if (!refCampaigns.has(resourceName)) refCampaigns.set(resourceName, []);
       refCampaigns.get(resourceName).push({
-        id: String(row.campaign?.id || ''), name: String(row.campaign?.name || ''),
+        id: String(row.campaign?.id || ''),
+        name: String(row.campaign?.name || ''),
+        adName: String(row.adGroupAd?.ad?.name || ''),
       });
     }
   }
@@ -225,7 +229,7 @@ export async function fetchYouTubeVideoAssets(config, customerId, campaigns, acc
   for (const row of directAssets) {
     const campaignsForAsset = refCampaigns.get(row.asset?.resourceName) || [{}];
     for (const campaign of campaignsForAsset) {
-      resolved.push({ ...row, campaign });
+      resolved.push({ ...row, campaign, adName: campaign.adName || '' });
     }
   }
 
@@ -234,11 +238,18 @@ export async function fetchYouTubeVideoAssets(config, customerId, campaigns, acc
     const item = normalizeAssetResult(row);
     if (!item || !campaignById.has(item.campaignId)) continue;
     if (!byVideo.has(item.videoId)) {
-      byVideo.set(item.videoId, { ...item, customerId: digits(customerId), campaignIds: [], campaignNames: [] });
+      byVideo.set(item.videoId, {
+        ...item,
+        customerId: digits(customerId),
+        campaignIds: [],
+        campaignNames: [],
+        adNames: [],
+      });
     }
     const current = byVideo.get(item.videoId);
     if (item.campaignId && !current.campaignIds.includes(item.campaignId)) current.campaignIds.push(item.campaignId);
     if (item.campaignName && !current.campaignNames.includes(item.campaignName)) current.campaignNames.push(item.campaignName);
+    if (item.adName && !current.adNames.includes(item.adName)) current.adNames.push(item.adName);
     if (!current.title && item.title) current.title = item.title;
   }
   return [...byVideo.values()];
@@ -375,10 +386,16 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
   }
   const byVideo = new Map();
   for (const asset of assets) {
-    if (!byVideo.has(asset.videoId)) byVideo.set(asset.videoId, { ...asset, campaignIds: [], campaignNames: [] });
+    if (!byVideo.has(asset.videoId)) byVideo.set(asset.videoId, {
+      ...asset,
+      campaignIds: [],
+      campaignNames: [],
+      adNames: [],
+    });
     const current = byVideo.get(asset.videoId);
     current.campaignIds = unique([...current.campaignIds, ...(asset.campaignIds || [])]);
     current.campaignNames = unique([...current.campaignNames, ...(asset.campaignNames || [])]);
+    current.adNames = unique([...current.adNames, ...(asset.adNames || [])]);
     if (!current.title && asset.title) current.title = asset.title;
   }
 
@@ -396,6 +413,10 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
     commentCount += comments.length;
     if (!comments.length) continue;
     const campaignNames = video.adAsset?.campaignNames || [];
+    const adNames = video.adAsset?.adNames || [];
+    const extraAssignees = unique(adNames
+      .map((name) => videoAssigneeFromAdTitle(name, config.videoAssignees))
+      .filter(Boolean));
     const title = String(video.snippet?.title || video.adAsset?.title || video.id);
     entries.push({
       target: {
@@ -407,13 +428,15 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
         channelCategory: config.youtubeAdsChannelCategory,
         productName: config.youtubeAdsProductName,
         brandName: config.brandContext,
-        caption: [title, ...campaignNames].filter(Boolean).join(' / '),
+        caption: [title, ...adNames, ...campaignNames].filter(Boolean).join(' / '),
         isManagedAccount: Boolean(video.isOwnedChannel),
-        adTitle: campaignNames[0] ? `${campaignNames[0]} · ${title}` : title,
+        // 카드 링크명과 제작자 태그 모두 실제 광고 소재명(ad_group_ad.ad.name)을 우선한다.
+        // 구형/무명 광고만 캠페인명·영상 제목으로 폴백한다.
+        adTitle: adNames[0] || (campaignNames[0] ? `${campaignNames[0]} · ${title}` : title),
         googleAdsCustomerId: video.adAsset?.customerId || '',
         googleAdsCampaignIds: video.adAsset?.campaignIds || [],
         youtubeVideoId: video.id,
-        extraAssignees: [],
+        extraAssignees,
       },
       comments,
     });
@@ -425,6 +448,9 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
     videos: videos.length,
     ownedVideos: videos.filter((video) => video.isOwnedChannel).length,
     externalVideos: videos.filter((video) => !video.isOwnedChannel).length,
+    namedAdVideos: videos.filter((video) => (video.adAsset?.adNames || []).length > 0).length,
+    creatorAssignedVideos: videos.filter((video) => (video.adAsset?.adNames || [])
+      .some((name) => videoAssigneeFromAdTitle(name, config.videoAssignees))).length,
     comments: commentCount,
     entries,
     channelId: channel.id,

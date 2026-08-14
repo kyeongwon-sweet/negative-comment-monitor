@@ -20,6 +20,7 @@ const CFG = {
   tiktokAdsConcurrency: 1,
   tiktokAdsRequestDelayMs: 0,
   brandContext: '라라스윗 쫀득바',
+  videoAssignees: { '정요한': 'U_VIDEO' },
 };
 
 test('loadTikTokAdsConfig requires only ad adapter credentials plus shared alert config', () => {
@@ -53,8 +54,8 @@ test('filterTikTokCampaigns: 다중 키워드(빙과,쫀득바)로 두 명명 �
 
 test('buildTikTokAdEntriesFromComments normalizes comments, replies and skips hidden/unrelated rows', () => {
   const entries = buildTikTokAdEntriesFromComments(CFG, [
-    { comment_id: 'c1', content: '별로', campaign_name: '[빙과] 인지', ad_id: 'a1', adgroup_id: 'g1', ad_name: '광고1', tiktok_item_id: '123456', user_name: 'u', create_time: '1' },
-    { comment_id: 'c2', content: '답글', campaign_name: '[빙과] 인지', ad_id: 'a1', adgroup_id: 'g1', ad_name: '광고1', tiktok_item_id: '123456', user_name: 'u2', original_comment_id: 'c1', create_time: '2' },
+    { comment_id: 'c1', content: '별로', campaign_name: '[빙과] 인지', ad_id: 'a1', adgroup_id: 'g1', ad_name: '[26.08]F_V_JD_인지_빙과_정요한', tiktok_item_id: '123456', user_name: 'u', create_time: '1' },
+    { comment_id: 'c2', content: '답글', campaign_name: '[빙과] 인지', ad_id: 'a1', adgroup_id: 'g1', ad_name: '[26.08]F_V_JD_인지_빙과_정요한', tiktok_item_id: '123456', user_name: 'u2', original_comment_id: 'c1', create_time: '2' },
     { comment_id: 'c3', content: '숨김', campaign_name: '[빙과] 인지', ad_id: 'a1', comment_status: 'HIDDEN' },
     { comment_id: 'c4', content: '다른 캠페인', campaign_name: '전환', ad_id: 'a1' },
     { comment_id: 'c5', content: '다른 광고', campaign_name: '[빙과] 인지', ad_id: 'a2' },
@@ -63,6 +64,7 @@ test('buildTikTokAdEntriesFromComments normalizes comments, replies and skips hi
   assert.equal(entries[0].target.source, 'tiktok_ads');
   assert.equal(entries[0].target.productName, 'JD');
   assert.equal(entries[0].target.postKey, 'tt:123456');
+  assert.deepEqual(entries[0].target.extraAssignees, ['U_VIDEO']);
   assert.deepEqual(entries[0].comments.map((x) => x.id), ['c1', 'c2']);
   assert.equal(entries[0].comments[1].parentId, 'c1');
 });

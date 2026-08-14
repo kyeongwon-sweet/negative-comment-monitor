@@ -26,6 +26,7 @@ const CFG = {
   youtubeAdsMaxThreadPages: 10,
   youtubeAdsAlertAfter: '2026-08-01T00:00:00Z',
   brandContext: '라라스윗 쫀득바',
+  videoAssignees: { '정요한': 'U_VIDEO' },
 };
 
 function jsonResponse(payload, status = 200) {
@@ -102,6 +103,7 @@ test('buildYouTubeAdEntries discovers manager child, ad video, top comment and a
       if (query.includes('FROM ad_group_ad_asset_view')) {
         return jsonResponse([{ results: [{
           campaign: { id: 'cp1', name: '[빙과] 쫀득바 인지' },
+          adGroupAd: { ad: { name: '[26.08]F_V_JD_인지_빙과_정요한' } },
           asset: { resourceName: 'customers/8151438670/assets/9', youtubeVideoAsset: { youtubeVideoId: 'abc123XYZ', youtubeVideoTitle: '광고영상' } },
         }] }]);
       }
@@ -142,9 +144,13 @@ test('buildYouTubeAdEntries discovers manager child, ad video, top comment and a
   assert.equal(result.assets, 1);
   assert.equal(result.videos, 1);
   assert.equal(result.comments, 3);
+  assert.equal(result.namedAdVideos, 1);
+  assert.equal(result.creatorAssignedVideos, 1);
   assert.equal(result.entries[0].target.source, 'youtube_ads');
   assert.equal(result.entries[0].target.postKey, 'yt:abc123XYZ');
   assert.equal(result.entries[0].target.productName, 'JD');
+  assert.equal(result.entries[0].target.adTitle, '[26.08]F_V_JD_인지_빙과_정요한');
+  assert.deepEqual(result.entries[0].target.extraAssignees, ['U_VIDEO']);
   assert.deepEqual(result.entries[0].comments.map((comment) => comment.id), ['top1', 'reply1', 'reply2']);
   assert.equal(calls.filter((call) => call.url.hostname === 'oauth2.googleapis.com').length, 2);
 });

@@ -1,5 +1,6 @@
 import { loadMetaAdsConfig } from './meta-ads.js';
 import { campaignNameMatchesFilter } from './normalize.js';
+import { videoAssigneeFromAdTitle } from './slack.js';
 
 export const TIKTOK_AD_SOURCE = 'tiktok_ads';
 export const DEFAULT_TIKTOK_API_BASE = 'https://business-api.tiktok.com/open_api/v1.3';
@@ -184,6 +185,8 @@ export function buildTikTokAdEntriesFromComments(config, comments, allowedAdIds 
 
     const key = `${targetKey(raw)}|${adId}`;
     if (!grouped.has(key)) {
+      const adTitle = String(raw.ad_name || '');
+      const videoAssigneeId = videoAssigneeFromAdTitle(adTitle, config.videoAssignees);
       grouped.set(key, {
         target: {
           platform: 'tiktok',
@@ -196,8 +199,8 @@ export function buildTikTokAdEntriesFromComments(config, comments, allowedAdIds 
           brandName: config.brandContext,
           caption: String(raw.ad_text || raw.ad_name || ''),
           isManagedAccount: true,
-          adTitle: String(raw.ad_name || ''),
-          extraAssignees: [],
+          adTitle,
+          extraAssignees: videoAssigneeId ? [videoAssigneeId] : [],
           tiktokAdvertiserId: config.tiktokAdvertiserId,
           tiktokAdId: adId,
           tiktokAdgroupId: String(raw.adgroup_id || ''),
