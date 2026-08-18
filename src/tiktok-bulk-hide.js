@@ -1,6 +1,12 @@
 import { appendFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import {
+  fetchTikTokCampaigns,
+  filterTikTokCampaigns,
+  fetchTikTokAds,
+  fetchTikTokAdgroupComments,
+} from './tiktok-ads.js';
 
 // 틱톡 광고 부정댓글 일괄 숨김. 유튜브 owner-moderation 패턴 미러링 + 동일 안전장치:
 //  - dry-run 기본 true, 라이브는 TIKTOK_BULK_HIDE_CONFIRM 확인 토큰 필요(오발 방지)
@@ -46,7 +52,10 @@ export function loadTikTokBulkHideConfig(env = process.env) {
     apiBase: String(env.TIKTOK_API_BASE || DEFAULT_TIKTOK_API_BASE).trim().replace(/\/$/, ''),
     supabaseUrl: required(env, 'SUPABASE_URL').replace(/\/$/, ''),
     supabaseKey: required(env, 'SUPABASE_SERVICE_ROLE_KEY'),
-    slackBotToken: String(env.SLACK_BOT_TOKEN || '').trim(),
+    slackBotToken: required(env, 'SLACK_BOT_TOKEN'),
+    slackChannelId: required(env, 'SLACK_CHANNEL_ID'),
+    threadTs: required(env, 'TIKTOK_BULK_HIDE_THREAD_TS_CSV')
+      .split(',').map((v) => v.trim()).filter(Boolean),
     dryRun,
     // web/injibot-action에서 라이브 검증된 값: HIDE는 40002 거절, HIDDEN/BIDDING이 실제 숨김 성공.
     operation: String(env.TIKTOK_HIDE_OPERATION || 'HIDDEN').trim(),
@@ -56,6 +65,9 @@ export function loadTikTokBulkHideConfig(env = process.env) {
     actor: String(env.TIKTOK_BULK_HIDE_ACTOR || 'bulk-tiktok-hide').trim(),
     requestDelayMs: positiveInt(env.TIKTOK_BULK_HIDE_REQUEST_DELAY_MS, 1000, 10000),
     slackUpdateDelayMs: positiveInt(env.TIKTOK_HIDDEN_SLACK_DELAY_MS, 1100, 10000),
+    tiktokCampaignNameFilter: String(env.AD_CAMPAIGN_NAME_FILTER || '빙과,쫀득바').trim(),
+    tiktokAdsLookbackDays: positiveInt(env.TIKTOK_BULK_HIDE_VERIFY_LOOKBACK_DAYS, 30, 90),
+    tiktokAdsMaxCommentsPerAdgroup: 1000,
   };
 }
 
@@ -75,6 +87,30 @@ export async function loadUnhiddenTikTokAlerts(config, fetchImpl = fetch) {
   const res = await fetchImpl(url, { headers: supabaseHeaders(config) });
   if (!res.ok) throw new Error(`Supabase read failed (${res.status})`);
   return res.json();
+}
+
+// 링크로 지정된 부모 스레드의 답글만 scope로 사용한다. 서로 다른 플랫폼 카드가 섞인
+// 인지 광고 스레드이므로 이후 DB source=tiktok_ads 조건과 교차해야 한다.
+export async function loadScopedSlackMessages(config, fetchImpl = fetch) {
+  const messages = new Map();
+  for (const threadTs of config.threadTs) {
+    let cursor = '';
+    do {
+      const url = new URL('https://slack.com/api/conversations.replies');
+      url.searchParams.set('channel', config.slackChannelId);
+      url.searchParams.set('ts', threadTs);
+      url.searchParams.set('limit', '200');
+      if (cursor) url.searchParams.set('cursor', cursor);
+      const res = await fetchImpl(url, { headers: { Authorization: `Bearer ${config.slackBotToken}` } });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload.ok) throw new Error(`Slack thread read failed (${payload.error || res.status})`);
+      for (const message of (payload.messages || [])) {
+        if (String(message.ts) !== String(threadTs)) messages.set(String(message.ts), message);
+      }
+      cursor = String(payload.response_metadata?.next_cursor || '').trim();
+    } while (cursor);
+  }
+  return messages;
 }
 
 // TikTok comment/status/update. 성공=code 0. rate-limit(40000/40100/429) 지수 백오프.
@@ -106,7 +142,8 @@ export async function hideWithIsolation(config, ids, fetchImpl, sleep, result) {
   const r = await hideTikTokCommentBatch(config, ids, fetchImpl, sleep);
   if (r.ok) return ids;
   if (ids.length === 1) {
-    result.failed.push({ commentId: ids[0], code: r.code, error: r.message });
+    // comment_id는 Actions 로그/요약에 남기지 않는다.
+    result.failed.push({ code: r.code, error: r.message });
     return [];
   }
   const mid = Math.floor(ids.length / 2);
@@ -139,18 +176,34 @@ function escapeMrkdwn(v) {
   return String(v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function hiddenSlackBlocks(row, now) {
-  const post = escapeMrkdwn(String(row.post_url || '').trim());
-  const comment = escapeMrkdwn(String(row.comment_text || '').slice(0, 700));
+function hiddenSlackBlocks(row, now, originalMessage = null) {
   const when = new Date(now + 9 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ');
-  return [
-    { type: 'section', text: { type: 'mrkdwn', text: `🚫 *TikTok 댓글 숨김 처리 완료*${post ? `\n<${post}|게시물 열기>` : ''}${comment ? `\n\n*댓글*\n${comment}` : ''}` } },
-    { type: 'context', elements: [{ type: 'mrkdwn', text: `*숨김 처리 🚫* · TikTok 광고계정 일괄 · ${when} KST` }] },
-  ];
+  const retained = Array.isArray(originalMessage?.blocks)
+    ? originalMessage.blocks
+      .filter((block) => block.type !== 'actions')
+      .filter((block) => !JSON.stringify(block).includes('숨김 처리 🚫'))
+      .map((block) => {
+        if (block.type !== 'section' || block.text?.type !== 'mrkdwn') return block;
+        return {
+          ...block,
+          text: {
+            ...block.text,
+            text: String(block.text.text || '').replace(/(현재상태\s*\n)(미처리[^\n]*)/u, '$1숨김 처리됨 🚫'),
+          },
+        };
+      })
+    : [];
+  if (!retained.length) {
+    const post = escapeMrkdwn(String(row.post_url || '').trim());
+    const comment = escapeMrkdwn(String(row.comment_text || '').slice(0, 700));
+    retained.push({ type: 'section', text: { type: 'mrkdwn', text: `🚫 *TikTok 댓글 숨김 처리 완료*${post ? `\n<${post}|게시물 열기>` : ''}${comment ? `\n\n*댓글*\n${comment}` : ''}` } });
+  }
+  retained.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `*숨김 처리 🚫* · TikTok 광고계정 일괄 · ${when} KST` }] });
+  return retained;
 }
 
 // 숨김된 댓글 카드를 '숨김 처리됨'으로 갱신(best-effort). 실패/누락은 집계만 하고 진행.
-export async function syncHiddenTikTokSlackCards(config, rows, fetchImpl = fetch, sleep = wait, now = Date.now()) {
+export async function syncHiddenTikTokSlackCards(config, rows, scopedMessages, fetchImpl = fetch, sleep = wait, now = Date.now()) {
   const eligible = rows.filter((r) => r.slack_channel_id && r.slack_ts);
   let updated = 0, unavailable = 0, failed = 0;
   for (let i = 0; i < eligible.length; i += 1) {
@@ -158,7 +211,12 @@ export async function syncHiddenTikTokSlackCards(config, rows, fetchImpl = fetch
     const res = await fetchImpl('https://slack.com/api/chat.update', {
       method: 'POST',
       headers: { Authorization: `Bearer ${config.slackBotToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ channel: row.slack_channel_id, ts: row.slack_ts, text: 'TikTok 댓글 숨김 처리 완료', blocks: hiddenSlackBlocks(row, now) }),
+      body: JSON.stringify({
+        channel: row.slack_channel_id,
+        ts: row.slack_ts,
+        text: String(scopedMessages.get(String(row.slack_ts))?.text || 'TikTok 댓글 숨김 처리 완료'),
+        blocks: hiddenSlackBlocks(row, now, scopedMessages.get(String(row.slack_ts))),
+      }),
     });
     const payload = await res.json().catch(() => ({}));
     if (res.ok && payload.ok) updated += 1;
@@ -169,8 +227,40 @@ export async function syncHiddenTikTokSlackCards(config, rows, fetchImpl = fetch
   return { eligible: eligible.length, updated, unavailable, failed };
 }
 
-export async function bulkHideTikTokAlerts(config = loadTikTokBulkHideConfig(), fetchImpl = fetch, now = Date.now(), sleep = wait) {
-  const alerts = await loadUnhiddenTikTokAlerts(config, fetchImpl);
+// TikTok comment/list는 광고 댓글의 공개/숨김 상태를 함께 반환한다. 상태 변경 응답(code=0)
+// 뒤에 실제 HIDDEN 상태를 재조회해 확인된 행만 DB/Slack에 완료 반영한다.
+export async function verifyHiddenTikTokComments(config, expectedIds, fetchImpl = fetch, now = Date.now()) {
+  const scanConfig = {
+    ...config,
+    tiktokApiBase: config.apiBase,
+    tiktokAccessToken: config.accessToken,
+    tiktokAdvertiserId: config.advertiserId,
+  };
+  const campaigns = filterTikTokCampaigns(
+    await fetchTikTokCampaigns(scanConfig, fetchImpl),
+    config.tiktokCampaignNameFilter,
+  );
+  const ads = await fetchTikTokAds(scanConfig, campaigns.map((c) => c.campaign_id), fetchImpl);
+  const adgroupIds = [...new Set(ads.map((a) => String(a.adgroup_id || '')).filter(Boolean))];
+  const statusById = new Map();
+  for (const adgroupId of adgroupIds) {
+    const rows = await fetchTikTokAdgroupComments(scanConfig, adgroupId, fetchImpl, now);
+    for (const row of rows) statusById.set(String(row.comment_id || ''), String(row.comment_status || '').toUpperCase());
+  }
+  const hiddenIds = [], visibleIds = [], missingIds = [];
+  for (const id of expectedIds) {
+    const status = statusById.get(String(id));
+    if (status === 'HIDDEN') hiddenIds.push(id);
+    else if (status) visibleIds.push(id);
+    else missingIds.push(id);
+  }
+  return { hiddenIds, visibleIds, missingIds, campaigns: campaigns.length, ads: ads.length, adgroups: adgroupIds.length };
+}
+
+export async function bulkHideTikTokAlerts(config = loadTikTokBulkHideConfig(), fetchImpl = fetch, now = Date.now(), sleep = wait, verifyImpl = verifyHiddenTikTokComments) {
+  const scopedMessages = await loadScopedSlackMessages(config, fetchImpl);
+  const allAlerts = await loadUnhiddenTikTokAlerts(config, fetchImpl);
+  const alerts = allAlerts.filter((a) => scopedMessages.has(String(a.slack_ts)));
   const byComment = new Map();
   for (const a of alerts) {
     const cid = String(a.comment_id);
@@ -181,12 +271,16 @@ export async function bulkHideTikTokAlerts(config = loadTikTokBulkHideConfig(), 
   if (config.limit) commentIds = commentIds.slice(0, config.limit);
   const result = {
     dryRun: config.dryRun,
+    requestedThreads: config.threadTs.length,
+    scopedSlackReplies: scopedMessages.size,
+    totalSourceUnhiddenRows: allAlerts.length,
     totalUnhiddenRows: alerts.length,
     uniqueComments: byComment.size,
     targetComments: commentIds.length,
     hidden: 0,
     dbUpdated: 0,
     failed: [],
+    verification: null,
     slack: null,
   };
   if (config.dryRun || !commentIds.length) return result;
@@ -197,14 +291,23 @@ export async function bulkHideTikTokAlerts(config = loadTikTokBulkHideConfig(), 
     hiddenIds.push(...ok);
     if (config.requestDelayMs > 0) await sleep(config.requestDelayMs);
   }
-  result.hidden = hiddenIds.length;
+  const verified = await verifyImpl(config, hiddenIds, fetchImpl, now);
+  result.verification = {
+    hidden: verified.hiddenIds.length,
+    visible: verified.visibleIds.length,
+    missing: verified.missingIds.length,
+    campaigns: verified.campaigns,
+    ads: verified.ads,
+    adgroups: verified.adgroups,
+  };
+  result.hidden = verified.hiddenIds.length;
 
-  const rowIds = hiddenIds.flatMap((cid) => (byComment.get(cid) || []).map((r) => r.id));
+  const rowIds = verified.hiddenIds.flatMap((cid) => (byComment.get(cid) || []).map((r) => r.id));
   result.dbUpdated = await persistHiddenRows(config, rowIds, fetchImpl, now);
 
-  if (config.slackBotToken && hiddenIds.length) {
-    const rows = hiddenIds.flatMap((cid) => byComment.get(cid) || []);
-    result.slack = await syncHiddenTikTokSlackCards(config, rows, fetchImpl, sleep, now);
+  if (verified.hiddenIds.length) {
+    const rows = verified.hiddenIds.flatMap((cid) => byComment.get(cid) || []);
+    result.slack = await syncHiddenTikTokSlackCards(config, rows, scopedMessages, fetchImpl, sleep, now);
   }
   return result;
 }
@@ -216,14 +319,17 @@ async function writeSummary(result) {
     '## TikTok 광고 댓글 일괄 숨김',
     '',
     `- 모드: ${result.dryRun ? 'DRY RUN(읽기전용)' : '실제 숨김'}`,
+    `- 요청 스레드: ${result.requestedThreads}개 (답글 ${result.scopedSlackReplies}개)`,
+    `- 전체 TikTok 미처리 행: ${result.totalSourceUnhiddenRows}`,
     `- 미처리 대상 행: ${result.totalUnhiddenRows} (고유 댓글 ${result.uniqueComments})`,
     `- 이번 대상 댓글: ${result.targetComments}`,
     `- 숨김 성공: ${result.hidden}`,
     `- DB 기록: ${result.dbUpdated}`,
     `- 실패: ${result.failed.length}`,
+    result.verification ? `- TikTok 상태 재확인: HIDDEN ${result.verification.hidden}, 공개 ${result.verification.visible}, 조회누락 ${result.verification.missing}` : '- TikTok 상태 재확인: (건너뜀)',
     result.slack ? `- Slack 카드: 갱신 ${result.slack.updated}/대상 ${result.slack.eligible} (누락 ${result.slack.unavailable}, 실패 ${result.slack.failed})` : '- Slack 카드: (건너뜀)',
   ];
-  if (result.failed.length) lines.push('', '### 실패 댓글(격리됨)', ...result.failed.slice(0, 20).map((f) => `- ${f.commentId}: [${f.code ?? '-'}] ${f.error}`));
+  if (result.failed.length) lines.push('', '### 실패 댓글(식별자 비공개)', ...result.failed.slice(0, 20).map((f) => `- [${f.code ?? '-'}] ${f.error}`));
   await appendFile(file, `${lines.join('\n')}\n`).catch(() => {});
 }
 
