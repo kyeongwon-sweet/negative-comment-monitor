@@ -30,6 +30,11 @@ test('loadMetaAdsConfig only requires Supabase and Slack secrets', () => {
   assert.equal(config.metaAdsProductName, 'JD');
   assert.equal(config.metaAdsChannelCategory, '인지 광고');
   assert.equal(config.metaGraphBase, 'https://graph.facebook.com/v26.0');
+  assert.equal(config.metaAdsAutoHide, false);
+  assert.equal(loadMetaAdsConfig({
+    SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc',
+    SLACK_BOT_TOKEN: 'xoxb-test', META_ADS_AUTO_HIDE: 'true',
+  }).metaAdsAutoHide, true);
 });
 
 test('awareness routing switches to the next assignee at the configured KST date', () => {

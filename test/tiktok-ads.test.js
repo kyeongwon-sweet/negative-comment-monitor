@@ -33,6 +33,11 @@ test('loadTikTokAdsConfig requires only ad adapter credentials plus shared alert
   assert.equal(config.tiktokCampaignNameFilter, '빙과');
   assert.equal(config.tiktokAdsProductName, 'JD');
   assert.equal(config.slackAssignees.awareness, 'U1');
+  assert.equal(config.tiktokAdsAutoHide, false);
+  assert.equal(loadTikTokAdsConfig({
+    SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'db', SLACK_BOT_TOKEN: 'slack',
+    TIKTOK_ACCESS_TOKEN: 'tt', TIKTOK_ADVERTISER_ID: '749', TIKTOK_ADS_AUTO_HIDE: 'true',
+  }).tiktokAdsAutoHide, true);
 });
 
 test('filterTikTokCampaigns keeps only names containing 빙과', () => {

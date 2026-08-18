@@ -55,6 +55,7 @@ export function ownerModerationConfigFromAds(config) {
     youtubeApiBase: config.youtubeApiBase,
     dryRun: false,
     singleAlert: false,
+    autoHideAllNegatives: true,
     alertChannelId: '',
     alertMessageTs: '',
     batchSize: 50,
@@ -92,11 +93,11 @@ export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl =
   };
   if (!collected.entries.length) {
     if (!config.dryRun) {
+      await autoHideYouTubeAlerts(config, summary, fetchImpl, now);
       await recordRunCost(config, {
         runKey: youtubeDailyRunKey(config, now), kstDate: kstDateKey(now), apifyUsd: 0, anthropicUsd: 0,
       }, fetchImpl);
     }
-    await autoHideYouTubeAlerts(config, summary, fetchImpl, now);
     console.error(`[youtube-ads] customers=${summary.customers} campaigns=${summary.campaigns} assets=${summary.assets} videos=${summary.videos} owned=${summary.ownedVideos || 0} external=${summary.externalVideos || 0} comments=${summary.comments} alerts=0`);
     return summary;
   }
@@ -153,6 +154,7 @@ export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl =
   console.error(`[youtube-ads] customers=${summary.customers} campaigns=${summary.campaigns} assets=${summary.assets} videos=${summary.videos} owned=${summary.ownedVideos || 0} external=${summary.externalVideos || 0} namedAds=${summary.namedAdVideos || 0} creatorAssigned=${summary.creatorAssignedVideos || 0} comments=${summary.comments} alerts=${summary.sentAlerts} managedAlerts=${summary.managedAlerts} externalAlerts=${summary.externalAlerts} llmCalls=${llmStats.calls} est=$${estimatedUsd.toFixed(5)}`);
 
   if (!config.dryRun) {
+    await autoHideYouTubeAlerts(config, summary, fetchImpl, now);
     try {
       const kstDate = kstDateKey(now);
       await recordRunCost(config, {
@@ -172,7 +174,6 @@ export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl =
       console.error('[youtube-ads] 비용 집계 실패(분류에는 영향 없음):', error.message);
     }
   }
-  await autoHideYouTubeAlerts(config, summary, fetchImpl, now);
   return summary;
 }
 

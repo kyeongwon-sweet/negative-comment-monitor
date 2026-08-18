@@ -70,6 +70,7 @@ export function loadTikTokAdsConfig(env = process.env) {
     // comment/list는 QPS 제한이 낮다. 기본은 직렬+간격으로 두고 환경변수로만 상향한다.
     tiktokAdsConcurrency: positiveInt(env.TIKTOK_ADS_CONCURRENCY, 1, 5),
     tiktokAdsRequestDelayMs: positiveInt(env.TIKTOK_ADS_REQUEST_DELAY_MS, 1000, 5000),
+    tiktokAdsAutoHide: String(env.TIKTOK_ADS_AUTO_HIDE || 'false').toLowerCase() === 'true',
   };
 }
 

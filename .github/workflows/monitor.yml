@@ -139,6 +139,7 @@ jobs:
           META_ADS_WINDOW_START: '8'
           META_ADS_WINDOW_END: '11'
           META_ADS_FORCE: ${{ github.event_name == 'workflow_dispatch' }}
+          META_ADS_AUTO_HIDE: 'true'
           DRY_RUN: 'false'
       - name: Poll TikTok awareness ad comments
         # TikTok Marketing API는 웹훅 대신 폴링. Meta와 같은 KST 8~11 자가치유 창을 사용한다.
@@ -171,6 +172,7 @@ jobs:
           TIKTOK_ADS_WINDOW_START: '8'
           TIKTOK_ADS_WINDOW_END: '11'
           TIKTOK_ADS_FORCE: ${{ github.event_name == 'workflow_dispatch' }}
+          TIKTOK_ADS_AUTO_HIDE: 'true'
           DRY_RUN: 'false'
       - name: Poll YouTube awareness ad comments
         # Google Ads 관리자 산하 활성 일반 계정에서 설정 키워드가 포함된 캠페인 영상을 찾고,

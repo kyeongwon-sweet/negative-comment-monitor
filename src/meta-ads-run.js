@@ -16,6 +16,7 @@ import {
   markMetaAdEventsFailed,
   markMetaAdEventsProcessed,
 } from './meta-ads.js';
+import { autoHideMetaAwareness } from './awareness-auto-hide.js';
 
 // 인지 광고는 '아침 배치'로만 발송한다(부정댓글 관리 시간 정렬). 단, 특정 아침 크론에 의존하면
 // GitHub이 그 크론을 드롭할 때 배치가 통째로 누락된다(실측: 아침 크론 드롭 사고). 그래서 안정적인
@@ -35,7 +36,13 @@ export async function runMetaAds(config = loadMetaAdsConfig(), fetchImpl = fetch
   const events = await loadPendingMetaAdEvents(config, 100, fetchImpl);
   const eventIds = events.map((event) => event.id);
   const summary = { pendingEvents: events.length, entries: 0, sentAlerts: 0, processedEvents: 0 };
-  if (!events.length) return summary;
+  if (!events.length) {
+    if (!config.dryRun && config.metaAdsAutoHide) {
+      summary.moderation = await autoHideMetaAwareness(config, fetchImpl, now);
+      if (summary.moderation.failed || summary.moderation.slack.failed) throw new Error('Meta awareness auto-hide failed');
+    }
+    return summary;
+  }
 
   const llmStats = { calls: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
   try {
@@ -85,6 +92,10 @@ export async function runMetaAds(config = loadMetaAdsConfig(), fetchImpl = fetch
     console.error(`[meta-ads] events=${events.length} alerts=${summary.sentAlerts} llmCalls=${llmStats.calls} est=$${estimatedUsd.toFixed(5)}`);
 
     if (!config.dryRun) {
+      if (config.metaAdsAutoHide) {
+        summary.moderation = await autoHideMetaAwareness(config, fetchImpl, now);
+        if (summary.moderation.failed || summary.moderation.slack.failed) throw new Error('Meta awareness auto-hide failed');
+      }
       summary.processedEvents = await markMetaAdEventsProcessed(config, eventIds, fetchImpl, now);
       try {
         const kstDate = kstDateKey(now);

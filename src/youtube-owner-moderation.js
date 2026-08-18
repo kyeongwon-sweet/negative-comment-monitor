@@ -179,9 +179,12 @@ const KEEP_REVIEW_DECISIONS = new Set([
   'false_positive', 'ignore', 'complete', 'approve', 'hold', 'unhide',
 ]);
 
-function alertDisposition(alert, { singleAlert = false } = {}) {
+function alertDisposition(alert, { singleAlert = false, autoHideAllNegatives = false } = {}) {
   const decision = String(alert.review_decision || '').trim().toLowerCase();
   if (decision === 'hidden') return 'hidden';
+  // 인지 광고 상시 자동 숨김은 [완료]로 카드가 정리된 댓글도 실제 플랫폼에서 숨긴다.
+  // persistHiddenRows는 사람의 결정/행위자를 덮지 않으므로 감사 이력은 그대로 남는다.
+  if (autoHideAllNegatives && ['complete', 'hide'].includes(decision)) return 'eligible';
   if (KEEP_REVIEW_DECISIONS.has(decision)) return 'human_keep';
   // [숨김] 클릭은 라우트가 먼저 decision=hide와 실제 Slack 행위자를 기록한 뒤
   // 단일 워크플로를 호출한다. 이 경우만 숨김 실행 대상으로 남긴다.
@@ -404,9 +407,13 @@ export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModera
     throw new Error(`All stored YouTube owner OAuth tokens failed (${ownerTokenFailures.length}/${owners.length})`);
   }
 
-  const candidateAlerts = alerts.filter((alert) => alertDisposition(alert, { singleAlert: config.singleAlert }) === 'eligible');
+  const dispositionOptions = {
+    singleAlert: config.singleAlert,
+    autoHideAllNegatives: config.autoHideAllNegatives,
+  };
+  const candidateAlerts = alerts.filter((alert) => alertDisposition(alert, dispositionOptions) === 'eligible');
   const mapped = await mapVideosToOwners(config, candidateAlerts, validOwners, accessTokens, fetchImpl);
-  const grouped = groupAlertsByOwner(alerts, mapped.ownerByVideo, { singleAlert: config.singleAlert });
+  const grouped = groupAlertsByOwner(alerts, mapped.ownerByVideo, dispositionOptions);
   const result = {
     dryRun: config.dryRun,
     totalAlerts: alerts.length,

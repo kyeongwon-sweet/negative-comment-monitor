@@ -59,6 +59,7 @@ export function loadMetaAdsConfig(env = process.env, now = Date.now()) {
     metaAdsInstagramUsername: String(env.META_ADS_INSTAGRAM_USERNAME || 'lalasweet_icecream').trim(),
     videoAssignees: parseVideoAssignees(env.META_AD_VIDEO_ASSIGNEES),
     dryRun: String(env.DRY_RUN || 'false').toLowerCase() === 'true',
+    metaAdsAutoHide: String(env.META_ADS_AUTO_HIDE || 'false').toLowerCase() === 'true',
     costThresholds: { apify: 2, anthropic: 0.1, total: 3 },
   };
 }

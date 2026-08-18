@@ -10,6 +10,7 @@ import { estimateUsd } from './pricing.js';
 import { maybeAlertCosts, postCostWarning, recordRunCost, sumDailyCost } from './cost.js';
 import { buildTikTokAdEntries, loadTikTokAdsConfig } from './tiktok-ads.js';
 import { inAdMorningWindow, dailyAdRunKey, hasAdRunToday } from './ad-common.js';
+import { autoHideTikTokAwareness } from './awareness-auto-hide.js';
 
 export function inTikTokAdsWindow(now = Date.now(), env = process.env) {
   return inAdMorningWindow(now, env, 'TIKTOK_ADS');
@@ -37,6 +38,10 @@ export async function runTikTokAds(config = loadTikTokAdsConfig(), fetchImpl = f
   const summary = { ...collected, entries: collected.entries.length, sentAlerts: 0 };
   if (!collected.entries.length) {
     if (!config.dryRun) {
+      if (config.tiktokAdsAutoHide) {
+        summary.moderation = await autoHideTikTokAwareness(config, fetchImpl, now);
+        if (summary.moderation.failed || summary.moderation.slack.failed) throw new Error('TikTok awareness auto-hide failed');
+      }
       await recordRunCost(config, {
         runKey: tiktokDailyRunKey(config, now), kstDate: kstDateKey(now), apifyUsd: 0, anthropicUsd: 0,
       }, fetchImpl);
@@ -90,6 +95,10 @@ export async function runTikTokAds(config = loadTikTokAdsConfig(), fetchImpl = f
   console.error(`[tiktok-ads] campaigns=${summary.campaigns} ads=${summary.ads} adgroups=${summary.adgroups} comments=${summary.comments} alerts=${summary.sentAlerts} llmCalls=${llmStats.calls} est=$${estimatedUsd.toFixed(5)}`);
 
   if (!config.dryRun) {
+    if (config.tiktokAdsAutoHide) {
+      summary.moderation = await autoHideTikTokAwareness(config, fetchImpl, now);
+      if (summary.moderation.failed || summary.moderation.slack.failed) throw new Error('TikTok awareness auto-hide failed');
+    }
     try {
       const kstDate = kstDateKey(now);
       await recordRunCost(config, {

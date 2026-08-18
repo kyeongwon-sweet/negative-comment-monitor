@@ -1,0 +1,35 @@
+name: Awareness ad negative comment auto-hide
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Enter AUTO_HIDE_ALL_AWARENESS_NEGATIVES
+        required: true
+        type: string
+
+jobs:
+  hide:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - run: node src/awareness-auto-hide-run.js
+        env:
+          AWARENESS_AUTO_HIDE_CONFIRM: ${{ inputs.confirmation }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_AWARENESS: ${{ vars.SLACK_ASSIGNEE_AWARENESS }}
+          META_GRAPH_BASE: https://graph.facebook.com/v26.0
+          META_TOKEN_KIND: ig_ads
+          TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
+          TIKTOK_ADVERTISER_ID: ${{ vars.TIKTOK_ADVERTISER_ID }}
+          AD_CAMPAIGN_NAME_FILTER: ${{ vars.AD_CAMPAIGN_NAME_FILTER }}

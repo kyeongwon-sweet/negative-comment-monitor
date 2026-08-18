@@ -82,6 +82,14 @@ test('영상 소유 채널별로 알림을 나누고 누락 사유를 집계한�
     { post_url: 'https://youtube.com/watch?v=videoA1', comment_id: 'c7', review_decision: 'hide', reviewed_by: 'U3' },
   ], new Map([['videoA1', 'ownerA']]), { singleAlert: true });
   assert.equal(single.groups.get('ownerA').length, 1);
+
+  const automatic = groupAlertsByOwner([
+    { post_url: 'https://youtube.com/watch?v=videoA1', comment_id: 'c6', review_decision: 'complete', reviewed_by: 'U2' },
+    { post_url: 'https://youtube.com/watch?v=videoA1', comment_id: 'c7', review_decision: 'hide', reviewed_by: 'U3' },
+    { post_url: 'https://youtube.com/watch?v=videoA1', comment_id: 'c8', review_decision: 'false_positive', reviewed_by: 'U4' },
+  ], new Map([['videoA1', 'ownerA']]), { autoHideAllNegatives: true });
+  assert.deepEqual(automatic.groups.get('ownerA').map((row) => row.comment_id), ['c6', 'c7']);
+  assert.equal(automatic.skippedHumanDecision, 1);
 });
 
 test('현재 노출 댓글만 소유자 토큰으로 rejected 처리하고 성공 행만 DB 갱신한다', async () => {
