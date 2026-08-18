@@ -10,6 +10,11 @@ on:
         type: choice
         options: ['7', '14', '30', '90']
         default: '30'
+      video_ids:
+        description: Optional comma-separated YouTube video IDs (empty = all campaign videos)
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: youtube-ad-comment-full-survey
@@ -51,4 +56,5 @@ jobs:
           YOUTUBE_ADS_CHANNEL_CATEGORY: 인지 광고
           YOUTUBE_ADS_LOOKBACK_DAYS: ${{ inputs.lookback_days }}
           YOUTUBE_ADS_MAX_THREAD_PAGES: '100'
+          YOUTUBE_ADS_TARGET_VIDEO_IDS: ${{ inputs.video_ids }}
           DRY_RUN: 'true'

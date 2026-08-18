@@ -57,6 +57,7 @@ export function loadYouTubeAdsConfig(env = process.env) {
     youtubeApiBase: String(env.YOUTUBE_API_BASE || DEFAULT_YOUTUBE_API_BASE).trim().replace(/\/$/, ''),
     youtubeAdsChannelId: String(env.YOUTUBE_ADS_CHANNEL_ID || '').trim(),
     youtubeAdsCampaignNameFilter: String(env.AD_CAMPAIGN_NAME_FILTER || '빙과').trim(),
+    youtubeAdsTargetVideoIds: parseCsv(env.YOUTUBE_ADS_TARGET_VIDEO_IDS),
     youtubeAdsProductName: String(env.YOUTUBE_ADS_PRODUCT_NAME || 'JD').trim(),
     youtubeAdsChannelCategory: String(env.YOUTUBE_ADS_CHANNEL_CATEGORY || '인지 광고').trim(),
     youtubeAdsLookbackDays: positiveInt(env.YOUTUBE_ADS_LOOKBACK_DAYS, 14, 90),
@@ -387,7 +388,9 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
     assets.push(...await fetchYouTubeVideoAssets(config, customerId, matching, adsToken, fetchImpl));
   }
   const byVideo = new Map();
+  const targetVideoIds = new Set(config.youtubeAdsTargetVideoIds || []);
   for (const asset of assets) {
+    if (targetVideoIds.size && !targetVideoIds.has(String(asset.videoId))) continue;
     if (!byVideo.has(asset.videoId)) byVideo.set(asset.videoId, {
       ...asset,
       campaignIds: [],

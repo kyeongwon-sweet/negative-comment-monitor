@@ -45,6 +45,7 @@ test('loadYouTubeAdsConfig separates Google Ads and channel-owner refresh tokens
   assert.equal(config.googleAdsRefreshToken, 'ads');
   assert.equal(config.youtubeRefreshToken, 'youtube');
   assert.equal(config.youtubeAdsCampaignNameFilter, '빙과');
+  assert.deepEqual(config.youtubeAdsTargetVideoIds, []);
   assert.equal(config.slackAssignees.awareness, 'U1');
   assert.equal(config.youtubeAdsAlertDelayMs, 0);
   assert.equal(config.youtubeAdsSlackRetries, 5);
