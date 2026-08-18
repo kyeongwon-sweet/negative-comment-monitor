@@ -35,6 +35,7 @@ test('상시 자동 숨김은 미처리만, 명시적 백로그 정리는 hide/c
     { id: 5, comment_id: 'ignore', review_decision: 'ignore', reviewed_by: 'U4' },
     { id: 6, comment_id: 'hidden', review_decision: 'hidden' },
     { id: 7, comment_id: 'abnormal', review_decision: null, reviewed_by: 'U5' },
+    { id: 8, comment_id: 'unhide', review_decision: 'unhide', reviewed_by: 'U6' },
   ];
   const fetchImpl = async () => response(200, rows);
   assert.deepEqual(

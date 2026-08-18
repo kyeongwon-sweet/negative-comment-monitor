@@ -208,6 +208,15 @@ function hiddenSlackBlocks(row, now, originalMessage = null) {
     const comment = escapeMrkdwn(String(row.comment_text || '').slice(0, 700));
     retained.push({ type: 'section', text: { type: 'mrkdwn', text: `🚫 *TikTok 댓글 숨김 처리 완료*${post ? `\n<${post}|게시물 열기>` : ''}${comment ? `\n\n*댓글*\n${comment}` : ''}` } });
   }
+  retained.push({
+    type: 'actions',
+    elements: [{
+      type: 'button',
+      text: { type: 'plain_text', text: '숨김해제' },
+      action_id: 'unhide',
+      value: JSON.stringify({ source: 'tiktok_ads' }),
+    }],
+  });
   retained.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `*숨김 처리 🚫* · TikTok 광고계정 일괄 · ${when} KST` }] });
   return retained;
 }

@@ -5,6 +5,7 @@ const DEFAULT_COMPLETED_THREAD_EMOJI = '\uC644\uB8CC\uB290\uB08C\uD45C';
 const managedActions = [['숨김', 'hide', 'danger'], ['승인', 'approve', 'primary'], ['보류', 'hold'], ['숨김해제', 'unhide']];
 const externalActions = [['✅ 완료', 'complete', 'primary'], ['🙈 무시', 'ignore']];
 const metaAdActions = [['숨김', 'hide', 'danger'], ['🙈 무시', 'ignore']];
+const tiktokAdActions = [['숨김', 'hide', 'danger'], ['숨김해제', 'unhide'], ['🙈 무시', 'ignore']];
 
 function button([text, actionId, style], value) {
   return { type: 'button', text: { type: 'plain_text', text }, action_id: actionId, value, ...(style ? { style } : {}) };
@@ -13,7 +14,8 @@ function button([text, actionId, style], value) {
 export function actionDefinitions(target, managedCategories) {
   // 광고(메타·틱톡·유튜브) 댓글은 플랫폼 API로 숨김 가능 → [숨김]/[무시].
   // YouTube는 Vercel이 검증된 channel+ts만 Actions에 전달하고, 소유자 OAuth로 비동기 숨김한다.
-  if (['meta_ads', 'tiktok_ads', 'youtube_ads'].includes(target?.source)) return metaAdActions;
+  if (target?.source === 'tiktok_ads') return tiktokAdActions;
+  if (['meta_ads', 'youtube_ads'].includes(target?.source)) return metaAdActions;
   return isManagedChannel(target, managedCategories) ? managedActions : externalActions;
 }
 

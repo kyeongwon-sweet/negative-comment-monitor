@@ -25,7 +25,7 @@ test('Meta ad alerts expose only human hide and ignore actions', () => {
   assert.deepEqual(actionDefinitions({ source: 'meta_ads', channelCategory: '인지 광고' }).map((item) => item[1]), ['hide', 'ignore']);
 });
 test('TikTok ad alerts also expose hide and ignore (API 숨김 가능)', () => {
-  assert.deepEqual(actionDefinitions({ source: 'tiktok_ads', channelCategory: '인지 광고' }).map((item) => item[1]), ['hide', 'ignore']);
+  assert.deepEqual(actionDefinitions({ source: 'tiktok_ads', channelCategory: '인지 광고' }).map((item) => item[1]), ['hide', 'unhide', 'ignore']);
 });
 
 test('YouTube ad alerts expose hide and ignore after owner OAuth connection', () => {

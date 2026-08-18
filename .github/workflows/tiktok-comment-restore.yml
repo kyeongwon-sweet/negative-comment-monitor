@@ -1,0 +1,37 @@
+name: TikTok single ad comment restore
+
+on:
+  workflow_dispatch:
+    inputs:
+      alert_id:
+        description: Supabase negative_comment_alerts row ID (never pass a comment ID)
+        required: true
+        type: string
+      confirmation:
+        description: Enter RESTORE_TIKTOK_AD_COMMENT
+        required: true
+        type: string
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Restore one DB-backed TikTok ad comment
+        run: node src/tiktok-comment-restore.js
+        env:
+          TIKTOK_RESTORE_ALERT_ID: ${{ inputs.alert_id }}
+          TIKTOK_RESTORE_CONFIRM: ${{ inputs.confirmation }}
+          TIKTOK_ADVERTISER_ID: ${{ vars.TIKTOK_ADVERTISER_ID }}
+          TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
+          TIKTOK_HIDE_AD_TYPE: BIDDING
+          AD_CAMPAIGN_NAME_FILTER: ${{ vars.AD_CAMPAIGN_NAME_FILTER }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
