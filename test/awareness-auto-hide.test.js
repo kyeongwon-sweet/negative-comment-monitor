@@ -95,7 +95,7 @@ test('Meta Slack 일시 실패는 DB 완료 처리를 보류해 다음 회차 �
   assert.equal(patched, false);
 });
 
-test('Meta #100/33은 이미 삭제·숨김된 비노출 댓글로 수렴하고 다른 권한 오류는 실패로 남긴다', async () => {
+test('Meta #100/33은 Slack에 비노출만 표시하고 hidden 감사값은 위조하지 않는다', async () => {
   const patched = [];
   const slackBodies = [];
   const fetchImpl = async (input, init = {}) => {
@@ -121,9 +121,9 @@ test('Meta #100/33은 이미 삭제·숨김된 비노출 댓글로 수렴하고 
   assert.equal(result.hidden, 0);
   assert.equal(result.unavailable, 1);
   assert.equal(result.failed, 1);
-  assert.equal(result.dbUpdated, 1);
+  assert.equal(result.dbUpdated, 0);
   assert.match(slackBodies[0].text, /비노출/);
-  assert.equal(patched[0].review_decision, 'hidden');
+  assert.equal(patched.length, 0);
 });
 
 test('TikTok 자동 숨김은 실패 댓글만 격리하고 성공한 미처리 행만 기록한다', async () => {

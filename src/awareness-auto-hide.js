@@ -133,17 +133,18 @@ export async function autoHideMetaAwareness(
       && Number(payload.error?.error_subcode) === 33
     ) {
       // Meta #100/33은 객체가 이미 삭제·숨김됐거나 더는 로드할 수 없다는 뜻이다.
-      // 공개 노출 가능 댓글이 아니므로 YouTube의 unavailable 수렴과 동일하게 해결 처리한다.
+      // Slack에는 비노출 사실을 남기되 Graph 숨김 성공은 아니므로 DB를 hidden으로 기록하지 않는다.
       unavailable.push(...commentRows.map((row) => ({ ...row, moderationUnavailable: true })));
     } else failed.push(String(payload.error?.message || `HTTP ${response.status}`).slice(0, 160));
   }
-  const resolved = [...succeeded, ...unavailable];
-  const newRows = resolved.filter((row) => !row.review_decision && !row.reviewed_by && !row.reviewed_at);
-  const slack = newRows.length
-    ? await syncMetaSlack(config, newRows, fetchImpl, now)
+  const slackRows = [...succeeded, ...unavailable]
+    .filter((row) => !row.review_decision && !row.reviewed_by && !row.reviewed_at);
+  const slack = slackRows.length
+    ? await syncMetaSlack(config, slackRows, fetchImpl, now)
     : { updated: 0, unavailable: 0, failed: 0 };
   // Slack 일시 장애면 DB를 완료 처리하지 않아 다음 회차가 API(멱등)+Slack을 함께 재시도한다.
-  const dbUpdated = slack.failed ? 0 : await persistAutoHidden(config, 'meta_ads', resolved, fetchImpl, now);
+  // #100/33 행은 실제 숨김 성공이 아니므로 감사값 null을 보존한다.
+  const dbUpdated = slack.failed ? 0 : await persistAutoHidden(config, 'meta_ads', succeeded, fetchImpl, now);
   return {
     actionable: rows.length,
     hidden: new Set(succeeded.map((row) => String(row.comment_id))).size,
