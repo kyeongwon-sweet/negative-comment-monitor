@@ -12,7 +12,7 @@ import { estimateUsd } from './pricing.js';
 import { computeClassifierHash, purgeCache } from './cache.js';
 import { falsePositiveStats } from './review.js';
 import { ensureDailyThread, markCompletedThreads, cleanupOrphanedCopyMessages } from './threads.js';
-import { assigneeForTarget, productGroup, productLabel } from './slack.js';
+import { assigneeForTarget, productGroup, productLabel, hasProductName } from './slack.js';
 import { APIFY_LOW_BALANCE_USD, DEFAULT_COST_THRESHOLDS, estimateApifyUsd, fetchApifyUsage, maybeAlertApifyLow, maybeAlertCosts, postApifyLowWarning, postCostWarning, recordRunCost, runKey, sumDailyCost } from './cost.js';
 
 export async function runMonitor(config = loadConfig()) {
@@ -191,6 +191,11 @@ export async function runMonitor(config = loadConfig()) {
   const viralCopyGroups = new Map(); // key: `${threadTs}||${업체}` → { threadTs, company, items:[{url,nickname,text}] }
   for (let e = 0; e < entries.length; e += 1) {
     const { target, comments } = entries[e];
+    // 상품명이 없는 제품(위성/온드 등 미지정)은 부정댓글 알림을 보내지 않는다(스레드도 생성 안 함).
+    if (!hasProductName(target)) {
+      if (comments.length) console.error(`[skip:no-product] ${target.platform} | ${target.url || target.channelName || ''}`);
+      continue;
+    }
     const risks = risksPerEntry[e] || [];
     const classified = comments.map((comment, idx) => ({ ...comment, risk: risks[idx] || { alert: false } }));
     const alerts = classified.filter((comment) => comment.risk.alert);

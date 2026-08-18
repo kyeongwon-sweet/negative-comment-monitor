@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { actionDefinitions, assigneeForChannelCategory, assigneeForTarget, buildAlertBlocks, buildViralCopyMessage, commentDeepLink, productGroup, productLabel, sendAlert, verifySlackSignature, videoAssigneeFromAdTitle } from '../src/slack.js';
+import { actionDefinitions, assigneeForChannelCategory, assigneeForTarget, buildAlertBlocks, buildViralCopyMessage, commentDeepLink, hasProductName, productGroup, productLabel, sendAlert, verifySlackSignature, videoAssigneeFromAdTitle } from '../src/slack.js';
 
 const assignees = {
   satellite: 'U_SATELLITE',
@@ -43,6 +43,15 @@ test('routes channel categories to the requested Slack assignees', () => {
   assert.equal(assigneeForChannelCategory('유상협찬', assignees), 'U_SPONSORSHIP');
   assert.equal(assigneeForChannelCategory('PPL', assignees), 'U_OTHER');
 });
+test('hasProductName: 상품명 없으면 false(빈값·공백·미지정), 있으면 true(기타 명명 포함)', () => {
+  assert.equal(hasProductName({ productName: '' }), false);
+  assert.equal(hasProductName({ productName: '   ' }), false);
+  assert.equal(hasProductName({}), false);
+  assert.equal(hasProductName(null), false);
+  assert.equal(hasProductName({ productName: 'JD멜' }), true);
+  assert.equal(hasProductName({ productName: 'DB혼' }), true); // 라벨은 기타지만 상품명은 있음 → 제외 안 함
+});
+
 test('productGroup: JD 포함=jd, P로 시작=p, 그 외=other', () => {
   assert.equal(productGroup('JD멜'), 'jd');
   assert.equal(productGroup('JD망'), 'jd');

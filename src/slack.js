@@ -56,6 +56,13 @@ export function productLabel(group) {
   return '기타';
 }
 
+// 상품명이 있는지(공백 제외). 상품명이 없는 제품(위성/온드 등 미지정)은 부정댓글 알림 대상에서 제외한다.
+// 주의: '기타' 라벨은 빈 상품명 + 이름은 있으나 미매칭(듬뿍바 DB/C/ZB/BA 등)을 함께 포함하므로,
+// 라벨('기타')이 아니라 상품명 원본이 비었는지로 판정해야 명명된 기타 제품을 잘못 제외하지 않는다.
+export function hasProductName(target) {
+  return String(target?.productName || '').trim().length > 0;
+}
+
 // 담당자 라우팅 = (상품군 × 채널카테고리).
 //   - JD/P 상품의 지정 조합은 해당 담당자로.
 //   - 그 외(기타 제품 DB·C·ZB·BA 등 + 기타 채널 + 미지정 조합)는 모두 담당자 other(황경원).
