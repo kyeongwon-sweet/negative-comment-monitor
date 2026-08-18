@@ -1,0 +1,45 @@
+name: TikTok bulk comment hide
+
+# 틱톡 광고 부정댓글(미처리분) 일괄 숨김. 기본 dry-run(읽기전용). 실제 숨김은 dry_run=false +
+# confirmation=HIDE_ALL_TIKTOK_AD_ALERTS 둘 다 필요(오발 방지). limit로 샘플 소량 검증 권장.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 읽기전용 집계. 승인 후에만 false로.
+        required: true
+        default: true
+        type: boolean
+      confirmation:
+        description: 실제 숨김이면 HIDE_ALL_TIKTOK_AD_ALERTS 입력
+        required: false
+        type: string
+      limit:
+        description: 이번에 숨길 최대 댓글 수(0=전체). 샘플 검증 시 3 등으로.
+        required: false
+        default: '0'
+        type: string
+
+jobs:
+  hide:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Bulk-hide TikTok ad comments
+        run: node src/tiktok-bulk-hide.js
+        env:
+          TIKTOK_ADVERTISER_ID: ${{ vars.TIKTOK_ADVERTISER_ID }}
+          TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          TIKTOK_BULK_HIDE_DRY_RUN: ${{ inputs.dry_run }}
+          TIKTOK_BULK_HIDE_CONFIRM: ${{ inputs.confirmation }}
+          TIKTOK_BULK_HIDE_LIMIT: ${{ inputs.limit }}
+          TIKTOK_BULK_HIDE_ACTOR: bulk-tiktok-hide
