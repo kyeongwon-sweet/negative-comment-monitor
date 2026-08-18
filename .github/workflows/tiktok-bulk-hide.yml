@@ -24,7 +24,7 @@ on:
         required: true
         type: string
       audit_only:
-        description: 이미 처리된 행까지 TikTok 실제 상태 재확인(실제 숨김 API는 호출하지 않음)
+        description: 이미 처리된 행까지 실제 상태 재확인(dry_run=false면 공개 잔여를 자동 재숨김)
         required: true
         default: false
         type: boolean

@@ -293,11 +293,52 @@ export async function bulkHideTikTokAlerts(config = loadTikTokBulkHideConfig(), 
     hidden: 0,
     dbUpdated: 0,
     failed: [],
+    repairEligibleVisible: 0,
+    repairBlockedByDecision: 0,
+    repairedVisible: 0,
+    repairStillVisible: 0,
     verification: null,
     slack: null,
   };
   if (config.auditOnly) {
-    const verified = await verifyImpl(config, commentIds, fetchImpl, now);
+    const initial = await verifyImpl(config, commentIds, fetchImpl, now);
+    const keepDecisions = new Set(['false_positive', 'ignore', 'approve', 'hold', 'unhide']);
+    const repairableVisibleIds = initial.visibleIds.filter((cid) => {
+      const rows = byComment.get(cid) || [];
+      // 같은 댓글에 사람의 keep/unhide 결정이 하나라도 있으면 fail-closed. 그 외에는
+      // DB hidden, 사람 hide/complete, 미처리 자동숨김 대상을 실제 HIDDEN으로 수렴시킨다.
+      return !rows.some((row) => keepDecisions.has(String(row.review_decision || '').trim().toLowerCase()));
+    });
+    result.repairEligibleVisible = repairableVisibleIds.length;
+    result.repairBlockedByDecision = initial.visibleIds.length - repairableVisibleIds.length;
+
+    let verified = initial;
+    if (!config.dryRun && repairableVisibleIds.length) {
+      const accepted = [];
+      for (const batch of chunk(repairableVisibleIds, config.batchSize)) {
+        accepted.push(...await hideWithIsolation(config, batch, fetchImpl, sleep, result));
+        if (config.requestDelayMs > 0) await sleep(config.requestDelayMs);
+      }
+      // API code=0은 접수 신호일 뿐이다. 전체 범위를 다시 읽어 실제 HIDDEN인 경우만
+      // 복구 성공으로 집계한다. 기존 review_decision/reviewed_by는 감사 원본이라 PATCH하지 않는다.
+      verified = await verifyImpl(config, commentIds, fetchImpl, now);
+      const initiallyVisible = new Set(repairableVisibleIds);
+      result.repairedVisible = verified.hiddenIds.filter((id) => initiallyVisible.has(id)).length;
+      result.repairStillVisible = verified.visibleIds.filter((id) => initiallyVisible.has(id)).length;
+      const missingAfterRepair = verified.missingIds.filter((id) => initiallyVisible.has(id)).length;
+      const acceptedSet = new Set(accepted);
+      const notAccepted = repairableVisibleIds.filter((id) => !acceptedSet.has(id)).length;
+      if (result.repairStillVisible) {
+        result.failed.push({ code: 'verification_visible', error: `${result.repairStillVisible} comment(s) still visible after repair` });
+      }
+      if (missingAfterRepair) {
+        result.failed.push({ code: 'verification_missing', error: `${missingAfterRepair} comment(s) missing during repair verification` });
+      }
+      // hideWithIsolation already records individual API failures without identifiers.
+      if (notAccepted && !result.failed.length) {
+        result.failed.push({ code: 'repair_not_accepted', error: `${notAccepted} comment(s) were not accepted for repair` });
+      }
+    }
     result.verification = {
       hidden: verified.hiddenIds.length,
       visible: verified.visibleIds.length,
@@ -307,8 +348,9 @@ export async function bulkHideTikTokAlerts(config = loadTikTokBulkHideConfig(), 
       adgroups: verified.adgroups,
     };
     result.hidden = verified.hiddenIds.length;
-    if (!config.dryRun && verified.hiddenIds.length) {
-      const rows = verified.hiddenIds.flatMap((cid) => byComment.get(cid) || []);
+    if (!config.dryRun && result.repairedVisible) {
+      const repaired = new Set(repairableVisibleIds.filter((id) => verified.hiddenIds.includes(id)));
+      const rows = [...repaired].flatMap((cid) => byComment.get(cid) || []);
       result.slack = await syncHiddenTikTokSlackCards(config, rows, scopedMessages, fetchImpl, sleep, now);
     }
     return result;
@@ -355,17 +397,22 @@ async function writeSummary(result) {
     `- 미처리 대상 행: ${result.totalUnhiddenRows} (고유 댓글 ${result.uniqueComments})`,
     `- 이번 대상 댓글: ${result.targetComments}`,
     `- 숨김 성공: ${result.hidden}`,
+    result.auditOnly ? `- 실제 공개 복구: 대상 ${result.repairEligibleVisible}, 성공 ${result.repairedVisible}, 여전히 공개 ${result.repairStillVisible}, 사람 결정으로 제외 ${result.repairBlockedByDecision}` : null,
     `- DB 기록: ${result.dbUpdated}`,
     `- 실패: ${result.failed.length}`,
     result.verification ? `- TikTok 상태 재확인: HIDDEN ${result.verification.hidden}, 공개 ${result.verification.visible}, 조회누락 ${result.verification.missing}` : '- TikTok 상태 재확인: (건너뜀)',
     result.slack ? `- Slack 카드: 갱신 ${result.slack.updated}/대상 ${result.slack.eligible} (누락 ${result.slack.unavailable}, 실패 ${result.slack.failed})` : '- Slack 카드: (건너뜀)',
-  ];
+  ].filter(Boolean);
   if (result.failed.length) lines.push('', '### 실패 댓글(식별자 비공개)', ...result.failed.slice(0, 20).map((f) => `- [${f.code ?? '-'}] ${f.error}`));
   await appendFile(file, `${lines.join('\n')}\n`).catch(() => {});
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   bulkHideTikTokAlerts()
-    .then(async (result) => { await writeSummary(result); console.log(JSON.stringify(result, null, 2)); })
+    .then(async (result) => {
+      await writeSummary(result);
+      console.log(JSON.stringify(result, null, 2));
+      if (result.failed.length || result.repairStillVisible) process.exitCode = 1;
+    })
     .catch((error) => { console.error(error.message); process.exitCode = 1; });
 }

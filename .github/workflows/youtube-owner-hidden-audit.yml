@@ -1,0 +1,42 @@
+name: YouTube owner hidden comment audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Read-only full audit; set false only when repairing visible comments
+        required: true
+        default: true
+        type: boolean
+      repair_visible:
+        description: Re-hide comments verified as visible (requires dry_run=false)
+        required: true
+        default: false
+        type: boolean
+      confirmation:
+        description: For repair enter REHIDE_VISIBLE_YOUTUBE_AD_ALERTS
+        required: false
+        type: string
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Audit all DB-hidden YouTube ad comments with owner OAuth
+        run: node src/youtube-owner-hidden-audit.js
+        env:
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          YOUTUBE_HIDDEN_AUDIT_DRY_RUN: ${{ inputs.dry_run }}
+          YOUTUBE_HIDDEN_AUDIT_REPAIR_VISIBLE: ${{ inputs.repair_visible }}
+          YOUTUBE_HIDDEN_AUDIT_CONFIRM: ${{ inputs.confirmation }}
+          YOUTUBE_HIDDEN_AUDIT_BATCH_SIZE: '50'

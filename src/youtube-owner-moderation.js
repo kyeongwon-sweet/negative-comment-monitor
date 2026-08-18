@@ -123,7 +123,7 @@ async function googleJson(url, accessToken, fetchImpl) {
   return payload;
 }
 
-async function refreshAndVerifyOwner(config, owner, fetchImpl) {
+export async function refreshAndVerifyOwner(config, owner, fetchImpl) {
   const accessToken = await refreshGoogleAccessToken(config, owner.refreshToken, fetchImpl);
   const url = new URL(`${config.youtubeApiBase}/channels`);
   url.searchParams.set('part', 'id');
@@ -229,12 +229,62 @@ async function listVisibleCommentIds(config, ids, accessToken, fetchImpl) {
   const visible = new Set();
   for (const batch of chunk(ids, 50)) {
     const url = new URL(`${config.youtubeApiBase}/comments`);
-    url.searchParams.set('part', 'id');
+    url.searchParams.set('part', 'id,snippet');
     url.searchParams.set('id', batch.join(','));
     const payload = await googleJson(url, accessToken, fetchImpl);
-    for (const item of payload.items || []) if (item.id) visible.add(String(item.id));
+    for (const item of payload.items || []) {
+      const status = String(item.snippet?.moderationStatus || '').trim().toLowerCase();
+      if (item.id && status !== 'rejected') visible.add(String(item.id));
+    }
   }
   return visible;
+}
+
+// 전수 감사에서는 comments.list의 moderationStatus까지 읽어 실제 rejected와
+// API 목록에서 사라진 댓글(숨김 또는 삭제)을 구분한다. 댓글 ID는 반환 객체 내부에서만
+// 사용하고 CLI 결과/Actions 요약에는 절대 포함하지 않는다.
+export async function listYouTubeCommentStatesIsolated(config, ids, accessToken, fetchImpl = fetch) {
+  const result = {
+    visible: new Set(),
+    rejected: new Set(),
+    missing: new Set(),
+    failed: [],
+    channelError: null,
+  };
+  async function visit(batch) {
+    if (!batch.length || result.channelError) return;
+    try {
+      const url = new URL(`${config.youtubeApiBase}/comments`);
+      url.searchParams.set('part', 'id,snippet');
+      url.searchParams.set('id', batch.join(','));
+      const payload = await googleJson(url, accessToken, fetchImpl);
+      const returned = new Set();
+      for (const item of payload.items || []) {
+        const id = String(item.id || '');
+        if (!id) continue;
+        returned.add(id);
+        const status = String(item.snippet?.moderationStatus || '').trim().toLowerCase();
+        if (status === 'rejected') result.rejected.add(id);
+        else result.visible.add(id);
+      }
+      for (const id of batch) if (!returned.has(id)) result.missing.add(id);
+    } catch (error) {
+      if (Number(error?.status) === 403) {
+        result.channelError = errorInfo(error);
+        return;
+      }
+      if (batch.length > 1) {
+        const midpoint = Math.ceil(batch.length / 2);
+        await visit(batch.slice(0, midpoint));
+        await visit(batch.slice(midpoint));
+        return;
+      }
+      if (isUnavailableError(error)) result.missing.add(batch[0]);
+      else result.failed.push({ id: batch[0], error: errorInfo(error) });
+    }
+  }
+  for (const batch of chunk(ids, 50)) await visit(batch);
+  return result;
 }
 
 function errorInfo(error) {
@@ -294,7 +344,7 @@ async function rejectComments(config, ids, accessToken, fetchImpl) {
   throw error;
 }
 
-async function rejectCommentsIsolated(config, ids, accessToken, fetchImpl, onConfirmed) {
+export async function rejectCommentsIsolated(config, ids, accessToken, fetchImpl, onConfirmed) {
   const result = {
     confirmed: [],
     unavailable: [],
