@@ -205,6 +205,7 @@ jobs:
           YOUTUBE_ADS_WINDOW_START: '8'
           YOUTUBE_ADS_WINDOW_END: '11'
           YOUTUBE_ADS_FORCE: ${{ github.event_name == 'workflow_dispatch' }}
+          YOUTUBE_OWNER_AUTO_HIDE: 'true'
           DRY_RUN: 'false'
       - name: Notify Slack on failure
         if: ${{ failure() }}

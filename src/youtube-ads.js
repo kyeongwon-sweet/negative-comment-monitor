@@ -66,6 +66,8 @@ export function loadYouTubeAdsConfig(env = process.env) {
     // 정기 실행은 소량이므로 기본 0ms, 수동 백필 워크플로만 1.2초를 사용한다.
     youtubeAdsAlertDelayMs: nonnegativeInt(env.YOUTUBE_ADS_ALERT_DELAY_MS, 0, 10_000),
     youtubeAdsSlackRetries: positiveInt(env.YOUTUBE_ADS_SLACK_RETRIES, 5, 10),
+    // 사용자가 확정한 운영정책: 부정 판정 카드를 먼저 Slack에 보낸 뒤 소유 채널 OAuth로 자동 숨김.
+    youtubeOwnerAutoHide: String(env.YOUTUBE_OWNER_AUTO_HIDE || 'false').toLowerCase() === 'true',
   };
 }
 

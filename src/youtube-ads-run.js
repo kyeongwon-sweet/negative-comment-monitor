@@ -10,6 +10,7 @@ import { estimateUsd } from './pricing.js';
 import { maybeAlertCosts, postCostWarning, recordRunCost, sumDailyCost } from './cost.js';
 import { buildYouTubeAdEntries, loadYouTubeAdsConfig } from './youtube-ads.js';
 import { inAdMorningWindow, dailyAdRunKey, hasAdRunToday } from './ad-common.js';
+import { moderateYouTubeOwnerAlerts } from './youtube-owner-moderation.js';
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -45,6 +46,33 @@ export async function hasYouTubeAdsRunToday(config, now = Date.now(), fetchImpl 
   return hasAdRunToday(config, youtubeDailyRunKey(config, now), fetchImpl);
 }
 
+export function ownerModerationConfigFromAds(config) {
+  return {
+    googleAdsClientId: config.googleAdsClientId,
+    googleAdsClientSecret: config.googleAdsClientSecret,
+    supabaseUrl: config.supabaseUrl,
+    supabaseKey: config.supabaseKey,
+    youtubeApiBase: config.youtubeApiBase,
+    dryRun: false,
+    singleAlert: false,
+    alertChannelId: '',
+    alertMessageTs: '',
+    batchSize: 50,
+    actor: 'youtube-auto-hide-owner-oauth',
+    slackBotToken: config.slackBotToken,
+    slackUpdateDelayMs: 1100,
+  };
+}
+
+async function autoHideYouTubeAlerts(config, summary, fetchImpl, now) {
+  if (config.dryRun || !config.youtubeOwnerAutoHide) return;
+  summary.moderation = await moderateYouTubeOwnerAlerts(
+    ownerModerationConfigFromAds(config),
+    fetchImpl,
+    now,
+  );
+}
+
 export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl = fetch, now = Date.now()) {
   if (!inYouTubeAdsWindow(now)) {
     return { customers: 0, campaigns: 0, assets: 0, videos: 0, comments: 0, entries: 0, sentAlerts: 0, skipped: 'outside-morning-window' };
@@ -68,6 +96,7 @@ export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl =
         runKey: youtubeDailyRunKey(config, now), kstDate: kstDateKey(now), apifyUsd: 0, anthropicUsd: 0,
       }, fetchImpl);
     }
+    await autoHideYouTubeAlerts(config, summary, fetchImpl, now);
     console.error(`[youtube-ads] customers=${summary.customers} campaigns=${summary.campaigns} assets=${summary.assets} videos=${summary.videos} owned=${summary.ownedVideos || 0} external=${summary.externalVideos || 0} comments=${summary.comments} alerts=0`);
     return summary;
   }
@@ -143,6 +172,7 @@ export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl =
       console.error('[youtube-ads] 비용 집계 실패(분류에는 영향 없음):', error.message);
     }
   }
+  await autoHideYouTubeAlerts(config, summary, fetchImpl, now);
   return summary;
 }
 

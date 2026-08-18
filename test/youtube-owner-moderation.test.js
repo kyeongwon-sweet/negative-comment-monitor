@@ -141,6 +141,32 @@ test('현재 노출 댓글만 소유자 토큰으로 rejected 처리하고 성�
   assert.equal(calls.filter((call) => call.url.includes('/videos')).length, 1);
 });
 
+test('직전 숨김 전파가 늦어 다음 실행에서 조회불가가 된 미처리 행은 DB·Slack을 완료로 수렴한다', async () => {
+  const alert = {
+    id: 21, comment_id: 'delayedA', post_url: 'https://youtube.com/watch?v=videoA1',
+    review_decision: null, reviewed_by: null, reviewed_at: null,
+  };
+  let patches = 0;
+  const result = await moderateYouTubeOwnerAlerts(config(), async (input, init = {}) => {
+    const url = String(input);
+    if (url.includes('/rest/v1/meta_tokens')) return response(200, [{ kind: 'youtube_owner:ownerA', token: 'refreshA' }]);
+    if (url.includes('/rest/v1/negative_comment_alerts') && (!init.method || init.method === 'GET')) return response(200, [alert]);
+    if (url.includes('oauth2.googleapis.com')) return response(200, { access_token: 'accessA' });
+    if (url.includes('/channels')) return response(200, { items: [{ id: 'ownerA' }] });
+    if (url.includes('/videos')) return response(200, { items: [{ id: 'videoA1', snippet: { channelId: 'ownerA' } }] });
+    if (url.includes('/comments?')) return response(200, { items: [] });
+    if (url.includes('/rest/v1/negative_comment_alerts') && init.method === 'PATCH') {
+      patches += 1;
+      return response(200, [{ id: 21 }]);
+    }
+    throw new Error(`unexpected ${url}`);
+  });
+  assert.equal(result.unavailableOrAlreadyHidden, 1);
+  assert.equal(result.dbUpdated, 1);
+  assert.equal(patches, 1);
+  assert.equal(result.attempted, 0);
+});
+
 test('사람이 누른 YouTube 숨김은 실제 처리하되 review_decision과 행위자를 덮지 않는다', async () => {
   const calls = [];
   let rejected = false;

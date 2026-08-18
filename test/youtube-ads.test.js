@@ -5,7 +5,7 @@ import {
   fetchMatchingGoogleAdsCampaigns,
   loadYouTubeAdsConfig,
 } from '../src/youtube-ads.js';
-import { hasYouTubeAdsRunToday, inYouTubeAdsWindow, retrySlackRateLimit, youtubeDailyRunKey } from '../src/youtube-ads-run.js';
+import { hasYouTubeAdsRunToday, inYouTubeAdsWindow, ownerModerationConfigFromAds, retrySlackRateLimit, youtubeDailyRunKey } from '../src/youtube-ads-run.js';
 
 const CFG = {
   googleAdsApiBase: 'https://googleads.test',
@@ -48,6 +48,18 @@ test('loadYouTubeAdsConfig separates Google Ads and channel-owner refresh tokens
   assert.equal(config.slackAssignees.awareness, 'U1');
   assert.equal(config.youtubeAdsAlertDelayMs, 0);
   assert.equal(config.youtubeAdsSlackRetries, 5);
+  assert.equal(config.youtubeOwnerAutoHide, false);
+});
+
+test('ownerModerationConfigFromAds reuses only server credentials for post-alert auto-hide', () => {
+  const owner = ownerModerationConfigFromAds({
+    ...CFG, supabaseUrl: 'https://db.test', supabaseKey: 'db', slackBotToken: 'slack',
+  });
+  assert.equal(owner.dryRun, false);
+  assert.equal(owner.singleAlert, false);
+  assert.equal(owner.googleAdsClientId, 'client');
+  assert.equal(owner.supabaseKey, 'db');
+  assert.equal(owner.actor, 'youtube-auto-hide-owner-oauth');
 });
 
 test('retrySlackRateLimit retries only Slack rate-limit failures', async () => {

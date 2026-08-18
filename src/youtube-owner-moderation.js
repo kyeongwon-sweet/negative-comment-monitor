@@ -473,13 +473,37 @@ export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModera
     }
     const visibilityFailed = new Set(visibility.failed.map((item) => item.id));
     const visibleIds = commentIds.filter((id) => visibility.visible.has(id));
-    const unavailable = commentIds.filter((id) => visibility.unavailable.has(id)).length;
+    const unavailableIds = commentIds.filter((id) => visibility.unavailable.has(id));
+    const unavailable = unavailableIds.length;
     ownerResult.visible = visibleIds.length;
     ownerResult.unavailableOrAlreadyHidden = unavailable;
     ownerResult.moderationFailed += visibilityFailed.size;
     result.attempted += visibleIds.length;
     result.unavailableOrAlreadyHidden += unavailable;
     result.moderationFailed += visibilityFailed.size;
+
+    // 직전 실행에서 204를 받았지만 전파 지연으로 즉시 확인되지 않았던 댓글은 다음 실행에서
+    // 여기로 들어온다. 현재 소유자 조회에서 더 이상 공개되지 않는 미처리 알림은 해결 상태로
+    // DB·Slack을 수렴시켜 버튼이 영구히 남는 문제를 막는다. 사람 결정 행은 애초 그룹에서 제외된다.
+    if (!config.dryRun && unavailableIds.length) {
+      const resolvedRows = unavailableIds.flatMap((id) => rowsByComment.get(id) || []);
+      try {
+        result.dbUpdated += await persistHiddenRows(config, resolvedRows, fetchImpl, now);
+      } catch (error) {
+        result.persistenceFailed += resolvedRows.length;
+        ownerResult.error ||= { stage: 'database-reconcile', ...errorInfo(error) };
+      }
+      if (resolvedRows.length && config.slackBotToken) {
+        try {
+          const slack = await syncHiddenYouTubeSlackCards(config, resolvedRows, fetchImpl);
+          result.slackUpdated += slack.updated;
+          result.slackUpdateFailed += slack.failed;
+        } catch (error) {
+          result.slackUpdateFailed += resolvedRows.length;
+          ownerResult.error ||= { stage: 'slack-reconcile', ...errorInfo(error) };
+        }
+      }
+    }
 
     if (!config.dryRun && visibleIds.length) {
       const onConfirmed = async (confirmedIds) => {
