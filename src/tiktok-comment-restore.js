@@ -28,7 +28,8 @@ export function loadTikTokRestoreConfig(env = process.env) {
     supabaseKey: required(env, 'SUPABASE_SERVICE_ROLE_KEY'),
     slackBotToken: String(env.SLACK_BOT_TOKEN || '').trim(),
     tiktokCampaignNameFilter: String(env.AD_CAMPAIGN_NAME_FILTER || '빙과,쫀득바').trim(),
-    tiktokAdsLookbackDays: 90,
+    // TikTok comment/list API의 허용 최대 조회 구간은 30일이다.
+    tiktokAdsLookbackDays: 30,
     tiktokAdsMaxCommentsPerAdgroup: 1000,
   };
 }

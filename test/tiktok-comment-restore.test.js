@@ -16,7 +16,7 @@ const CFG = {
   alertId: '895', advertiserId: 'adv', accessToken: 'token', apiBase: 'https://tiktok.test',
   operation: 'PUBLIC', adType: 'BIDDING', supabaseUrl: 'https://db.test', supabaseKey: 'service',
   slackBotToken: 'slack', tiktokCampaignNameFilter: '빙과,쫀득바',
-  tiktokAdsLookbackDays: 90, tiktokAdsMaxCommentsPerAdgroup: 1000,
+  tiktokAdsLookbackDays: 30, tiktokAdsMaxCommentsPerAdgroup: 1000,
 };
 
 function response(status, payload = {}) {
@@ -28,6 +28,7 @@ test('TikTok 공개 복원은 확인문구와 사람 keep 결정이 필수다', 
   const config = loadTikTokRestoreConfig({ ...BASE_ENV, TIKTOK_RESTORE_CONFIRM: TIKTOK_RESTORE_CONFIRMATION });
   assert.equal(config.operation, 'PUBLIC');
   assert.equal(config.adType, 'BIDDING');
+  assert.equal(config.tiktokAdsLookbackDays, 30);
 });
 
 test('TikTok 공개 복원은 PUBLIC/BIDDING 성공을 재확인하고 DB 결정을 쓰지 않는다', async () => {
