@@ -69,12 +69,15 @@ async function persistAutoHidden(config, source, rows, fetchImpl, now) {
 
 function metaHiddenBlocks(row, now) {
   const when = new Date(now + 9 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ');
+  const unavailable = Boolean(row.moderationUnavailable);
+  const title = unavailable ? 'Instagram 광고 댓글 비노출 확인 완료' : 'Instagram 광고 댓글 자동 숨김 완료';
+  const context = unavailable ? 'Meta에서 이미 삭제·숨김되어 조회 불가' : 'Meta Graph API 자동 숨김';
   const text = String(row.comment_text || '').slice(0, 700)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const post = String(row.post_url || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return [
-    { type: 'section', text: { type: 'mrkdwn', text: `🚫 *Instagram 광고 댓글 자동 숨김 완료*${post ? `\n<${post}|게시물 열기>` : ''}${text ? `\n\n*댓글*\n${text}` : ''}` } },
-    { type: 'context', elements: [{ type: 'mrkdwn', text: `*자동 숨김 처리 🚫* · Meta Graph API · ${when} KST` }] },
+    { type: 'section', text: { type: 'mrkdwn', text: `🚫 *${title}*${post ? `\n<${post}|게시물 열기>` : ''}${text ? `\n\n*댓글*\n${text}` : ''}` } },
+    { type: 'context', elements: [{ type: 'mrkdwn', text: `*비노출 처리 🚫* · ${context} · ${when} KST` }] },
   ];
 }
 
@@ -87,7 +90,9 @@ async function syncMetaSlack(config, rows, fetchImpl, now) {
       body: JSON.stringify({
         channel: row.slack_channel_id,
         ts: row.slack_ts,
-        text: 'Instagram 광고 댓글 자동 숨김 완료',
+        text: row.moderationUnavailable
+          ? 'Instagram 광고 댓글 비노출 확인 완료'
+          : 'Instagram 광고 댓글 자동 숨김 완료',
         blocks: metaHiddenBlocks(row, now),
       }),
     });
@@ -114,7 +119,7 @@ export async function autoHideMetaAwareness(
     if (!rowsByComment.has(id)) rowsByComment.set(id, []);
     rowsByComment.get(id).push(row);
   }
-  const succeeded = [], failed = [];
+  const succeeded = [], unavailable = [], failed = [];
   for (const [commentId, commentRows] of rowsByComment) {
     const response = await fetchImpl(
       `${config.metaGraphBase}/${encodeURIComponent(commentId)}?hide=true`,
@@ -122,17 +127,27 @@ export async function autoHideMetaAwareness(
     );
     const payload = await response.json().catch(() => ({}));
     if (response.ok && payload.success === true) succeeded.push(...commentRows);
-    else failed.push(String(payload.error?.message || `HTTP ${response.status}`).slice(0, 160));
+    else if (
+      response.status === 400
+      && Number(payload.error?.code) === 100
+      && Number(payload.error?.error_subcode) === 33
+    ) {
+      // Meta #100/33은 객체가 이미 삭제·숨김됐거나 더는 로드할 수 없다는 뜻이다.
+      // 공개 노출 가능 댓글이 아니므로 YouTube의 unavailable 수렴과 동일하게 해결 처리한다.
+      unavailable.push(...commentRows.map((row) => ({ ...row, moderationUnavailable: true })));
+    } else failed.push(String(payload.error?.message || `HTTP ${response.status}`).slice(0, 160));
   }
-  const newRows = succeeded.filter((row) => !row.review_decision && !row.reviewed_by && !row.reviewed_at);
+  const resolved = [...succeeded, ...unavailable];
+  const newRows = resolved.filter((row) => !row.review_decision && !row.reviewed_by && !row.reviewed_at);
   const slack = newRows.length
     ? await syncMetaSlack(config, newRows, fetchImpl, now)
     : { updated: 0, unavailable: 0, failed: 0 };
   // Slack 일시 장애면 DB를 완료 처리하지 않아 다음 회차가 API(멱등)+Slack을 함께 재시도한다.
-  const dbUpdated = slack.failed ? 0 : await persistAutoHidden(config, 'meta_ads', succeeded, fetchImpl, now);
+  const dbUpdated = slack.failed ? 0 : await persistAutoHidden(config, 'meta_ads', resolved, fetchImpl, now);
   return {
     actionable: rows.length,
     hidden: new Set(succeeded.map((row) => String(row.comment_id))).size,
+    unavailable: new Set(unavailable.map((row) => String(row.comment_id))).size,
     failed: failed.length,
     dbUpdated,
     slack,

@@ -66,7 +66,7 @@ test('Meta 자동 숨김은 중복 comment_id를 한 번만 호출하고 Slack �
   };
   const result = await autoHideMetaAwareness(CFG, fetchImpl, Date.parse('2026-08-18T01:00:00Z'), { includeHumanDecisions: true });
   assert.deepEqual(result, {
-    actionable: 2, hidden: 1, failed: 0, dbUpdated: 1,
+    actionable: 2, hidden: 1, unavailable: 0, failed: 0, dbUpdated: 1,
     slack: { updated: 1, unavailable: 0, failed: 0 },
   });
   assert.equal(calls.filter((call) => call.url.includes('graph.test/c1')).length, 1);
@@ -93,6 +93,37 @@ test('Meta Slack 일시 실패는 DB 완료 처리를 보류해 다음 회차 �
   assert.equal(result.slack.failed, 1);
   assert.equal(result.dbUpdated, 0);
   assert.equal(patched, false);
+});
+
+test('Meta #100/33은 이미 삭제·숨김된 비노출 댓글로 수렴하고 다른 권한 오류는 실패로 남긴다', async () => {
+  const patched = [];
+  const slackBodies = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = String(input);
+    if (url.includes('negative_comment_alerts?select=')) return response(200, [
+      { id: 1, comment_id: 'gone', review_decision: null, slack_channel_id: 'C1', slack_ts: '1.1' },
+      { id: 2, comment_id: 'denied', review_decision: null },
+    ]);
+    if (url.includes('/meta_tokens?')) return response(200, [{ token: 'META' }]);
+    if (url.includes('/gone?hide=true')) return response(400, { error: { code: 100, error_subcode: 33 } });
+    if (url.includes('/denied?hide=true')) return response(403, { error: { code: 10 } });
+    if (url.includes('slack.com/api/chat.update')) {
+      slackBodies.push(JSON.parse(init.body));
+      return response(200, { ok: true });
+    }
+    if (url.includes('negative_comment_alerts?id=in.')) {
+      patched.push(JSON.parse(init.body));
+      return response(200, [{ id: 1 }]);
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+  const result = await autoHideMetaAwareness(CFG, fetchImpl);
+  assert.equal(result.hidden, 0);
+  assert.equal(result.unavailable, 1);
+  assert.equal(result.failed, 1);
+  assert.equal(result.dbUpdated, 1);
+  assert.match(slackBodies[0].text, /비노출/);
+  assert.equal(patched[0].review_decision, 'hidden');
 });
 
 test('TikTok 자동 숨김은 실패 댓글만 격리하고 성공한 미처리 행만 기록한다', async () => {
