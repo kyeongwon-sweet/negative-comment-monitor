@@ -23,6 +23,11 @@ on:
         description: 숨김 대상 부모 스레드 ts(쉼표 구분). 지정 스레드 밖 댓글은 절대 처리하지 않음.
         required: true
         type: string
+      audit_only:
+        description: 이미 처리된 행까지 TikTok 실제 상태 재확인(실제 숨김 API는 호출하지 않음)
+        required: true
+        default: false
+        type: boolean
 
 jobs:
   hide:
@@ -45,6 +50,7 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
           TIKTOK_BULK_HIDE_THREAD_TS_CSV: ${{ inputs.thread_ts_csv }}
+          TIKTOK_BULK_HIDE_AUDIT_ONLY: ${{ inputs.audit_only }}
           AD_CAMPAIGN_NAME_FILTER: ${{ vars.AD_CAMPAIGN_NAME_FILTER }}
           TIKTOK_BULK_HIDE_DRY_RUN: ${{ inputs.dry_run }}
           TIKTOK_BULK_HIDE_CONFIRM: ${{ inputs.confirmation }}

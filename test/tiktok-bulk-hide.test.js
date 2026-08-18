@@ -16,7 +16,7 @@ const BASE_ENV = {
 const CFG = {
   advertiserId: 'adv1', accessToken: 'tok', apiBase: 'https://business-api.test/open_api/v1.3',
   supabaseUrl: 'https://db.test', supabaseKey: 'key', slackBotToken: 'slack', slackChannelId: 'C1', threadTs: ['parent1'],
-  dryRun: false, operation: 'HIDDEN', adType: 'BIDDING', batchSize: 2, limit: 0,
+  dryRun: false, auditOnly: false, operation: 'HIDDEN', adType: 'BIDDING', batchSize: 2, limit: 0,
   actor: 'bulk-tiktok-hide', requestDelayMs: 0, slackUpdateDelayMs: 0,
   tiktokCampaignNameFilter: '빙과,쫀득바', tiktokAdsLookbackDays: 30, tiktokAdsMaxCommentsPerAdgroup: 1000,
 };
@@ -93,4 +93,23 @@ test('bulkHideTikTokAlerts: 라이브는 숨김+확정분만 DB 기록, 실패�
   assert.equal(res.failed.length, 1);
   assert.equal(patched[0].review_decision, 'hidden');
   assert.equal(patched[0].reviewed_by, 'bulk-tiktok-hide'); // 확정분 actor 기록
+});
+
+test('bulkHideTikTokAlerts: 감사 모드는 이미 처리된 스레드 행을 재조회하되 숨김 API/DB를 건드리지 않는다', async () => {
+  let statusUpdates = 0;
+  const fetchImpl = async (u) => {
+    if (/conversations\.replies/.test(String(u))) return slackScope();
+    if (/review_decision,reviewed_by/.test(String(u))) return { ok: true, json: async () => [
+      { id: 1, comment_id: 'c1', slack_ts: 'reply1', review_decision: 'hidden' },
+      { id: 2, comment_id: 'c2', slack_ts: 'outside', review_decision: 'hidden' },
+    ] };
+    if (/comment\/status\/update/.test(String(u))) { statusUpdates += 1; }
+    throw new Error('unexpected ' + u);
+  };
+  const verify = async (_config, ids) => ({ hiddenIds: ids, visibleIds: [], missingIds: [], campaigns: 1, ads: 1, adgroups: 1 });
+  const result = await bulkHideTikTokAlerts({ ...CFG, auditOnly: true, dryRun: true }, fetchImpl, Date.now(), noSleep, verify);
+  assert.equal(result.targetComments, 1);
+  assert.equal(result.hidden, 1);
+  assert.equal(statusUpdates, 0);
+  assert.equal(result.dbUpdated, 0);
 });

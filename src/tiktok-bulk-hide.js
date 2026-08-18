@@ -57,6 +57,7 @@ export function loadTikTokBulkHideConfig(env = process.env) {
     threadTs: required(env, 'TIKTOK_BULK_HIDE_THREAD_TS_CSV')
       .split(',').map((v) => v.trim()).filter(Boolean),
     dryRun,
+    auditOnly: String(env.TIKTOK_BULK_HIDE_AUDIT_ONLY || 'false').toLowerCase() === 'true',
     // web/injibot-action에서 라이브 검증된 값: HIDE는 40002 거절, HIDDEN/BIDDING이 실제 숨김 성공.
     operation: String(env.TIKTOK_HIDE_OPERATION || 'HIDDEN').trim(),
     adType: String(env.TIKTOK_HIDE_AD_TYPE || 'BIDDING').trim(),
@@ -86,6 +87,15 @@ export async function loadUnhiddenTikTokAlerts(config, fetchImpl = fetch) {
     + '&source=eq.tiktok_ads&review_decision=is.null&comment_id=not.is.null&order=id.asc';
   const res = await fetchImpl(url, { headers: supabaseHeaders(config) });
   if (!res.ok) throw new Error(`Supabase read failed (${res.status})`);
+  return res.json();
+}
+
+export async function loadAllTikTokAlerts(config, fetchImpl = fetch) {
+  const url = `${config.supabaseUrl}/rest/v1/negative_comment_alerts`
+    + '?select=id,comment_id,post_url,comment_text,slack_channel_id,slack_ts,review_decision,reviewed_by,reviewed_at'
+    + '&source=eq.tiktok_ads&comment_id=not.is.null&order=id.asc';
+  const res = await fetchImpl(url, { headers: supabaseHeaders(config) });
+  if (!res.ok) throw new Error(`Supabase audit read failed (${res.status})`);
   return res.json();
 }
 
@@ -259,7 +269,9 @@ export async function verifyHiddenTikTokComments(config, expectedIds, fetchImpl 
 
 export async function bulkHideTikTokAlerts(config = loadTikTokBulkHideConfig(), fetchImpl = fetch, now = Date.now(), sleep = wait, verifyImpl = verifyHiddenTikTokComments) {
   const scopedMessages = await loadScopedSlackMessages(config, fetchImpl);
-  const allAlerts = await loadUnhiddenTikTokAlerts(config, fetchImpl);
+  const allAlerts = config.auditOnly
+    ? await loadAllTikTokAlerts(config, fetchImpl)
+    : await loadUnhiddenTikTokAlerts(config, fetchImpl);
   const alerts = allAlerts.filter((a) => scopedMessages.has(String(a.slack_ts)));
   const byComment = new Map();
   for (const a of alerts) {
@@ -271,6 +283,7 @@ export async function bulkHideTikTokAlerts(config = loadTikTokBulkHideConfig(), 
   if (config.limit) commentIds = commentIds.slice(0, config.limit);
   const result = {
     dryRun: config.dryRun,
+    auditOnly: config.auditOnly,
     requestedThreads: config.threadTs.length,
     scopedSlackReplies: scopedMessages.size,
     totalSourceUnhiddenRows: allAlerts.length,
@@ -283,6 +296,23 @@ export async function bulkHideTikTokAlerts(config = loadTikTokBulkHideConfig(), 
     verification: null,
     slack: null,
   };
+  if (config.auditOnly) {
+    const verified = await verifyImpl(config, commentIds, fetchImpl, now);
+    result.verification = {
+      hidden: verified.hiddenIds.length,
+      visible: verified.visibleIds.length,
+      missing: verified.missingIds.length,
+      campaigns: verified.campaigns,
+      ads: verified.ads,
+      adgroups: verified.adgroups,
+    };
+    result.hidden = verified.hiddenIds.length;
+    if (!config.dryRun && verified.hiddenIds.length) {
+      const rows = verified.hiddenIds.flatMap((cid) => byComment.get(cid) || []);
+      result.slack = await syncHiddenTikTokSlackCards(config, rows, scopedMessages, fetchImpl, sleep, now);
+    }
+    return result;
+  }
   if (config.dryRun || !commentIds.length) return result;
 
   const hiddenIds = [];
@@ -319,6 +349,7 @@ async function writeSummary(result) {
     '## TikTok 광고 댓글 일괄 숨김',
     '',
     `- 모드: ${result.dryRun ? 'DRY RUN(읽기전용)' : '실제 숨김'}`,
+    `- 감사 전용: ${result.auditOnly ? '예' : '아니오'}`,
     `- 요청 스레드: ${result.requestedThreads}개 (답글 ${result.scopedSlackReplies}개)`,
     `- 전체 TikTok 미처리 행: ${result.totalSourceUnhiddenRows}`,
     `- 미처리 대상 행: ${result.totalUnhiddenRows} (고유 댓글 ${result.uniqueComments})`,
