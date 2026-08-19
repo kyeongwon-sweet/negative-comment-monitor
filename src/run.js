@@ -14,10 +14,26 @@ import { falsePositiveStats } from './review.js';
 import { ensureDailyThread, markCompletedThreads, cleanupOrphanedCopyMessages } from './threads.js';
 import { assigneeForTarget, productGroup, productLabel, hasProductName } from './slack.js';
 import { APIFY_LOW_BALANCE_USD, DEFAULT_COST_THRESHOLDS, estimateApifyUsd, fetchApifyUsage, maybeAlertApifyLow, maybeAlertCosts, postApifyLowWarning, postCostWarning, recordRunCost, runKey, sumDailyCost } from './cost.js';
+import { hasAdRunToday } from './ad-common.js';
 
 export async function runMonitor(config = loadConfig()) {
   const runNow = Date.now();
-  const rawTargets = await fetchTargets(config);
+  const rawTargets = await fetchTargets(config, fetch, runNow);
+  // GAS 전면 실패 시 캐시로 degraded 운영 중이면 하루 1회 Slack 경고(원인=GAS 복구 필요).
+  if (rawTargets.degradedFallback && config.supabaseUrl && config.supabaseKey && config.slackBotToken) {
+    try {
+      const kstDate = kstDateKey(runNow);
+      const dkey = `gas-degraded:${kstDate}`;
+      if (!(await hasAdRunToday(config, dkey))) {
+        const d = rawTargets.degradedFallback;
+        const age = d.ageHours != null ? `${d.ageHours.toFixed(1)}시간 전` : '시각 미상';
+        await postThreadText(config, undefined, `:warning: *부정댓글 모니터링 degraded 모드* — GAS sponsoredTargets 전면 실패로 캐시된 대상 ${d.count}건(${age} 기준)으로 운영 중입니다. 신규 게시물 반영이 지연되니 GAS 웹앱을 점검·복구해 주세요.`);
+        await recordRunCost(config, { runKey: dkey, kstDate, apifyUsd: 0, anthropicUsd: 0 }, fetch);
+      }
+    } catch (error) {
+      console.error('[gas-degraded] 경고 발송 실패(무시):', error.message);
+    }
+  }
   const missingCategoryTargets = rawTargets.filter((target) => {
     const url = String(target.url || '').trim();
     const category = String(target.channelCategory || target.channelClassification || '').trim();

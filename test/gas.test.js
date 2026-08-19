@@ -95,6 +95,32 @@ test('fetchTargets: HTTP 오류는 상태코드 포함 throw', async () => {
   await assert.rejects(() => fetchTargets({ ...CFG, gasFetchRetries: 1 }, fetchImpl), /GAS HTTP 500/);
 });
 
+test('fetchTargets: GAS 전면 실패 + 캐시 존재 → degraded로 캐시 대상 반환', async () => {
+  const CFG2 = { ...CFG, gasFetchRetries: 1, supabaseUrl: 'https://db.test', supabaseKey: 'k' };
+  const html = '<!DOCTYPE html><html><body>err</body></html>';
+  const fetchImpl = async (url) => {
+    const u = String(url);
+    if (u.includes('gas_target_cache')) {
+      return { ok: true, json: async () => [{ targets: [{ url: 'https://www.instagram.com/p/A/' }], count: 1, fetched_at: '2026-08-19T00:00:00Z' }] };
+    }
+    return { ok: true, text: async () => html }; // GAS HTML 오류
+  };
+  const out = await fetchTargets(CFG2, fetchImpl, Date.parse('2026-08-19T02:00:00Z'));
+  assert.equal(out.length, 1);
+  assert.equal(out[0].url, 'https://www.instagram.com/p/A/');
+  assert.equal(out.degradedFallback?.source, 'gas-cache');
+  assert.equal(out.degradedFallback?.ageHours, 2);
+});
+
+test('fetchTargets: GAS 실패 + 캐시 없음이면 기존대로 throw(무단 degraded 금지)', async () => {
+  const CFG2 = { ...CFG, gasFetchRetries: 1, supabaseUrl: 'https://db.test', supabaseKey: 'k' };
+  const fetchImpl = async (url) => {
+    if (String(url).includes('gas_target_cache')) return { ok: true, json: async () => [] };
+    return { ok: true, text: async () => '<html>err</html>' };
+  };
+  await assert.rejects(() => fetchTargets(CFG2, fetchImpl, Date.now()));
+});
+
 test('fetchTargets: transient GAS HTML/404는 재시도 후 성공하면 targets 반환', async () => {
   let calls = 0;
   const cacheBusters = [];

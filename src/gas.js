@@ -67,7 +67,44 @@ export async function resolveTargetUrls(targets, fetchImpl = fetch) {
   return out;
 }
 
-export async function fetchTargets(config, fetchImpl = fetch) {
+// GAS 대상 목록 캐시(장애 대비). 성공 시 저장하고, GAS가 8회 재시도 후에도 전면 실패하면
+// 마지막 성공분으로 degraded 운영한다(GAS 자기 출력이라 정책 재현 갭이 없음). 저장은 resolve 이후분.
+// gas_target_cache: 단일 행(id int PK, targets jsonb, count int, fetched_at timestamptz).
+// ⚠️ 테이블 없거나 실패해도 무시(fail-open) — 캐시가 core 모니터링을 절대 막지 않는다.
+export async function saveTargetCache(config, targets, fetchImpl = fetch, now = Date.now()) {
+  if (!config.supabaseUrl || !config.supabaseKey || !Array.isArray(targets) || !targets.length) return;
+  try {
+    await fetchImpl(`${config.supabaseUrl}/rest/v1/gas_target_cache?on_conflict=id`, {
+      method: 'POST',
+      headers: {
+        apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`,
+        'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal',
+      },
+      body: JSON.stringify([{ id: 1, targets, count: targets.length, fetched_at: new Date(now).toISOString() }]),
+    });
+  } catch (error) {
+    console.error('[gas] 대상 캐시 저장 실패(무시):', error.message);
+  }
+}
+
+export async function loadTargetCache(config, fetchImpl = fetch) {
+  if (!config.supabaseUrl || !config.supabaseKey) return null;
+  try {
+    const res = await fetchImpl(
+      `${config.supabaseUrl}/rest/v1/gas_target_cache?id=eq.1&select=targets,count,fetched_at`,
+      { headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}` } },
+    );
+    if (!res.ok) return null;
+    const rows = await res.json();
+    const row = Array.isArray(rows) ? rows[0] : null;
+    if (!row || !Array.isArray(row.targets) || !row.targets.length) return null;
+    return { targets: row.targets, fetchedAt: row.fetched_at || '', count: row.count };
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchTargets(config, fetchImpl = fetch, now = Date.now()) {
   const baseUrl = endpoint(config.gasWebAppUrl, {
     action: 'sponsoredTargets',
     key: config.gasVerifyToken,
@@ -114,7 +151,9 @@ export async function fetchTargets(config, fetchImpl = fetch) {
           + '받은 대상으로 진행합니다(감시 누락 감지는 target-sync-watchdog).',
         );
       }
-      return resolveTargetUrls(targets, fetchImpl);
+      const resolved = await resolveTargetUrls(targets, fetchImpl);
+      await saveTargetCache(config, resolved, fetchImpl, now); // 성공분 캐시(장애 대비). best-effort.
+      return resolved;
     } catch (error) {
       lastError = error;
       if (attempt >= maxAttempts) break;
@@ -122,6 +161,18 @@ export async function fetchTargets(config, fetchImpl = fetch) {
       console.error(`[gas] sponsoredTargets 조회 실패(${attempt}/${maxAttempts}) — ${delayMs}ms 후 재시도: ${error.message}`);
       await sleep(delayMs);
     }
+  }
+  // GAS 8회 전면 실패 → 마지막 성공 캐시로 degraded 운영(있으면). 없으면 기존대로 throw.
+  const cached = await loadTargetCache(config, fetchImpl);
+  if (cached && cached.targets.length) {
+    const ageHours = cached.fetchedAt ? (now - Date.parse(cached.fetchedAt)) / 36e5 : null;
+    console.error(`[gas] GAS 전면 실패 → 캐시 대상 ${cached.targets.length}건으로 degraded 운영(${ageHours != null ? `${ageHours.toFixed(1)}h 전` : '시각미상'})`);
+    const out = cached.targets.slice();
+    out.degradedFallback = {
+      source: 'gas-cache', fetchedAt: cached.fetchedAt, ageHours, count: cached.targets.length,
+      error: String(lastError?.message || '').slice(0, 200),
+    };
+    return out;
   }
   throw lastError;
 }
