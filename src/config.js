@@ -70,6 +70,8 @@ export function loadConfig(env = process.env, now = Date.now()) {
     managedChannelCategories: String(env.MANAGED_CHANNEL_CATEGORIES || '온드미디어,위성채널').split(',').map((value) => value.trim()).filter(Boolean),
     // GAS에서 evergreen(온드/위성) 보조 상한으로 쓰인다. 낮으면 전체 대상이 조용히 잘린다.
     targetBatchSize: Number(env.TARGET_BATCH_SIZE || 1000),
+    // Apps Script가 간헐적으로 HTML 오류 페이지를 반환해도 한 회차 안에서 회복한다.
+    gasFetchRetries: Number(env.GAS_FETCH_RETRIES || 8),
     firstScanLimit: Number(env.FIRST_SCAN_LIMIT || 60),
     noSignalScanLimit: Number(env.NO_SIGNAL_SCAN_LIMIT || 20),
     deepScanLimit: Number(env.DEEP_SCAN_LIMIT || 15),

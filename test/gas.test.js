@@ -97,14 +97,17 @@ test('fetchTargets: HTTP 오류는 상태코드 포함 throw', async () => {
 
 test('fetchTargets: transient GAS HTML/404는 재시도 후 성공하면 targets 반환', async () => {
   let calls = 0;
-  const fetchImpl = async () => {
+  const cacheBusters = [];
+  const fetchImpl = async (url) => {
     calls += 1;
+    cacheBusters.push(url.searchParams.get('_cb'));
     if (calls === 1) return { ok: false, status: 404, text: async () => '<!DOCTYPE html><html>Drive temporary error</html>' };
     if (calls === 2) return { ok: true, text: async () => '<!DOCTYPE html><html>Temporary Apps Script HTML</html>' };
     return { ok: true, text: async () => JSON.stringify({ ok: true, result: { targets: [{ url: 'u2' }] } }) };
   };
   const out = await fetchTargets({ ...CFG, gasFetchRetries: 3 }, fetchImpl);
   assert.equal(calls, 3);
+  assert.equal(new Set(cacheBusters).size, 3);
   assert.deepEqual(out, [{ url: 'u2' }]);
 });
 

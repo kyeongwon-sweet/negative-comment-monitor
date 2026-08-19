@@ -68,19 +68,20 @@ export async function resolveTargetUrls(targets, fetchImpl = fetch) {
 }
 
 export async function fetchTargets(config, fetchImpl = fetch) {
-  const url = endpoint(config.gasWebAppUrl, {
+  const baseUrl = endpoint(config.gasWebAppUrl, {
     action: 'sponsoredTargets',
     key: config.gasVerifyToken,
     limit: config.targetBatchSize,
-    // Apps Script/중간 프록시가 같은 GET을 재사용하지 못하게 매 호출을 고유하게 만든다.
-    // 서버가 no-store를 반환해도 클라이언트 쪽 방어를 함께 둔다.
-    _cb: Date.now(),
   });
   const maxAttempts = Math.max(1, Number(config.gasFetchRetries || 4));
   let lastError;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const response = await fetchImpl(url, {
+      // 재시도마다 URL도 새로 만든다. 한 번 반환된 Apps Script HTML 오류 페이지가
+      // 동일 URL에 재사용되면 no-cache 헤더만으로는 복구되지 않는 경우가 있다.
+      const requestUrl = new URL(baseUrl);
+      requestUrl.searchParams.set('_cb', String((Date.now() * 10) + attempt));
+      const response = await fetchImpl(requestUrl, {
         method: 'GET',
         redirect: 'follow',
         cache: 'no-store',
