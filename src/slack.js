@@ -43,12 +43,21 @@ export function productGroup(productName) {
 }
 
 // 광고 이름 마지막 '_' 뒤 이름 = 영상 담당자. 매핑(이름→Slack ID)에서 변환, 없으면 ''.
-// 예: "[26.07]F_V_JD멜_..._260731_빙과_정요한" → 정요한 → <@ID>
+// 예(메타): "[26.07]F_V_JD멜_..._260731_빙과_정요한" → 정요한 → <@ID>
+// ⚠️ 틱톡은 광고명 끝에 고유 해시가 붙는다(예 "..._빙과_요한_dc811cf2ba") → 해시/숫자 꼬리를 벗겨
+//    실제 이름 세그먼트를 찾는다. 또 틱톡은 이름(given name)만 쓰기도 함(요한↔정요한) → 정확 일치가
+//    없으면 맵 키 중 그 이름으로 '유일하게' 끝나는 항목만 매칭(모호하면 미매칭=오태그 방지).
 export function videoAssigneeFromAdTitle(adTitle, videoAssignees = {}) {
-  const parts = String(adTitle || '').split('_');
-  const name = parts.length ? parts[parts.length - 1].trim() : '';
+  const parts = String(adTitle || '').split('_').map((s) => s.trim()).filter(Boolean);
+  if (!parts.length) return '';
+  const isTail = (s) => /^[0-9a-f]{6,}$/i.test(s) || /^\d{5,}$/.test(s); // 해시·날짜 등 꼬리
+  let idx = parts.length - 1;
+  while (idx > 0 && isTail(parts[idx])) idx -= 1;
+  const name = parts[idx];
   if (!name) return '';
-  return videoAssignees[name] || '';
+  if (videoAssignees[name]) return videoAssignees[name];              // 정확 일치(메타 풀네임)
+  const suffix = Object.keys(videoAssignees).filter((k) => k !== name && k.endsWith(name));
+  return suffix.length === 1 ? videoAssignees[suffix[0]] : '';         // 유일 접미 일치만(요한→정요한)
 }
 
 // 상품군 → 스레드 라벨(표시명). jd=쫀득바, p=파인트, 그 외=기타.

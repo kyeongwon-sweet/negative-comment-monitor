@@ -67,6 +67,13 @@ test('videoAssigneeFromAdTitle: 광고명 마지막 이름을 Slack ID로 매핑
   assert.equal(videoAssigneeFromAdTitle('a_b_없는이름', map), ''); // 미매핑 → ''
   assert.equal(videoAssigneeFromAdTitle('', map), '');
   assert.equal(videoAssigneeFromAdTitle('단일세그먼트', map), ''); // '_' 없음 → 미매핑
+  // 틱톡: 끝의 해시 꼬리 제거 + given-name(요한) 유일 접미 매칭 → 정요한
+  assert.equal(videoAssigneeFromAdTitle('TT_26.08_..._260814_빙과_요한_dc811cf2ba', map), 'U_VIDEO');
+  assert.equal(videoAssigneeFromAdTitle('...빙과_정요한_ab12cd34ef', map), 'U_VIDEO'); // 풀네임+해시
+  // 모호(접미 여러 개) → 미매칭(오태그 방지)
+  assert.equal(videoAssigneeFromAdTitle('x_유진_9f8e7d6c', { '김유진': 'U_KJ', '박유진': 'U_PJ' }), '');
+  // 이름 아닌 세그먼트(빙과)만 남으면 미매칭
+  assert.equal(videoAssigneeFromAdTitle('a_빙과_deadbeef99', map), '');
 });
 test('commentDeepLink: 인스타 게시물+숫자 댓글id → 댓글 직링크, 그 외 원본', () => {
   assert.equal(commentDeepLink('https://www.instagram.com/p/ABC/', 'instagram', '123'), 'https://www.instagram.com/p/ABC/c/123/');
