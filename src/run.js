@@ -6,7 +6,7 @@ import { detectPlatform, filterEligibleSponsorships, groupApifyTargets } from '.
 import { classifyTargetsBatched } from './hybrid-classify.js';
 import { sendAlert, buildViralCopyMessage, postThreadText } from './slack.js';
 import { filterDueTargets, isEvergreenCategory, kstDateKey } from './schedule.js';
-import { loadCommentCounts, filterChangedTargets, filterBaselineTargets, filterNoSignalRescueTargets, filterDeepScanTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
+import { loadCommentCounts, filterChangedTargets, filterBaselineTargets, filterNoSignalRescueTargets, filterDeepScanTargets, filterArchivedOrDeadTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
 import { commentFingerprint, loadRecentlyAlertedPostKeys, loadSeenFingerprints, recordAlert } from './dedup.js';
 import { estimateUsd } from './pricing.js';
 import { computeClassifierHash, purgeCache } from './cache.js';
@@ -60,7 +60,14 @@ export async function runMonitor(config = loadConfig()) {
       console.error('[schedule] Supabase 이력 조회 실패 — GAS 시각 정보로 진행:', error.message);
     }
   }
-  const dueTargets = filterDueTargets(scheduledTargets, runNow);
+  const dueTargetsAll = filterDueTargets(scheduledTargets, runNow);
+  // 보관처리(ended_at)·게시글 링크 이동 불가(not_found 연속)인 게시물은 부정댓글 알림 대상에서 제외한다.
+  // counts 미조회 시 fail-open(전부 유지). 스크레이프 전에 컷 → 비용도 절감.
+  const { kept: dueTargets, skipped: archivedOrDead } = filterArchivedOrDeadTargets(dueTargetsAll, counts, { notFoundThreshold: config.notFoundSkipThreshold });
+  if (archivedOrDead.length) {
+    const arc = archivedOrDead.filter((s) => s.reason === 'archived').length;
+    console.error(`[skip:archived-or-dead] ${archivedOrDead.length}건 제외(보관 ${arc}·죽은링크 ${archivedOrDead.length - arc})`);
+  }
 
   // 정기 확인은 댓글 수 증가분만 과금한다. 최근 부정댓글이 있는 집중 대상은
   // 대시보드 댓글 수 갱신을 기다리지 않고 15분마다 직접 수집한다.

@@ -72,6 +72,7 @@ export function loadConfig(env = process.env, now = Date.now()) {
     targetBatchSize: Number(env.TARGET_BATCH_SIZE || 1000),
     // Apps Script가 간헐적으로 HTML 오류 페이지를 반환해도 한 회차 안에서 회복한다.
     gasFetchRetries: Number(env.GAS_FETCH_RETRIES || 8),
+    notFoundSkipThreshold: Number(env.NOT_FOUND_SKIP_THRESHOLD || 2), // not_found 연속 N회 이상=죽은 링크로 보고 알림 제외
     firstScanLimit: Number(env.FIRST_SCAN_LIMIT || 60),
     noSignalScanLimit: Number(env.NO_SIGNAL_SCAN_LIMIT || 20),
     deepScanLimit: Number(env.DEEP_SCAN_LIMIT || 15),

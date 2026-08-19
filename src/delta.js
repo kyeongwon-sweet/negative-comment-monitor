@@ -30,11 +30,16 @@ export async function loadCommentCounts(config, targets, fetchImpl = fetch, now 
   const keyToId = {};
   const keyToCaption = {};
   const keyToProduct = {};
+  const keyToEnded = {};      // 게시물키 → ended_at(보관처리/종료). 있으면 부정댓글 알림 제외.
+  const keyToNotFound = {};   // 게시물키 → not_found_streak(연속 미조회=죽은 링크).
   for (let off = 0; ; off += 1000) {
-    const chunk = await sbGet(config, `sponsored_posts?select=id,url,content_summary,product_name&order=id&offset=${off}&limit=1000`, fetchImpl);
+    const chunk = await sbGet(config, `sponsored_posts?select=id,url,content_summary,product_name,ended_at,not_found_streak&order=id&offset=${off}&limit=1000`, fetchImpl);
     for (const p of chunk) {
       const k = extractPostKey(p.url);
-      if (k && !keyToId[k]) { keyToId[k] = p.id; keyToCaption[k] = p.content_summary || ''; keyToProduct[k] = p.product_name || ''; }
+      if (k && !keyToId[k]) {
+        keyToId[k] = p.id; keyToCaption[k] = p.content_summary || ''; keyToProduct[k] = p.product_name || '';
+        keyToEnded[k] = p.ended_at || null; keyToNotFound[k] = Number(p.not_found_streak || 0);
+      }
     }
     if (chunk.length < 1000) break;
   }
@@ -64,9 +69,27 @@ export async function loadCommentCounts(config, targets, fetchImpl = fetch, now 
       lastCheckedAt: id != null ? (checks[id]?.lastCheckedAt || '') : '',
       caption: k ? (keyToCaption[k] || '') : '',
       productName: k ? (keyToProduct[k] || '') : '',
+      endedAt: k ? (keyToEnded[k] || null) : null,
+      notFoundStreak: k ? (keyToNotFound[k] || 0) : 0,
     };
   }
   return out;
+}
+
+// 보관처리(ended_at 존재)·죽은 링크(not_found_streak ≥ 임계) 게시물은 부정댓글 알림 대상에서 제외한다.
+// counts 미조회(빈 객체)면 fail-open으로 전부 유지(신호 없어 잘못 스킵 방지). 임계 기본 2(연속 미조회=지속적 dead).
+export function filterArchivedOrDeadTargets(targets, counts = {}, options = {}) {
+  const notFoundThreshold = Number.isFinite(Number(options.notFoundThreshold)) ? Number(options.notFoundThreshold) : 2;
+  const kept = [];
+  const skipped = [];
+  for (const t of targets) {
+    const c = counts[t.url] || {};
+    const archived = Boolean(c.endedAt);
+    const dead = Number(c.notFoundStreak || 0) >= notFoundThreshold;
+    if (archived || dead) skipped.push({ target: t, reason: archived ? 'archived' : 'dead-link' });
+    else kept.push(t);
+  }
+  return { kept, skipped };
 }
 
 // 순수 함수: 스크레이프해야 할 대상만 남긴다.

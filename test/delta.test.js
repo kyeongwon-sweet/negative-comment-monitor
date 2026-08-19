@@ -1,6 +1,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractPostKey, filterChangedTargets, filterBaselineTargets, filterNoSignalRescueTargets, filterDeepScanTargets, summarizeDelta } from '../src/delta.js';
+import { extractPostKey, filterChangedTargets, filterBaselineTargets, filterNoSignalRescueTargets, filterDeepScanTargets, filterArchivedOrDeadTargets, summarizeDelta } from '../src/delta.js';
+
+test('filterArchivedOrDeadTargets: 보관(ended_at)·죽은링크(not_found≥임계) 제외, 나머지 유지', () => {
+  const targets = [{ url: 'a' }, { url: 'b' }, { url: 'c' }, { url: 'd' }];
+  const counts = {
+    a: { endedAt: '2026-08-10T00:00:00Z', notFoundStreak: 0 }, // 보관 → 제외
+    b: { endedAt: null, notFoundStreak: 3 },                    // 죽은링크(≥2) → 제외
+    c: { endedAt: null, notFoundStreak: 1 },                    // 1회는 임계 미만 → 유지(일시적일 수 있음)
+    d: { endedAt: null, notFoundStreak: 0 },                    // 정상 → 유지
+  };
+  const { kept, skipped } = filterArchivedOrDeadTargets(targets, counts);
+  assert.deepEqual(kept.map((t) => t.url).sort(), ['c', 'd']);
+  assert.deepEqual(skipped.map((s) => `${s.target.url}:${s.reason}`).sort(), ['a:archived', 'b:dead-link']);
+  // 임계 조정: 1회도 제외
+  assert.equal(filterArchivedOrDeadTargets(targets, counts, { notFoundThreshold: 1 }).kept.map((t) => t.url).sort().join(','), 'd');
+  // counts 미조회(빈 객체) = fail-open 전부 유지
+  assert.equal(filterArchivedOrDeadTargets(targets, {}).kept.length, 4);
+});
 
 test('extractPostKey: 플랫폼별 게시물 ID 추출', () => {
   assert.equal(extractPostKey('https://www.instagram.com/p/DaSY7BxE6pT/'), 'ig:DaSY7BxE6pT');
