@@ -4,12 +4,15 @@ import { loadYouTubeOwnerTokens, refreshAndVerifyOwner } from './youtube-owner-m
 import { YOUTUBE_SATELLITE_CHANNELS } from './youtube-satellite-oauth.js';
 
 export const YOUTUBE_OWNER_CHANNELS = Object.freeze([
-  { name: '먹짱언니', channelId: 'UCxfjcCvRPOPzo6PeAttO4Dg', channelCategory: '소유 YouTube' },
-  { name: '썰푸는앵무새', channelId: 'UCQKpvEBNiMBrGzI2f2tAFeA', channelCategory: '소유 YouTube' },
+  // 실사례 Xj9usm-lkxw(2026-07-02)를 포함하도록 기존 소유 채널은 최초 60일 창으로 본다.
+  // 신규 위성 OAuth 채널은 비용 스파이크를 막기 위해 기본 14일로 시작한다.
+  { name: '먹짱언니', channelId: 'UCxfjcCvRPOPzo6PeAttO4Dg', channelCategory: '소유 YouTube', lookbackDays: 60 },
+  { name: '썰푸는앵무새', channelId: 'UCQKpvEBNiMBrGzI2f2tAFeA', channelCategory: '소유 YouTube', lookbackDays: 60 },
   ...YOUTUBE_SATELLITE_CHANNELS.map(({ name, channelId }) => ({
     name,
     channelId,
     channelCategory: '위성채널',
+    lookbackDays: 14,
   })),
 ]);
 
@@ -35,6 +38,7 @@ function parseExtraChannels(raw) {
     name: String(row?.name || '').trim(),
     channelId: String(row?.channelId || '').trim(),
     channelCategory: String(row?.channelCategory || '소유 YouTube').trim(),
+    lookbackDays: positiveInt(row?.lookbackDays, 14, 90),
   })).filter((row) => row.channelId);
 }
 
@@ -156,7 +160,8 @@ export async function fetchRecentOwnerUploads(config, channel, accessToken, fetc
   const uploads = actual?.contentDetails?.relatedPlaylists?.uploads;
   if (!uploads) throw new Error(`Owned channel has no uploads playlist (${channel.channelId})`);
 
-  const cutoff = now - config.youtubeOwnerLookbackDays * DAY_MS;
+  const lookbackDays = positiveInt(channel.lookbackDays, config.youtubeOwnerLookbackDays, 90);
+  const cutoff = now - lookbackDays * DAY_MS;
   const playlistItems = [];
   let pageToken = '';
   for (let page = 0; page < config.youtubeOwnerMaxUploadPages; page += 1) {

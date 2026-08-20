@@ -19,7 +19,9 @@ test('owner channel config includes the two existing owners and eight satellites
   });
   assert.equal(config.youtubeOwnerChannels.length, 10);
   assert.equal(config.youtubeOwnerChannels.find((row) => row.channelId === 'UCxfjcCvRPOPzo6PeAttO4Dg').name, '먹짱언니');
+  assert.equal(config.youtubeOwnerChannels.find((row) => row.channelId === 'UCxfjcCvRPOPzo6PeAttO4Dg').lookbackDays, 60);
   assert.equal(config.youtubeOwnerChannels.find((row) => row.name === '썰박스').channelCategory, '위성채널');
+  assert.equal(config.youtubeOwnerChannels.find((row) => row.name === '썰박스').lookbackDays, 14);
   assert.equal(config.slackAssignees.jd.satellite, 'U_JD_SAT');
   assert.deepEqual(config.managedChannelCategories, ['위성채널', '소유 YouTube']);
 });
