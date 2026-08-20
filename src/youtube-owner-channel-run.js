@@ -54,6 +54,7 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
     entries: collected.entries.length,
     sentAlerts: 0,
     channelFailures: collected.channelFailures,
+    degraded: [],
   };
   const llmStats = { calls: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
   const risksPerEntry = await classifyTargetsBatched(collected.entries, config, undefined, llmStats, fetchImpl);
@@ -99,13 +100,27 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
 
   if (!config.dryRun) {
     // Slack/DB 기록까지 성공한 뒤에만 델타 기준을 전진시킨다. 중간 실패 시 다음 회차가 재수집하고 dedup이 보호한다.
-    summary.stateRowsSaved = await saveOwnerVideoStates(config, collected.stateUpdates, fetchImpl);
+    try {
+      summary.stateRowsSaved = await saveOwnerVideoStates(config, collected.stateUpdates, fetchImpl);
+    } catch (error) {
+      summary.stateRowsSaved = 0;
+      summary.degraded.push({ stage: 'state-write', error: String(error?.message || error) });
+      console.error(`[youtube-owner-channel:degraded] state-write — ${error.message}`);
+    }
     if (config.youtubeOwnerAutoHide) {
-      summary.moderation = await moderateYouTubeOwnerAlerts(
-        moderationConfig(config, collected.allowedVideoIds), fetchImpl, now,
-      );
-      if (summary.moderation.moderationFailed || summary.moderation.channelFailures) {
-        throw new Error('YouTube owner-channel auto-hide did not fully converge');
+      try {
+        summary.moderation = await moderateYouTubeOwnerAlerts(
+          moderationConfig(config, collected.allowedVideoIds), fetchImpl, now,
+        );
+        if (summary.moderation.moderationFailed || summary.moderation.channelFailures) {
+          summary.degraded.push({
+            stage: 'moderation',
+            error: `failed=${summary.moderation.moderationFailed || 0}, channelFailures=${summary.moderation.channelFailures || 0}`,
+          });
+        }
+      } catch (error) {
+        summary.degraded.push({ stage: 'moderation', error: String(error?.message || error) });
+        console.error(`[youtube-owner-channel:degraded] moderation — ${error.message}`);
       }
     }
   }
@@ -120,7 +135,15 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
   }
   console.error(`[youtube-owner-channel] channels=${summary.channels}/${summary.configuredOwners} videos=${summary.videos} due=${summary.due} unchanged=${summary.unchanged} noSignal=${summary.noSignal} comments=${summary.comments} alerts=${summary.sentAlerts} failures=${summary.channelFailures.length} est=$${estimatedUsd.toFixed(5)}`);
   if (summary.channelFailures.length) {
-    throw new Error(`YouTube owner-channel collection failed for ${summary.channelFailures.length} channel(s)`);
+    summary.degraded.push({
+      stage: 'collection',
+      error: `${summary.channelFailures.length} channel(s) failed`,
+    });
+  }
+  if (summary.degraded.length) {
+    const error = new Error(`YouTube owner-channel degraded in ${summary.degraded.map((item) => item.stage).join(', ')}`);
+    error.summary = summary;
+    throw error;
   }
   return summary;
 }
@@ -128,5 +151,10 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   runYouTubeOwnerChannels()
     .then((summary) => console.log(JSON.stringify(summary, (key, value) => key === 'allowedVideoIds' ? undefined : value, 2)))
-    .catch((error) => { console.error(error.message); process.exitCode = 1; });
+    .catch((error) => {
+      if (error.summary) console.log(JSON.stringify(error.summary, null, 2));
+      console.error(`[youtube-owner-channel:degraded] ${error.message}`);
+      // 보조 모니터 전용 코드. Workflow는 이 step만 failure로 표시하고 job 전체는 계속 진행한다.
+      process.exitCode = 2;
+    });
 }

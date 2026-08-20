@@ -74,7 +74,7 @@ export async function resolveTargetUrls(targets, fetchImpl = fetch) {
 export async function saveTargetCache(config, targets, fetchImpl = fetch, now = Date.now()) {
   if (!config.supabaseUrl || !config.supabaseKey || !Array.isArray(targets) || !targets.length) return;
   try {
-    await fetchImpl(`${config.supabaseUrl}/rest/v1/gas_target_cache?on_conflict=id`, {
+    const response = await fetchImpl(`${config.supabaseUrl}/rest/v1/gas_target_cache?on_conflict=id`, {
       method: 'POST',
       headers: {
         apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`,
@@ -82,6 +82,9 @@ export async function saveTargetCache(config, targets, fetchImpl = fetch, now = 
       },
       body: JSON.stringify([{ id: 1, targets, count: targets.length, fetched_at: new Date(now).toISOString() }]),
     });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}; apply supabase/009_gas_target_cache.sql and verify primary key (id)`);
+    }
   } catch (error) {
     console.error('[gas] 대상 캐시 저장 실패(무시):', error.message);
   }
@@ -94,12 +97,19 @@ export async function loadTargetCache(config, fetchImpl = fetch) {
       `${config.supabaseUrl}/rest/v1/gas_target_cache?id=eq.1&select=targets,count,fetched_at`,
       { headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}` } },
     );
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.error(
+        `[gas] 대상 캐시 조회 불가(무시): HTTP ${res.status}; `
+        + 'apply supabase/009_gas_target_cache.sql and verify primary key (id)',
+      );
+      return null;
+    }
     const rows = await res.json();
     const row = Array.isArray(rows) ? rows[0] : null;
     if (!row || !Array.isArray(row.targets) || !row.targets.length) return null;
     return { targets: row.targets, fetchedAt: row.fetched_at || '', count: row.count };
-  } catch {
+  } catch (error) {
+    console.error('[gas] 대상 캐시 조회 실패(무시):', error.message);
     return null;
   }
 }

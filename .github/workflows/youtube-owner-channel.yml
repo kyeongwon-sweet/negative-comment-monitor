@@ -28,7 +28,18 @@ jobs:
         with:
           node-version: 20
       - run: npm install --ignore-scripts
-      - run: npm run start:youtube-owner-channels
+      - name: Verify owner-channel schema contract
+        id: schema
+        continue-on-error: true
+        run: node src/youtube-owner-preflight.js
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      - name: Run owner-channel monitor
+        id: owner_monitor
+        if: ${{ steps.schema.outcome == 'success' }}
+        continue-on-error: true
+        run: npm run start:youtube-owner-channels
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5-20251001
@@ -48,12 +59,21 @@ jobs:
           YOUTUBE_OWNER_DEFAULT_PRODUCT_NAME: JD
           YOUTUBE_OWNER_CHANNEL_AUTO_HIDE: 'true'
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
-      - name: Notify Slack on failure
-        if: ${{ failure() }}
+      - name: Notify Slack of auxiliary degraded state
+        if: ${{ steps.schema.outcome == 'failure' || steps.owner_monitor.outcome == 'failure' }}
         continue-on-error: true
-        run: node src/notify-failure.js
+        run: node src/notify-auxiliary-degraded.js
         env:
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          AUXILIARY_COMPONENT: YouTube 소유채널 보조 모니터
+          AUXILIARY_REASON: schema=${{ steps.schema.outcome }}, monitor=${{ steps.owner_monitor.outcome }}
           FAILURE_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: Record auxiliary outcome
+        if: ${{ always() }}
+        run: |
+          echo "### YouTube owner-channel auxiliary monitor" >> "$GITHUB_STEP_SUMMARY"
+          echo "- schema: ${{ steps.schema.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- monitor: ${{ steps.owner_monitor.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- core monitor impact: none" >> "$GITHUB_STEP_SUMMARY"

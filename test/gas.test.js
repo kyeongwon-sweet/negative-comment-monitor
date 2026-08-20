@@ -1,8 +1,41 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchTargets, resolveTargetUrls } from '../src/gas.js';
+import { fetchTargets, loadTargetCache, resolveTargetUrls, saveTargetCache } from '../src/gas.js';
 
 const CFG = { gasWebAppUrl: 'https://script.google.com/x/exec', gasVerifyToken: 'tok', targetBatchSize: 300 };
+
+test('GAS 캐시 저장 스키마 오류는 core를 막지 않고 적용할 migration을 명시한다', async () => {
+  const messages = [];
+  const original = console.error;
+  console.error = (...args) => messages.push(args.join(' '));
+  try {
+    await saveTargetCache(
+      { supabaseUrl: 'https://db.test', supabaseKey: 'k' }, [{ url: 'u1' }],
+      async () => ({ ok: false, status: 400 }), Date.parse('2026-08-20T00:00:00Z'),
+    );
+  } finally {
+    console.error = original;
+  }
+  assert.match(messages.join('\n'), /009_gas_target_cache\.sql/);
+  assert.match(messages.join('\n'), /primary key \(id\)/);
+});
+
+test('GAS 캐시 조회 스키마 오류도 fail-open하고 적용할 migration을 명시한다', async () => {
+  const messages = [];
+  const original = console.error;
+  console.error = (...args) => messages.push(args.join(' '));
+  let result;
+  try {
+    result = await loadTargetCache(
+      { supabaseUrl: 'https://db.test', supabaseKey: 'k' },
+      async () => ({ ok: false, status: 404 }),
+    );
+  } finally {
+    console.error = original;
+  }
+  assert.equal(result, null);
+  assert.match(messages.join('\n'), /009_gas_target_cache\.sql/);
+});
 
 test('fetchTargets: 정상 JSON이면 targets 반환', async () => {
   let requestedUrl;
