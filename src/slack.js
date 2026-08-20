@@ -161,8 +161,11 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   // 인지 광고(메타·틱톡·유튜브) 카드는 제작자(영상담당자)만 태그한다(부모 스레드 담당자는 별도 유지).
   //   - 제작자가 매핑되면 그 사람만, 매핑 없으면 baseAssignee(awareness)로 폴백해 담당자 공란 방지.
   // 그 외 채널은 기존대로 기본 담당자 + 추가 태그.
-  const isAdComment = isAdCommentSource(target);
-  const assigneeIds = isAdComment
+  // 인지 광고 + 모든 바이럴(배너·영상) 개별 카드는 소재명의 영상 제작자만 태그한다.
+  //   - 제작자(extras)가 있으면 그 사람만, 없으면 baseAssignee로 폴백(담당자 공란 방지).
+  //   - 그 외 채널(협찬·위성·온드 등)은 기존대로 기본 담당자 + 추가 태그.
+  const isCreatorCard = isAdCommentSource(target) || isViral;
+  const assigneeIds = isCreatorCard
     ? [...new Set((extras.length ? extras : (baseAssignee ? [baseAssignee] : [])))]
     : [...new Set([baseAssignee, ...extras].filter(Boolean))];
   return [

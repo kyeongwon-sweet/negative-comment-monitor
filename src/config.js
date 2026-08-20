@@ -53,6 +53,8 @@ export function loadConfig(env = process.env, now = Date.now()) {
         viralVideo: String(env.SLACK_ASSIGNEE_P_VIRAL_VIDEO || '').trim(),
       },
     },
+    // 이름→Slack ID 맵(META_AD_VIDEO_ASSIGNEES). 바이럴 카드 소재명에서 제작자 추출·태그용. 파싱 실패=빈 맵.
+    videoAssignees: (() => { try { const m = JSON.parse(env.META_AD_VIDEO_ASSIGNEES || '{}'); return (m && typeof m === 'object') ? m : {}; } catch { return {}; } })(),
     supabaseUrl: String(env.SUPABASE_URL || '').trim().replace(/\/$/, ''),
     supabaseKey: String(env.SUPABASE_SERVICE_ROLE_KEY || '').trim(),
     deltaEnabled: String(env.DELTA_ENABLED || 'true').toLowerCase() !== 'false',

@@ -12,7 +12,7 @@ import { estimateUsd } from './pricing.js';
 import { computeClassifierHash, purgeCache } from './cache.js';
 import { falsePositiveStats } from './review.js';
 import { ensureDailyThread, markCompletedThreads, cleanupOrphanedCopyMessages } from './threads.js';
-import { assigneeForTarget, productGroup, productLabel, hasProductName } from './slack.js';
+import { assigneeForTarget, productGroup, productLabel, hasProductName, videoAssigneeFromAdTitle } from './slack.js';
 import { APIFY_LOW_BALANCE_USD, DEFAULT_COST_THRESHOLDS, estimateApifyUsd, fetchApifyUsage, maybeAlertApifyLow, maybeAlertCosts, postApifyLowWarning, postCostWarning, recordRunCost, runKey, sumDailyCost } from './cost.js';
 import { hasAdRunToday } from './ad-common.js';
 
@@ -66,12 +66,20 @@ export async function runMonitor(config = loadConfig()) {
     try {
       counts = await loadCommentCounts(config, windowedTargets);
       const recentAlerts = await loadRecentlyAlertedPostKeys(config, 3 * 60 * 60 * 1000, fetch, runNow);
-      scheduledTargets = windowedTargets.map((target) => ({
-        ...target,
-        lastCollectedAt: target.lastCollectedAt || counts[target.url]?.lastCheckedAt || '',
-        recentNegativeDetectedAt: recentAlerts.get(extractPostKey(target.url)) || target.recentNegativeDetectedAt || '',
-        productName: target.productName || counts[target.url]?.productName || '',
-      }));
+      scheduledTargets = windowedTargets.map((target) => {
+        const assetName = target.assetName || counts[target.url]?.assetName || '';
+        // 모든 바이럴(배너·영상) 카드는 소재명(asset_name)에서 영상 제작자를 추출해 태그한다.
+        const isViral = /바이럴/.test(target.channelCategory || '');
+        const creator = (isViral && assetName) ? videoAssigneeFromAdTitle(assetName, config.videoAssignees) : '';
+        return {
+          ...target,
+          lastCollectedAt: target.lastCollectedAt || counts[target.url]?.lastCheckedAt || '',
+          recentNegativeDetectedAt: recentAlerts.get(extractPostKey(target.url)) || target.recentNegativeDetectedAt || '',
+          productName: target.productName || counts[target.url]?.productName || '',
+          assetName,
+          extraAssignees: creator ? [creator] : (target.extraAssignees || []),
+        };
+      });
     } catch (error) {
       console.error('[schedule] Supabase 이력 조회 실패 — GAS 시각 정보로 진행:', error.message);
     }

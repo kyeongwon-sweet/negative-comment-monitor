@@ -103,6 +103,18 @@ test('alert card(메타 광고): 제작자 매핑 없으면 인지 광고 담당
   const noAwareness = buildAlertBlocks(target, comment, undefined, { other: 'U_OTHER' });
   assert.ok(noAwareness.some((b) => b.text?.text === '*담당자*\n<@U_OTHER>'));
 });
+test('alert card(바이럴): 소재명 제작자(extraAssignees)만 태그, 없으면 base 폴백', () => {
+  const comment = { id: 'c1', platform: 'instagram', text: '별로', risk: {} };
+  // 제작자 있으면 그 사람만(황경원/기타 base 제외)
+  const withCreator = buildAlertBlocks({ url: 'https://example.com', channelCategory: '바이럴 (영상)', productName: 'JD멜', extraAssignees: ['U_VIDEO'] }, comment, undefined, assignees);
+  assert.ok(withCreator.some((b) => b.text?.text === '*담당자*\n<@U_VIDEO>'));
+  // 제작자 매핑 없으면 base(JD 바이럴 영상 담당)로 폴백
+  const noCreator = buildAlertBlocks({ url: 'https://example.com', channelCategory: '바이럴 (영상)', productName: 'JD멜', extraAssignees: [] }, comment, undefined, assignees);
+  assert.ok(noCreator.some((b) => b.text?.text === '*담당자*\n<@U_JD_VIDEO>'));
+  // 배너도 동일
+  const banner = buildAlertBlocks({ url: 'https://example.com', channelCategory: '바이럴 (배너)', productName: 'JD멜', extraAssignees: ['U_VIDEO'] }, comment, undefined, assignees);
+  assert.ok(banner.some((b) => b.text?.text === '*담당자*\n<@U_VIDEO>'));
+});
 test('alert card(틱톡·유튜브 광고): 메타와 동일하게 제작자만 태그(awareness 카드 중복 제외)', () => {
   for (const source of ['tiktok_ads', 'youtube_ads']) {
     const blocks = buildAlertBlocks(
