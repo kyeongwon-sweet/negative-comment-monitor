@@ -62,8 +62,11 @@ jobs:
           GAS_WEB_APP_URL: ${{ secrets.GAS_WEB_APP_URL }}
           GAS_VERIFY_TOKEN: ${{ secrets.GAS_VERIFY_TOKEN }}
           APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN }}
-          # 임시 완화: tiktok 대상 급증(위성 도입)으로 기본 10분 초과 타임아웃 → 15분으로. 근본 fix는 Codex 청킹.
+          # 청크별 timeout 안전망. TikTok은 아래 50개 청킹으로 단일 대형 actor run을 방지한다.
           APIFY_RUN_TIMEOUT_MS: ${{ vars.APIFY_RUN_TIMEOUT_MS }}
+          APIFY_TIKTOK_BATCH_SIZE: '50'
+          PLATFORM_FAILURE_THRESHOLD: '3'
+          PLATFORM_FAILURE_ALERT_COOLDOWN_HOURS: '12'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5-20251001
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}

@@ -91,6 +91,11 @@ export function loadConfig(env = process.env, now = Date.now()) {
     deepScanCommentLimit: Number(env.DEEP_SCAN_COMMENT_LIMIT || 100),
     pollIntervalMs: Number(env.APIFY_POLL_INTERVAL_MS || 5000),
     runTimeoutMs: Number(env.APIFY_RUN_TIMEOUT_MS || 600000),
+    // 위성 TikTok 대량 도입 시 단일 actor 10분 초과를 막는다. 성공 청크만 기준선을 전진시킨다.
+    tiktokBatchSize: Math.max(1, Number(env.APIFY_TIKTOK_BATCH_SIZE || 50)),
+    // 단일 플랫폼 일시 실패는 fail-soft. 연속 N회째부터만 핵심 실패로 승격하고 쿨다운 동안 재알림하지 않는다.
+    platformFailureThreshold: Math.max(1, Number(env.PLATFORM_FAILURE_THRESHOLD || 3)),
+    platformFailureAlertCooldownHours: Math.max(1, Number(env.PLATFORM_FAILURE_ALERT_COOLDOWN_HOURS || 12)),
     dryRun: String(env.DRY_RUN || 'true').toLowerCase() !== 'false',
     actors: {
       instagram: { id: required(env, 'APIFY_INSTAGRAM_ACTOR_ID'), input: json(env, 'APIFY_INSTAGRAM_INPUT_JSON') },

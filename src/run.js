@@ -1,5 +1,5 @@
 import { loadConfig } from './config.js';
-import { runActor } from './apify.js';
+import { runActorBatches } from './apify.js';
 import { fetchTargets, submitResult } from './gas.js';
 import { normalizeDataset } from './normalize.js';
 import { detectPlatform, filterEligibleSponsorships, groupApifyTargets } from './routing.js';
@@ -16,6 +16,7 @@ import { assigneeForTarget, productGroup, productLabel, hasProductName, videoAss
 import { APIFY_LOW_BALANCE_USD, DEFAULT_COST_THRESHOLDS, estimateApifyUsd, fetchApifyUsage, maybeAlertApifyLow, maybeAlertCosts, postApifyLowWarning, postCostWarning, recordRunCost, runKey, sumDailyCost } from './cost.js';
 import { hasAdRunToday } from './ad-common.js';
 import { autoHideOrganicSatelliteYouTube } from './youtube-organic-auto-hide.js';
+import { recordPlatformOutcome } from './platform-health.js';
 
 export async function runMonitor(config = loadConfig()) {
   const runNow = Date.now();
@@ -165,35 +166,49 @@ export async function runMonitor(config = loadConfig()) {
       { deepScan: false, targets: platformTargets.filter((target) => !target.deepScan) },
       { deepScan: true, targets: platformTargets.filter((target) => target.deepScan) },
     ].filter((item) => item.targets.length);
-    const platformSummary = { targets: platformTargets.length, items: 0, ok: true, deepTargets: platformTargets.filter((target) => target.deepScan).length };
-    try {
-      for (const platformRun of platformRuns) {
-      const items = await runActor(config, platform, platformRun.targets, fetch, {
+    const platformSummary = {
+      targets: platformTargets.length,
+      succeededTargets: 0,
+      failedTargets: 0,
+      items: 0,
+      ok: true,
+      batches: 0,
+      failedBatches: 0,
+      deepTargets: platformTargets.filter((target) => target.deepScan).length,
+    };
+    for (const platformRun of platformRuns) {
+      const batchResult = await runActorBatches(config, platform, platformRun.targets, fetch, {
         deepScan: platformRun.deepScan,
         commentLimit: config.deepScanCommentLimit,
       });
-      const normalized = normalizeDataset(platform, items, '');
-      platformSummary.items += normalized.length;
-      apifyCommentsByPlatform[platform] = (apifyCommentsByPlatform[platform] || 0) + normalized.length;
-      const single = platformRun.targets.length === 1;   // 단일 대상 배치면 URL 없는 댓글도 그 대상 소속
-      for (const rawTarget of platformRun.targets) {
-        const target = { ...rawTarget, caption: rawTarget.caption || (counts[rawTarget.url] || {}).caption || '' };
-        const targetKey = extractPostKey(target.url);
-        const targetComments = normalized.filter((comment) => {
-          const ck = extractPostKey(comment.url);
-          if (ck && targetKey) return ck === targetKey;        // 게시물 ID로 정확 매칭(중복 귀속 방지)
-          if (single) return true;                              // 단일 대상 배치 예외
-          return comment.url && comment.url === target.url;     // 그 외 정확 URL 일치만
-        });
-        entries.push({ target, comments: targetComments });
-        scrapedTargets.push(target);   // 스크레이프 성공분만 last_count 갱신 대상
+      platformSummary.batches += batchResult.totalBatches;
+      platformSummary.failedBatches += batchResult.failures.length;
+      platformSummary.failedTargets += batchResult.failures.reduce((sum, failure) => sum + failure.targets.length, 0);
+      for (const success of batchResult.successes) {
+        const normalized = normalizeDataset(platform, success.items, '');
+        platformSummary.items += normalized.length;
+        platformSummary.succeededTargets += success.targets.length;
+        apifyCommentsByPlatform[platform] = (apifyCommentsByPlatform[platform] || 0) + normalized.length;
+        const single = success.targets.length === 1;   // 단일 대상 배치면 URL 없는 댓글도 그 대상 소속
+        for (const rawTarget of success.targets) {
+          const target = { ...rawTarget, caption: rawTarget.caption || (counts[rawTarget.url] || {}).caption || '' };
+          const targetKey = extractPostKey(target.url);
+          const targetComments = normalized.filter((comment) => {
+            const ck = extractPostKey(comment.url);
+            if (ck && targetKey) return ck === targetKey;        // 게시물 ID로 정확 매칭(중복 귀속 방지)
+            if (single) return true;                              // 단일 대상 배치 예외
+            return comment.url && comment.url === target.url;     // 그 외 정확 URL 일치만
+          });
+          entries.push({ target, comments: targetComments });
+          scrapedTargets.push(target);   // 성공 청크만 last_count 갱신 대상
+        }
       }
+      if (batchResult.failures.length) {
+        platformSummary.ok = false;
+        platformSummary.error = batchResult.failures.map((failure) => failure.error).join(' | ').slice(0, 500);
       }
-      summary.platforms[platform] = platformSummary;
-    } catch (error) {
-      // 실패 시 last_count 미갱신 → 다음 실행에서 재시도됨(부정댓글 없음으로 오보하지 않음)
-      summary.platforms[platform] = { targets: platformTargets.length, items: 0, ok: false, error: error.message };
     }
+    summary.platforms[platform] = platformSummary;
   }
 
   // Phase 2: 실행 전체 문맥 후보를 25개 단위로 통합 분류(캐시 미스만 LLM). 결과는 entries와 동일 순서·귀속.
@@ -357,11 +372,27 @@ export async function runMonitor(config = loadConfig()) {
       runNow,
     );
   }
-  const failedPlatforms = Object.entries(summary.platforms)
-    .filter(([, result]) => result.ok === false)
-    .map(([platform]) => platform);
-  if (failedPlatforms.length) {
-    throw new Error(`Platform collection failed: ${failedPlatforms.join(', ')}`);
+  // 플랫폼 실패는 우선 fail-soft: 성공 플랫폼/청크 결과와 last_count를 보존하고 실패 청크만 다음 회차 재시도.
+  // 연속 실패 임계치에 도달한 플랫폼만 쿨다운 단위로 핵심 실패 알림에 승격한다.
+  const persistentFailures = [];
+  for (const [platform, result] of Object.entries(summary.platforms)) {
+    const health = await recordPlatformOutcome(config, {
+      platform,
+      ok: result.ok !== false,
+      error: result.error || '',
+    }, fetch, runNow);
+    result.consecutiveFailures = health.consecutiveFailures;
+    result.healthPersisted = health.persisted;
+    if (health.shouldEscalate) persistentFailures.push(`${platform}(${health.consecutiveFailures})`);
+    if (result.ok === false) {
+      console.error(
+        `[platform:degraded] ${platform} failedBatches=${result.failedBatches}/${result.batches} `
+        + `failedTargets=${result.failedTargets} consecutive=${health.consecutiveFailures}; 다음 회차 재시도`,
+      );
+    }
+  }
+  if (persistentFailures.length) {
+    throw new Error(`Persistent platform collection failure: ${persistentFailures.join(', ')}`);
   }
   return summary;
 }

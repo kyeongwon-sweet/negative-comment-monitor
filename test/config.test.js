@@ -51,3 +51,10 @@ test('missing NEXT value safely falls back to the current assignee after the eff
   const config = loadConfig({ ...BASE_ENV, SLACK_ASSIGNEE_JD_VIRAL_VIDEO_NEXT: '' }, Date.parse('2026-08-17T00:00:00Z'));
   assert.equal(config.slackAssignees.jd.viralVideo, 'OLD_VIDEO');
 });
+
+test('TikTok collection safety defaults are bounded and persistent failures need three runs', () => {
+  const config = loadConfig(BASE_ENV);
+  assert.equal(config.tiktokBatchSize, 50);
+  assert.equal(config.platformFailureThreshold, 3);
+  assert.equal(config.platformFailureAlertCooldownHours, 12);
+});

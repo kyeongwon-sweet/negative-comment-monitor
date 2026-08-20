@@ -58,7 +58,13 @@ export async function runActor(config, platform, targets, fetchImpl = fetch, opt
   let status = run.status;
 
   while (!['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT'].includes(status)) {
-    if (Date.now() >= deadline) throw new Error(`Apify ${platform} run timed out`);
+    if (Date.now() >= deadline) {
+      // 로컬 폴링만 포기하면 Apify actor는 계속 돌아 비용이 누적될 수 있다. best-effort abort 후 재시도한다.
+      try {
+        await fetchImpl(`${API}/actor-runs/${run.id}/abort?token=${encodeURIComponent(config.apifyApiToken)}`, { method: 'POST' });
+      } catch { /* 원래 timeout 오류를 유지 */ }
+      throw new Error(`Apify ${platform} run timed out`);
+    }
     await new Promise((resolve) => setTimeout(resolve, config.pollIntervalMs));
     const current = await apifyJson(`${API}/actor-runs/${run.id}?token=${encodeURIComponent(config.apifyApiToken)}`, {}, fetchImpl);
     status = current.data.status;
@@ -68,4 +74,38 @@ export async function runActor(config, platform, targets, fetchImpl = fetch, opt
   const datasetId = run.defaultDatasetId;
   const dataset = await apifyJson(`${API}/datasets/${datasetId}/items?clean=true&format=json&token=${encodeURIComponent(config.apifyApiToken)}`, {}, fetchImpl);
   return Array.isArray(dataset) ? dataset : [];
+}
+
+export function chunkActorTargets(platform, targets, config = {}) {
+  const requested = platform === 'tiktok' ? Number(config.tiktokBatchSize || 50) : targets.length;
+  const size = Math.max(1, Number.isFinite(requested) ? Math.floor(requested) : targets.length || 1);
+  const chunks = [];
+  for (let index = 0; index < targets.length; index += size) chunks.push(targets.slice(index, index + size));
+  return chunks;
+}
+
+// 플랫폼 내 청크 실패를 격리한다. 성공 청크는 즉시 반환되어 댓글 분류·last_count 갱신에 사용되고,
+// 실패 청크만 다음 회차에 재시도된다. TikTok 외 플랫폼은 기존처럼 단일 청크다.
+export async function runActorBatches(
+  config,
+  platform,
+  targets,
+  fetchImpl = fetch,
+  options = {},
+  runner = runActor,
+) {
+  const successes = [];
+  const failures = [];
+  const chunks = chunkActorTargets(platform, targets, config);
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index];
+    try {
+      const items = await runner(config, platform, chunk, fetchImpl, options);
+      successes.push({ index, targets: chunk, items });
+    } catch (error) {
+      failures.push({ index, targets: chunk, error: String(error?.message || error) });
+      console.error(`[apify:${platform}] batch ${index + 1}/${chunks.length} failed (${chunk.length} targets): ${error.message}`);
+    }
+  }
+  return { totalBatches: chunks.length, successes, failures };
 }
