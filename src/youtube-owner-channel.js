@@ -142,7 +142,8 @@ export function shouldScanOwnerVideo(video, previous) {
   const current = Number(video?.statistics?.commentCount);
   if (!Number.isFinite(current) || current < 0) return { due: false, reason: 'no-signal', current: null };
   if (!previous) return { due: current > 0, reason: current > 0 ? 'first-scan' : 'zero-baseline', current };
-  const last = Number(previous.last_scanned_count);
+  const rawLast = previous.last_scanned_count;
+  const last = rawLast == null || rawLast === '' ? Number.NaN : Number(rawLast);
   if (!Number.isFinite(last) || last !== current) return { due: true, reason: 'changed', current };
   return { due: false, reason: 'unchanged', current };
 }
@@ -186,7 +187,7 @@ export async function fetchRecentOwnerUploads(config, channel, accessToken, fetc
   };
 }
 
-function stateRow(channel, video, current, now, scanned) {
+function stateRow(channel, video, current, now, scanned, previous = null) {
   return {
     channel_id: channel.channelId,
     video_id: String(video.id),
@@ -194,7 +195,10 @@ function stateRow(channel, video, current, now, scanned) {
     published_at: String(video.snippet?.publishedAt || new Date(now).toISOString()),
     comment_count: current,
     last_seen_at: new Date(now).toISOString(),
-    ...(scanned ? { last_scanned_count: current, last_scanned_at: new Date(now).toISOString() } : {}),
+    // PostgREST bulk upsert는 배열 행들의 키 집합이 다르면 400을 낼 수 있다. 변화 없음 행도
+    // 직전 스캔 값을 명시해 모든 행을 동일한 완전 스키마로 보낸다.
+    last_scanned_count: scanned ? current : Number(previous?.last_scanned_count),
+    last_scanned_at: scanned ? new Date(now).toISOString() : (previous?.last_scanned_at || null),
   };
 }
 
@@ -231,7 +235,7 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
         }
         if (!decision.due) {
           counts.unchanged += 1;
-          stateUpdates.push(stateRow(channel, video, decision.current, now, false));
+          stateUpdates.push(stateRow(channel, video, decision.current, now, false, previous));
           continue;
         }
         counts.due += 1;

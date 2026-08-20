@@ -29,6 +29,7 @@ test('comment-count gate baselines zero and scans first-positive or changed vide
   assert.deepEqual(shouldScanOwnerVideo({ statistics: { commentCount: '2' } }, null), { due: true, reason: 'first-scan', current: 2 });
   assert.deepEqual(shouldScanOwnerVideo({ statistics: { commentCount: '2' } }, { last_scanned_count: 2 }), { due: false, reason: 'unchanged', current: 2 });
   assert.deepEqual(shouldScanOwnerVideo({ statistics: { commentCount: '3' } }, { last_scanned_count: 2 }), { due: true, reason: 'changed', current: 3 });
+  assert.deepEqual(shouldScanOwnerVideo({ statistics: { commentCount: '0' } }, { last_scanned_count: null }), { due: true, reason: 'changed', current: 0 });
   assert.equal(shouldScanOwnerVideo({ statistics: {} }, null).reason, 'no-signal');
 });
 
@@ -84,6 +85,8 @@ test('collector lists recent uploads and calls commentThreads only for changed c
   assert.equal(result.unchanged, 1);
   assert.equal(result.zeroBaseline, 1);
   assert.equal(result.entries.length, 1);
+  assert.equal(result.stateUpdates.length, 3);
+  assert.ok(result.stateUpdates.every((row) => Object.hasOwn(row, 'last_scanned_count') && Object.hasOwn(row, 'last_scanned_at')));
   assert.equal(result.entries[0].target.source, undefined);
   assert.equal(result.entries[0].comments[0].id, 'comment-1');
   assert.equal(calls.filter((url) => url.pathname.endsWith('/commentThreads')).length, 1);
