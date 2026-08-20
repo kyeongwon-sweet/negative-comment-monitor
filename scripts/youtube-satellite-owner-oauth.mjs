@@ -1,17 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
-import { exchangeAndStoreYouTubeOwnerToken } from '../src/youtube-owner-oauth-exchange.js';
+import { writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   buildYouTubeOwnerAuthorizationUrl,
   resolveSatelliteChannel,
   YOUTUBE_SATELLITE_CHANNELS,
 } from '../src/youtube-satellite-oauth.js';
-
-function required(name) {
-  const value = String(process.env[name] || '').trim();
-  if (!value) throw new Error(`Missing environment variable: ${name}`);
-  return value;
-}
 
 const requested = String(process.env.YOUTUBE_SATELLITE_CHANNEL || process.argv[2] || '').trim();
 const channel = resolveSatelliteChannel(requested);
@@ -22,15 +18,12 @@ if (!channel) {
 const redirectUri = String(process.env.GOOGLE_OAUTH_REDIRECT_URI || 'http://127.0.0.1:53682').trim();
 const redirect = new URL(redirectUri);
 const state = randomBytes(24).toString('hex');
-const clientId = required('GOOGLE_ADS_CLIENT_ID');
-const configBase = {
-  googleClientId: clientId,
-  googleClientSecret: required('GOOGLE_ADS_CLIENT_SECRET'),
-  redirectUri,
-  expectedChannelId: channel.channelId,
-  supabaseUrl: required('SUPABASE_URL').replace(/\/$/, ''),
-  supabaseKey: required('SUPABASE_SERVICE_ROLE_KEY'),
-};
+// OAuth client ID는 공개 식별자이며 기존 소유채널 인증에 사용한 GCP Desktop client다.
+// client secret·Supabase service role은 로컬로 내리지 않고 GitHub Actions에서만 사용한다.
+const clientId = String(process.env.GOOGLE_ADS_CLIENT_ID
+  || '992272573531-namdimvufsbha2sgvft62vf56k2lv3mu.apps.googleusercontent.com').trim();
+const outputPath = String(process.env.YOUTUBE_OWNER_OAUTH_CAPTURE
+  || path.join(tmpdir(), 'negative-comment-youtube-satellite-oauth.json')).trim();
 const authorizationUrl = buildYouTubeOwnerAuthorizationUrl({ clientId, redirectUri, state });
 
 let settled = false;
@@ -63,10 +56,16 @@ const server = createServer(async (request, response) => {
   clearTimeout(timeout);
   try {
     if (oauthError) throw new Error(`Google OAuth denied: ${oauthError}`);
-    const result = await exchangeAndStoreYouTubeOwnerToken({ ...configBase, authorizationCode: code });
+    await writeFile(outputPath, JSON.stringify({
+      code,
+      redirectUri,
+      expectedChannelId: channel.channelId,
+      requested: channel.name,
+      capturedAt: new Date().toISOString(),
+    }), { encoding: 'utf8', mode: 0o600 });
     response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    response.end('<!doctype html><meta charset="utf-8"><title>인증 완료</title><h1>YouTube 채널 인증이 완료되었습니다.</h1><p>이 창을 닫고 Codex로 돌아가세요.</p>');
-    console.log(JSON.stringify({ ok: true, requested: channel.name, channelId: result.channelId, channelTitle: result.channelTitle, expiresAt: result.expiresAt }));
+    response.end('<!doctype html><meta charset="utf-8"><title>동의 완료</title><h1>YouTube 채널 동의가 완료되었습니다.</h1><p>이 창을 닫고 Codex로 돌아가세요. 토큰 저장은 Codex가 안전하게 마무리합니다.</p>');
+    console.log(JSON.stringify({ ok: true, requested: channel.name, expectedChannelId: channel.channelId, captureReady: true }));
   } catch (error) {
     response.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' }).end('YouTube 채널 인증에 실패했습니다. Codex에서 오류를 확인하세요.');
     console.error(`[youtube-satellite-oauth] ${error.message}`);

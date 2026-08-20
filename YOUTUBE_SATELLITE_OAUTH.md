@@ -15,13 +15,19 @@
 
 ## 채널별 등록
 
-로컬 `.env`에 기존 Google OAuth client와 Supabase service role 설정이 있는 PC에서 한 채널씩 실행한다.
+로그인 브라우저를 사용할 PC에서 한 채널씩 실행한다. 공개 OAuth client ID만 로컬에서 사용하며, client secret과 Supabase service role은 기존 GitHub Actions Secret 밖으로 꺼내지 않는다.
 
 ```powershell
 $env:YOUTUBE_SATELLITE_CHANNEL='썰박스'
-node --env-file=.env scripts/youtube-satellite-owner-oauth.mjs
+node scripts/youtube-satellite-owner-oauth.mjs
 ```
 
-출력된 Google 동의 URL을 열고 정확한 채널의 소유자/관리자 계정으로 동의한다. 콜백 후 도구가 `channels.list(mine=true)`의 channel ID를 표와 대조하며, 다른 채널이면 토큰을 저장하지 않는다. 성공 토큰은 Supabase `meta_tokens`의 `youtube_owner:<channel-id>`로 저장된다. 인증 코드·access token·refresh token은 로그에 출력하지 않는다.
+출력된 Google 동의 URL을 열고 정확한 채널의 소유자/관리자 계정으로 동의한다. 콜백을 받은 뒤 Codex가 아래 제출 단계를 실행한다.
+
+```powershell
+node scripts/youtube-satellite-owner-oauth-submit.mjs
+```
+
+제출 도구는 인증 코드를 표준입력으로 임시 GitHub Actions Secret에 전송하고 `youtube-owner-oauth-exchange.yml`을 실행한다. Actions가 `channels.list(mine=true)`의 channel ID를 표와 대조하며, 다른 채널이면 토큰을 저장하지 않는다. 성공 토큰은 Supabase `meta_tokens`의 `youtube_owner:<channel-id>`로 저장된다. 실행 종료 시 임시 Actions Secret과 로컬 인증코드 파일을 항상 삭제한다. 인증 코드·access token·refresh token은 로그에 출력하지 않는다.
 
 각 채널마다 명령의 채널명만 바꾸어 반복한다. OAuth 동의가 없는 채널과 TikTok 위성, 협찬 제3자 채널은 알림만 유지되고 자동숨김되지 않는다.
