@@ -11,6 +11,7 @@
     "start:youtube-ads": "node src/youtube-ads-run.js",
     "moderate:youtube-owner": "node src/youtube-owner-moderation.js",
     "audit:youtube-owner-hidden": "node src/youtube-owner-hidden-audit.js",
+    "oauth:youtube-satellite": "node scripts/youtube-satellite-owner-oauth.mjs",
     "sync:youtube-hidden-slack": "node src/youtube-hidden-slack-sync.js",
     "test": "node --test"
   },

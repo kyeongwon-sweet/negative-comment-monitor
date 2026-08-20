@@ -15,6 +15,7 @@ import { ensureDailyThread, markCompletedThreads, cleanupOrphanedCopyMessages } 
 import { assigneeForTarget, productGroup, productLabel, hasProductName, videoAssigneeFromAdTitle } from './slack.js';
 import { APIFY_LOW_BALANCE_USD, DEFAULT_COST_THRESHOLDS, estimateApifyUsd, fetchApifyUsage, maybeAlertApifyLow, maybeAlertCosts, postApifyLowWarning, postCostWarning, recordRunCost, runKey, sumDailyCost } from './cost.js';
 import { hasAdRunToday } from './ad-common.js';
+import { autoHideOrganicSatelliteYouTube } from './youtube-organic-auto-hide.js';
 
 export async function runMonitor(config = loadConfig()) {
   const runNow = Date.now();
@@ -344,6 +345,17 @@ export async function runMonitor(config = loadConfig()) {
     } catch (error) {
       console.error('[delta] last_count 갱신 실패:', error.message);
     }
+  }
+  // 위성 YouTube 오가닉 부정댓글만 소유 채널 OAuth로 자동 숨김한다. 허용 영상 집합은
+  // 이번 GAS 대상 중 channelCategory=위성채널인 YouTube로 만들기 때문에 협찬 3자·TikTok·
+  // 온드 YouTube는 source=null이어도 처리되지 않는다. 사람의 유지 결정은 moderation 모듈이 보존한다.
+  if (!config.dryRun && config.youtubeSatelliteAutoHide) {
+    summary.youtubeSatelliteModeration = await autoHideOrganicSatelliteYouTube(
+      config,
+      windowedTargets,
+      fetch,
+      runNow,
+    );
   }
   const failedPlatforms = Object.entries(summary.platforms)
     .filter(([, result]) => result.ok === false)

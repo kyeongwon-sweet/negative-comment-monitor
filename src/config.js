@@ -61,6 +61,10 @@ export function loadConfig(env = process.env, now = Date.now()) {
     videoAssignees: (() => { try { const m = JSON.parse(env.META_AD_VIDEO_ASSIGNEES || '{}'); return (m && typeof m === 'object') ? m : {}; } catch { return {}; } })(),
     supabaseUrl: String(env.SUPABASE_URL || '').trim().replace(/\/$/, ''),
     supabaseKey: String(env.SUPABASE_SERVICE_ROLE_KEY || '').trim(),
+    googleAdsClientId: String(env.GOOGLE_ADS_CLIENT_ID || '').trim(),
+    googleAdsClientSecret: String(env.GOOGLE_ADS_CLIENT_SECRET || '').trim(),
+    youtubeApiBase: String(env.YOUTUBE_API_BASE || 'https://www.googleapis.com/youtube/v3').trim().replace(/\/$/, ''),
+    youtubeSatelliteAutoHide: String(env.YOUTUBE_SATELLITE_AUTO_HIDE || 'false').toLowerCase() === 'true',
     deltaEnabled: String(env.DELTA_ENABLED || 'true').toLowerCase() !== 'false',
     // 감시 대상은 전부 라라스윗 협찬 게시물이므로, 브랜드 컨텍스트를 부여해
     // classify의 entity 게이트가 브랜드 관련 부정댓글을 놓치지 않게 한다.

@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   groupAlertsByOwner,
+  loadYouTubeOwnerAlerts,
   loadYouTubeOwnerModerationConfig,
   moderateYouTubeOwnerAlerts,
+  YOUTUBE_OWNER_ALERT_SCOPES,
   YOUTUBE_OWNER_HIDE_CONFIRMATION,
   YOUTUBE_OWNER_SINGLE_HIDE_CONFIRMATION,
 } from '../src/youtube-owner-moderation.js';
@@ -90,6 +92,56 @@ test('영상 소유 채널별로 알림을 나누고 누락 사유를 집계한�
   ], new Map([['videoA1', 'ownerA']]), { autoHideAllNegatives: true });
   assert.deepEqual(automatic.groups.get('ownerA').map((row) => row.comment_id), ['c6', 'c7']);
   assert.equal(automatic.skippedHumanDecision, 1);
+});
+
+test('오가닉 위성 범위는 source=null YouTube 중 허용 영상만 읽는다', async () => {
+  let requested = '';
+  const rows = [
+    { id: 1, platform: 'youtube', source: null, post_url: 'https://youtube.com/watch?v=allowedA' },
+    { id: 2, platform: 'youtube', source: null, post_url: 'https://youtube.com/watch?v=thirdPartyB' },
+  ];
+  const result = await loadYouTubeOwnerAlerts(config({
+    alertScope: YOUTUBE_OWNER_ALERT_SCOPES.ORGANIC_SATELLITE,
+    allowedVideoIds: new Set(['allowedA']),
+  }), async (input) => {
+    requested = String(input);
+    return response(200, rows);
+  });
+  assert.deepEqual(result.map((row) => row.id), [1]);
+  assert.match(requested, /source=is\.null/);
+  assert.match(requested, /platform=eq\.youtube/);
+});
+
+test('오가닉 위성 자동숨김은 keep 결정을 제외하고 source IS NULL 행만 갱신한다', async () => {
+  const calls = [];
+  let rejected = false;
+  const alerts = [
+    { id: 1, platform: 'youtube', source: null, comment_id: 'autoA', post_url: 'https://youtube.com/watch?v=allowedA' },
+    { id: 2, platform: 'youtube', source: null, comment_id: 'keepA', post_url: 'https://youtube.com/watch?v=allowedA', review_decision: 'false_positive', reviewed_by: 'U1' },
+    { id: 3, platform: 'youtube', source: null, comment_id: 'unhideA', post_url: 'https://youtube.com/watch?v=allowedA', review_decision: 'unhide', reviewed_by: 'U2' },
+  ];
+  const result = await moderateYouTubeOwnerAlerts(config({
+    alertScope: YOUTUBE_OWNER_ALERT_SCOPES.ORGANIC_SATELLITE,
+    allowedVideoIds: new Set(['allowedA']),
+    autoHideAllNegatives: true,
+  }), async (input, init = {}) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.includes('/rest/v1/negative_comment_alerts') && (!init.method || init.method === 'GET')) return response(200, alerts);
+    if (url.includes('/rest/v1/meta_tokens')) return response(200, [{ kind: 'youtube_owner:ownerA', token: 'refreshA' }]);
+    if (url.includes('oauth2.googleapis.com')) return response(200, { access_token: 'accessA' });
+    if (url.includes('/channels')) return response(200, { items: [{ id: 'ownerA' }] });
+    if (url.includes('/videos')) return response(200, { items: [{ id: 'allowedA', snippet: { channelId: 'ownerA' } }] });
+    if (url.includes('/comments?')) return response(200, { items: rejected ? [] : [{ id: 'autoA' }] });
+    if (url.includes('/comments/setModerationStatus')) { rejected = true; return response(204); }
+    if (url.includes('/rest/v1/negative_comment_alerts') && init.method === 'PATCH') return response(200, [{ id: 1 }]);
+    throw new Error(`unexpected ${url}`);
+  });
+  assert.equal(result.hidden, 1);
+  assert.equal(result.skippedHumanDecision, 2);
+  const patch = calls.find((call) => call.init.method === 'PATCH');
+  assert.match(patch.url, /source=is\.null/);
+  assert.match(patch.url, /platform=eq\.youtube/);
 });
 
 test('현재 노출 댓글만 소유자 토큰으로 rejected 처리하고 성공 행만 DB 갱신한다', async () => {

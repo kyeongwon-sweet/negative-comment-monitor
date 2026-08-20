@@ -11,6 +11,11 @@ on:
         description: Verified Slack message timestamp used to resolve the DB alert
         required: true
         type: string
+      alert_scope:
+        description: Server-verified alert scope (youtube_ads or organic_satellite)
+        required: false
+        type: string
+        default: youtube_ads
 
 jobs:
   moderate:
@@ -35,5 +40,6 @@ jobs:
           YOUTUBE_OWNER_BULK_HIDE_CONFIRM: HIDE_ONE_YOUTUBE_AD_ALERT
           YOUTUBE_OWNER_ALERT_SLACK_CHANNEL_ID: ${{ inputs.slack_channel_id }}
           YOUTUBE_OWNER_ALERT_SLACK_TS: ${{ inputs.slack_ts }}
+          YOUTUBE_OWNER_ALERT_SCOPE: ${{ inputs.alert_scope }}
           YOUTUBE_OWNER_BULK_HIDE_ACTOR: slack-owner-oauth
           YOUTUBE_HIDDEN_SLACK_DELAY_MS: '1'

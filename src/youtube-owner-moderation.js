@@ -7,6 +7,10 @@ import { syncHiddenYouTubeSlackCards } from './youtube-hidden-slack.js';
 
 export const YOUTUBE_OWNER_HIDE_CONFIRMATION = 'HIDE_ALL_YOUTUBE_AD_ALERTS';
 export const YOUTUBE_OWNER_SINGLE_HIDE_CONFIRMATION = 'HIDE_ONE_YOUTUBE_AD_ALERT';
+export const YOUTUBE_OWNER_ALERT_SCOPES = Object.freeze({
+  ADS: 'youtube_ads',
+  ORGANIC_SATELLITE: 'organic_satellite',
+});
 const OWNER_TOKEN_PREFIX = 'youtube_owner:';
 
 function required(env, name) {
@@ -30,6 +34,10 @@ export function loadYouTubeOwnerModerationConfig(env = process.env) {
     throw new Error('Single YouTube moderation requires both alert Slack channel and timestamp');
   }
   const singleAlert = Boolean(alertChannelId && alertMessageTs);
+  const alertScope = String(env.YOUTUBE_OWNER_ALERT_SCOPE || YOUTUBE_OWNER_ALERT_SCOPES.ADS).trim();
+  if (!Object.values(YOUTUBE_OWNER_ALERT_SCOPES).includes(alertScope)) {
+    throw new Error(`Unsupported YOUTUBE_OWNER_ALERT_SCOPE: ${alertScope}`);
+  }
   const expectedConfirmation = singleAlert
     ? YOUTUBE_OWNER_SINGLE_HIDE_CONFIRMATION
     : YOUTUBE_OWNER_HIDE_CONFIRMATION;
@@ -46,6 +54,7 @@ export function loadYouTubeOwnerModerationConfig(env = process.env) {
     singleAlert,
     alertChannelId,
     alertMessageTs,
+    alertScope,
     batchSize: positiveInt(env.YOUTUBE_OWNER_BULK_HIDE_BATCH_SIZE, 50, 50),
     actor: String(env.YOUTUBE_OWNER_BULK_HIDE_ACTOR || 'codex-bulk-owner-oauth').trim(),
     slackBotToken: String(env.SLACK_BOT_TOKEN || '').trim(),
@@ -81,12 +90,27 @@ export async function loadYouTubeOwnerTokens(config, fetchImpl = fetch) {
     .filter((row) => row.channelId);
 }
 
-export async function loadYouTubeAdAlerts(config, fetchImpl = fetch) {
+function alertSourceQuery(config) {
+  if (config.alertScope === YOUTUBE_OWNER_ALERT_SCOPES.ORGANIC_SATELLITE) {
+    return '&source=is.null&platform=eq.youtube';
+  }
+  return '&source=eq.youtube_ads';
+}
+
+function allowedVideoIdSet(config) {
+  const values = config.allowedVideoIds instanceof Set
+    ? [...config.allowedVideoIds]
+    : Array.isArray(config.allowedVideoIds) ? config.allowedVideoIds : [];
+  return new Set(values.map((value) => String(value || '').trim()).filter(Boolean));
+}
+
+export async function loadYouTubeOwnerAlerts(config, fetchImpl = fetch) {
   const rows = [];
   for (let offset = 0; ; offset += 1000) {
     let pathname = 'negative_comment_alerts'
-      + '?select=id,comment_id,comment_text,post_url,review_decision,reviewed_by,reviewed_at,slack_channel_id,slack_ts'
-      + '&source=eq.youtube_ads&order=alerted_at.asc'
+      + '?select=id,source,platform,comment_id,comment_text,post_url,review_decision,reviewed_by,reviewed_at,slack_channel_id,slack_ts'
+      + alertSourceQuery(config)
+      + '&order=alerted_at.asc'
       + `&offset=${offset}&limit=1000`;
     if (config.alertChannelId && config.alertMessageTs) {
       pathname += `&slack_channel_id=eq.${encodeURIComponent(config.alertChannelId)}`
@@ -94,8 +118,21 @@ export async function loadYouTubeAdAlerts(config, fetchImpl = fetch) {
     }
     const page = await supabaseJson(config, pathname, fetchImpl);
     rows.push(...page);
-    if (page.length < 1000) return rows;
+    if (page.length < 1000) break;
   }
+  const allowed = allowedVideoIdSet(config);
+  if (config.alertScope !== YOUTUBE_OWNER_ALERT_SCOPES.ORGANIC_SATELLITE) return rows;
+  // 오가닉 source=null에는 협찬·온드도 섞여 있다. 자동 실행은 run.js가 넘긴
+  // 위성 YouTube 영상 ID 허용목록만 처리한다. 단일 [숨김]은 서명 검증된 웹 라우트가
+  // 위성 카테고리를 확인한 뒤 dispatch하므로 해당 Slack 행 하나만 허용한다.
+  if (config.singleAlert) return rows;
+  if (!allowed.size) return [];
+  return rows.filter((row) => allowed.has(videoIdFromAlert(row)));
+}
+
+// 기존 광고 감사·동기화 호출부의 공개 API를 유지한다.
+export async function loadYouTubeAdAlerts(config, fetchImpl = fetch) {
+  return loadYouTubeOwnerAlerts({ ...config, alertScope: YOUTUBE_OWNER_ALERT_SCOPES.ADS }, fetchImpl);
 }
 
 function chunk(values, size) {
@@ -407,7 +444,7 @@ async function patchRows(config, ids, body, fetchImpl) {
   let updated = 0;
   for (const batch of chunk(ids, 100)) {
     const response = await fetchImpl(
-      `${config.supabaseUrl}/rest/v1/negative_comment_alerts?id=in.(${encodeURIComponent(encodedList(batch))})&source=eq.youtube_ads`,
+      `${config.supabaseUrl}/rest/v1/negative_comment_alerts?id=in.(${encodeURIComponent(encodedList(batch))})${alertSourceQuery(config)}`,
       {
         method: 'PATCH',
         headers: supabaseHeaders(config, {
@@ -439,9 +476,44 @@ export async function persistHiddenRows(config, alerts, fetchImpl = fetch, now =
 }
 
 export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModerationConfig(), fetchImpl = fetch, now = Date.now()) {
+  const alerts = await loadYouTubeOwnerAlerts(config, fetchImpl);
+  const dispositionOptions = {
+    singleAlert: config.singleAlert,
+    autoHideAllNegatives: config.autoHideAllNegatives,
+  };
+  const candidateAlerts = alerts.filter((alert) => alertDisposition(alert, dispositionOptions) === 'eligible');
+  // 숨길 후보가 없으면 OAuth refresh·YouTube API를 전혀 호출하지 않는다. 15분 웨이크에서
+  // 미처리 댓글이 없을 때 채널 수만큼 토큰을 갱신하는 낭비를 막는다.
+  if (!candidateAlerts.length) {
+    return {
+      dryRun: config.dryRun,
+      alertScope: config.alertScope || YOUTUBE_OWNER_ALERT_SCOPES.ADS,
+      totalAlerts: alerts.length,
+      ownerTokens: 0,
+      validOwnerTokens: 0,
+      ownerTokenFailures: [],
+      ownerMappingFailures: [],
+      matchedVideos: 0,
+      missingCommentId: 0,
+      unmatchedVideo: 0,
+      alreadyMarkedHidden: alerts.filter((row) => alertDisposition(row, dispositionOptions) === 'hidden').length,
+      skippedHumanDecision: alerts.filter((row) => alertDisposition(row, dispositionOptions) === 'human_keep').length,
+      attempted: 0,
+      hidden: 0,
+      unavailableOrAlreadyHidden: 0,
+      moderationUnavailable: 0,
+      moderationFailed: 0,
+      acceptedUnverified: 0,
+      channelFailures: 0,
+      persistenceFailed: 0,
+      dbUpdated: 0,
+      slackUpdated: 0,
+      slackUpdateFailed: 0,
+      owners: [],
+    };
+  }
   const owners = await loadYouTubeOwnerTokens(config, fetchImpl);
   if (!owners.length) throw new Error('No stored YouTube owner OAuth tokens');
-  const alerts = await loadYouTubeAdAlerts(config, fetchImpl);
   const accessTokens = new Map();
   const validOwners = [];
   const ownerTokenFailures = [];
@@ -457,15 +529,11 @@ export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModera
     throw new Error(`All stored YouTube owner OAuth tokens failed (${ownerTokenFailures.length}/${owners.length})`);
   }
 
-  const dispositionOptions = {
-    singleAlert: config.singleAlert,
-    autoHideAllNegatives: config.autoHideAllNegatives,
-  };
-  const candidateAlerts = alerts.filter((alert) => alertDisposition(alert, dispositionOptions) === 'eligible');
   const mapped = await mapVideosToOwners(config, candidateAlerts, validOwners, accessTokens, fetchImpl);
   const grouped = groupAlertsByOwner(alerts, mapped.ownerByVideo, dispositionOptions);
   const result = {
     dryRun: config.dryRun,
+    alertScope: config.alertScope || YOUTUBE_OWNER_ALERT_SCOPES.ADS,
     totalAlerts: alerts.length,
     ownerTokens: owners.length,
     validOwnerTokens: validOwners.length,

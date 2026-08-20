@@ -148,6 +148,7 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
     platform: comment.platform,
     url: target.url,
     source: target.source || '',
+    channelCategory: target.channelCategory || '',
   });
   const reason = comment.risk?.matchedTerms?.join(', ') || comment.risk?.reason || '부정 표현';
   // 채널명(업체명) / 작성자 / 댓글 — 한 라인. 채널명은 게시글 링크, 업체명은 바이럴만.
