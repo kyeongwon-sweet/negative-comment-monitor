@@ -85,6 +85,7 @@ export function assigneeForTarget(target, assignees = {}) {
   const isSatellite = category.includes('위성채널');
   const isSponsorship = category.includes('협찬');
   const isPowerChannel = category.includes('파워채널') || category.includes('매거진'); // 협찬 (파워채널/매거진)
+  const isOwned = category.includes('온드'); // 온드미디어
   const isAwareness = category.includes('인지'); // 인지(메타) 광고 부정댓글 전용 담당자
   if (group === 'jd') {
     if (isSponsorship && assignees.jd?.sponsorship) return assignees.jd.sponsorship;
@@ -93,11 +94,12 @@ export function assigneeForTarget(target, assignees = {}) {
     if (isSatellite && assignees.jd?.satellite) return assignees.jd.satellite;
   } else if (group === 'p') {
     if (isPowerChannel && assignees.p?.powerChannel) return assignees.p.powerChannel; // 파인트 파워채널=이도경
+    if (isSponsorship && assignees.p?.sponsorship) return assignees.p.sponsorship;     // 파인트 협찬(인플루언서)=손유곤
     if (isBanner && assignees.p?.viralBanner) return assignees.p.viralBanner;
     if (isVideo && assignees.p?.viralVideo) return assignees.p.viralVideo;
   }
-  // 위성채널은 상품군과 무관하게 이세진(base satellite)로. JD는 위 jd 블록에서 이미 처리됨.
-  // (전에는 비-JD/기타 위성이 other=황경원으로 새던 것을 카테고리 레벨에서 바로잡음.)
+  // 온드미디어는 상품군 무관 전담(김바다). 위성채널은 상품군 무관 이세진(base satellite).
+  if (isOwned && assignees.owned) return assignees.owned;
   if (isSatellite && assignees.satellite) return assignees.satellite;
   // 인지 광고는 상품군과 무관하게 전용 담당자로. 미지정이면 기존 기본값(other)로 폴백.
   if (isAwareness && assignees.awareness) return assignees.awareness;
@@ -166,10 +168,15 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   // 인지 광고 + 모든 바이럴(배너·영상) 개별 카드는 소재명의 영상 제작자만 태그한다.
   //   - 제작자(extras)가 있으면 그 사람만, 없으면 baseAssignee로 폴백(담당자 공란 방지).
   //   - 그 외 채널(협찬·위성·온드 등)은 기존대로 기본 담당자 + 추가 태그.
+  // 최우선 override: 소재명(asset_name/광고명)에 'JD복'이 들어가면 카테고리·제작자 무관하게 지정 담당자(이재원).
+  const soje = String(target.assetName || target.adTitle || '');
+  const jdBok = /JD복/i.test(soje) ? (assignees.jdBok || '') : '';
   const isCreatorCard = isAdCommentSource(target) || isViral;
-  const assigneeIds = isCreatorCard
-    ? [...new Set((extras.length ? extras : (baseAssignee ? [baseAssignee] : [])))]
-    : [...new Set([baseAssignee, ...extras].filter(Boolean))];
+  const assigneeIds = jdBok
+    ? [jdBok]
+    : isCreatorCard
+      ? [...new Set((extras.length ? extras : (baseAssignee ? [baseAssignee] : [])))]
+      : [...new Set([baseAssignee, ...extras].filter(Boolean))];
   return [
     { type: 'header', text: { type: 'plain_text', text: `🚨 부정댓글 감지 — ${comment.platform}` } },
     { type: 'section', text: { type: 'mrkdwn', text: `*[${esc(productLabel(productGroup(target.productName)))}] ${esc(target.channelCategory || '-')}*` } },

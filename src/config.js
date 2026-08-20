@@ -39,6 +39,8 @@ export function loadConfig(env = process.env, now = Date.now()) {
       viralBanner: String(env.SLACK_ASSIGNEE_VIRAL_BANNER || '').trim(),
       viralVideoOwned: String(env.SLACK_ASSIGNEE_VIRAL_VIDEO_OWNED || '').trim(),
       other: String(env.SLACK_ASSIGNEE_OTHER || '').trim(),
+      owned: String(env.SLACK_ASSIGNEE_OWNED || '').trim(),      // 온드미디어(상품군 무관)=김바다
+      jdBok: String(env.SLACK_ASSIGNEE_JDBOK || '').trim(),      // 소재명에 'JD복' 포함 시 최우선 담당자=이재원
       awareness: scheduledAssignee(env, 'SLACK_ASSIGNEE_AWARENESS', 'SLACK_ASSIGNEE_AWARENESS_NEXT', nextRoutingActive),
       sponsorship: String(env.SLACK_ASSIGNEE_SPONSORSHIP || '').trim(),
       // 상품별 담당자(상품 코드 × 카테고리). 미지정 조합/상품은 위 카테고리 기본값으로 폴백.
@@ -52,6 +54,7 @@ export function loadConfig(env = process.env, now = Date.now()) {
         viralBanner: String(env.SLACK_ASSIGNEE_P_VIRAL_BANNER || '').trim(),
         viralVideo: String(env.SLACK_ASSIGNEE_P_VIRAL_VIDEO || '').trim(),
         powerChannel: String(env.SLACK_ASSIGNEE_P_POWER_CHANNEL || '').trim(), // 파인트 협찬(파워채널/매거진)=이도경
+        sponsorship: String(env.SLACK_ASSIGNEE_P_SPONSORSHIP || '').trim(),   // 파인트 협찬(인플루언서)=손유곤
       },
     },
     // 이름→Slack ID 맵(META_AD_VIDEO_ASSIGNEES). 바이럴 카드 소재명에서 제작자 추출·태그용. 파싱 실패=빈 맵.
