@@ -94,6 +94,9 @@ export function assigneeForTarget(target, assignees = {}) {
     if (isBanner && assignees.p?.viralBanner) return assignees.p.viralBanner;
     if (isVideo && assignees.p?.viralVideo) return assignees.p.viralVideo;
   }
+  // 위성채널은 상품군과 무관하게 이세진(base satellite)로. JD는 위 jd 블록에서 이미 처리됨.
+  // (전에는 비-JD/기타 위성이 other=황경원으로 새던 것을 카테고리 레벨에서 바로잡음.)
+  if (isSatellite && assignees.satellite) return assignees.satellite;
   // 인지 광고는 상품군과 무관하게 전용 담당자로. 미지정이면 기존 기본값(other)로 폴백.
   if (isAwareness && assignees.awareness) return assignees.awareness;
   return assignees.other || '';

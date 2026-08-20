@@ -146,9 +146,12 @@ test('assigneeForTarget: 상품×카테고리 라우팅 + 미지정은 카테고
   assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '바이럴 (배너)' }, assignees), 'U_P_BANNER');
   assert.equal(assigneeForTarget({ productName: 'P망', channelCategory: '바이럴 (영상)' }, assignees), 'U_P_VIDEO');
   assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_OTHER');
-  // 기타 상품(듬뿍바 등)은 카테고리 무관 모두 황경원(other)
+  // 위성채널은 상품군 무관하게 항상 이세진(base satellite) — JD/P/기타 전부
+  assert.equal(assigneeForTarget({ productName: 'DB딸', channelCategory: '위성채널' }, assignees), 'U_SATELLITE');
+  assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '위성채널' }, assignees), 'U_SATELLITE');
+  assert.equal(assigneeForTarget({ channelCategory: '위성채널' }, assignees), 'U_SATELLITE'); // 상품명 없어도 위성=이세진
+  // 그 외 기타 상품(듬뿍바 등) 비-위성 조합은 황경원(other)
   assert.equal(assigneeForTarget({ productName: 'DB혼', channelCategory: '바이럴 (배너)' }, assignees), 'U_OTHER');
-  assert.equal(assigneeForTarget({ productName: 'DB딸', channelCategory: '위성채널' }, assignees), 'U_OTHER');
   assert.equal(assigneeForTarget({ productName: 'DB혼', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_OTHER');
   // JD 상품이라도 미지정 채널(기타채널, 예: 온드미디어)은 황경원(other)
   assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '온드미디어' }, assignees), 'U_OTHER');
