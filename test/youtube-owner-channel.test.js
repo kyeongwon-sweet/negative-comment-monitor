@@ -23,6 +23,7 @@ test('owner channel config includes the two existing owners and eight satellites
   assert.equal(config.youtubeOwnerChannels.find((row) => row.name === '썰박스').channelCategory, '위성채널');
   assert.equal(config.youtubeOwnerChannels.find((row) => row.name === '썰박스').lookbackDays, 14);
   assert.equal(config.slackAssignees.jd.satellite, 'U_JD_SAT');
+  assert.equal(config.youtubeOwnerAlertDelayMs, 1100);
   assert.deepEqual(config.managedChannelCategories, ['위성채널', '소유 YouTube']);
 });
 

@@ -30,6 +30,12 @@ function positiveInt(value, fallback, max = Number.MAX_SAFE_INTEGER) {
   return Math.min(max, Math.floor(parsed));
 }
 
+function nonnegativeInt(value, fallback, max = Number.MAX_SAFE_INTEGER) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.min(max, Math.floor(parsed));
+}
+
 function parseExtraChannels(raw) {
   if (!String(raw || '').trim()) return [];
   const parsed = JSON.parse(String(raw));
@@ -63,6 +69,7 @@ export function loadYouTubeOwnerChannelConfig(env = process.env, now = Date.now(
     youtubeOwnerLookbackDays: positiveInt(env.YOUTUBE_OWNER_LOOKBACK_DAYS, 14, 90),
     youtubeOwnerMaxUploadPages: positiveInt(env.YOUTUBE_OWNER_MAX_UPLOAD_PAGES, 10, 100),
     youtubeOwnerDefaultProductName: String(env.YOUTUBE_OWNER_DEFAULT_PRODUCT_NAME || 'JD').trim(),
+    youtubeOwnerAlertDelayMs: nonnegativeInt(env.YOUTUBE_OWNER_ALERT_DELAY_MS, 1100, 10_000),
     youtubeOwnerAutoHide: String(env.YOUTUBE_OWNER_CHANNEL_AUTO_HIDE || 'true').toLowerCase() !== 'false',
     youtubeOwnerChannels: uniqueChannels([
       ...YOUTUBE_OWNER_CHANNELS,

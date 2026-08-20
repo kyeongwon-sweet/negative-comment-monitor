@@ -9,11 +9,16 @@ import { kstDateKey } from './schedule.js';
 import { assigneeForTarget, productGroup, productLabel, sendAlert } from './slack.js';
 import { ensureDailyThread } from './threads.js';
 import { moderateYouTubeOwnerAlerts, YOUTUBE_OWNER_ALERT_SCOPES } from './youtube-owner-moderation.js';
+import { retrySlackRateLimit } from './youtube-ads-run.js';
 import {
   collectYouTubeOwnerChannels,
   loadYouTubeOwnerChannelConfig,
   saveOwnerVideoStates,
 } from './youtube-owner-channel.js';
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function moderationConfig(config, allowedVideoIds) {
   return {
@@ -80,7 +85,12 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
     for (let index = 0; index < alerts.length; index += 1) {
       if (seen.has(fingerprints[index])) continue;
       if (!config.dryRun) {
-        const slack = await sendAlert(config, target, alerts[index], fetchImpl, await threadFor(target));
+        if (config.youtubeOwnerAlertDelayMs > 0) await wait(config.youtubeOwnerAlertDelayMs);
+        const threadTs = await threadFor(target);
+        const slack = await retrySlackRateLimit(
+          () => sendAlert(config, target, alerts[index], fetchImpl, threadTs),
+          { maxRetries: 5, retryDelayMs: 3000 },
+        );
         await recordAlert(config, target, alerts[index], fingerprints[index], slack.ts, classifierHash, fetchImpl);
       }
       summary.sentAlerts += 1;

@@ -44,6 +44,7 @@ jobs:
           YOUTUBE_OWNER_LOOKBACK_DAYS: '14'
           YOUTUBE_OWNER_MAX_UPLOAD_PAGES: '10'
           YOUTUBE_OWNER_MAX_THREAD_PAGES: '10'
+          YOUTUBE_OWNER_ALERT_DELAY_MS: '1100'
           YOUTUBE_OWNER_DEFAULT_PRODUCT_NAME: JD
           YOUTUBE_OWNER_CHANNEL_AUTO_HIDE: 'true'
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
