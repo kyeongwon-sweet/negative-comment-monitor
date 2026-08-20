@@ -11,7 +11,7 @@ const assignees = {
   awareness: 'U_AWARENESS',
   sponsorship: 'U_SPONSORSHIP',
   jd: { sponsorship: 'U_JD_SPON', viralBanner: 'U_JD_BANNER', viralVideo: 'U_JD_VIDEO', satellite: 'U_JD_SAT' },
-  p: { viralBanner: 'U_P_BANNER', viralVideo: 'U_P_VIDEO' },
+  p: { viralBanner: 'U_P_BANNER', viralVideo: 'U_P_VIDEO', powerChannel: 'U_P_POWER' },
 };
 
 test('owned media and satellite channels get moderation buttons', () => {
@@ -158,6 +158,11 @@ test('assigneeForTarget: 상품×카테고리 라우팅 + 미지정은 카테고
   assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '바이럴 (배너)' }, assignees), 'U_P_BANNER');
   assert.equal(assigneeForTarget({ productName: 'P망', channelCategory: '바이럴 (영상)' }, assignees), 'U_P_VIDEO');
   assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_OTHER');
+  // 파인트 파워채널/매거진 = 이도경(p.powerChannel), 일반 협찬은 other
+  assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '협찬 (파워채널/매거진)' }, assignees), 'U_P_POWER');
+  assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '협찬 (매거진)' }, assignees), 'U_P_POWER');
+  // 쫀득바 파워채널은 기존대로 jd.sponsorship(협찬 규칙)
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (파워채널/매거진)' }, assignees), 'U_JD_SPON');
   // 위성채널은 상품군 무관하게 항상 이세진(base satellite) — JD/P/기타 전부
   assert.equal(assigneeForTarget({ productName: 'DB딸', channelCategory: '위성채널' }, assignees), 'U_SATELLITE');
   assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '위성채널' }, assignees), 'U_SATELLITE');

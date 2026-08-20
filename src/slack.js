@@ -84,6 +84,7 @@ export function assigneeForTarget(target, assignees = {}) {
   const isVideo = category.includes('바이럴') && category.includes('영상');
   const isSatellite = category.includes('위성채널');
   const isSponsorship = category.includes('협찬');
+  const isPowerChannel = category.includes('파워채널') || category.includes('매거진'); // 협찬 (파워채널/매거진)
   const isAwareness = category.includes('인지'); // 인지(메타) 광고 부정댓글 전용 담당자
   if (group === 'jd') {
     if (isSponsorship && assignees.jd?.sponsorship) return assignees.jd.sponsorship;
@@ -91,6 +92,7 @@ export function assigneeForTarget(target, assignees = {}) {
     if (isVideo && assignees.jd?.viralVideo) return assignees.jd.viralVideo;
     if (isSatellite && assignees.jd?.satellite) return assignees.jd.satellite;
   } else if (group === 'p') {
+    if (isPowerChannel && assignees.p?.powerChannel) return assignees.p.powerChannel; // 파인트 파워채널=이도경
     if (isBanner && assignees.p?.viralBanner) return assignees.p.viralBanner;
     if (isVideo && assignees.p?.viralVideo) return assignees.p.viralVideo;
   }
