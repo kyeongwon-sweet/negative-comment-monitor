@@ -4,6 +4,12 @@ run-name: YouTube awareness alert creative retag (${{ inputs.kst_date }})
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: awareness ads or owned organic YouTube cards
+        required: true
+        type: choice
+        options: ['awareness', 'owner']
+        default: 'awareness'
       kst_date:
         description: KST thread date (YYYY-MM-DD)
         required: true
@@ -55,4 +61,5 @@ jobs:
           YOUTUBE_ADS_LOOKBACK_DAYS: ${{ inputs.lookback_days }}
           YOUTUBE_ADS_MAX_THREAD_PAGES: '100'
           YOUTUBE_ADS_ALERT_DELAY_MS: '1200'
+          RETAG_MODE: ${{ inputs.mode }}
           RETAG_KST_DATE: ${{ inputs.kst_date }}
