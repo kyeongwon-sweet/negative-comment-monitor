@@ -178,8 +178,10 @@ test('assigneeForTarget: 상품×카테고리 라우팅 + 미지정은 카테고
   // 파인트 파워채널/매거진 = 이도경(p.powerChannel, 협찬 인플루언서보다 우선)
   assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '협찬 (파워채널/매거진)' }, assignees), 'U_P_POWER');
   assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '협찬 (매거진)' }, assignees), 'U_P_POWER');
-  // 쫀득바 파워채널은 기존대로 jd.sponsorship(협찬 규칙)
-  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (파워채널/매거진)' }, assignees), 'U_JD_SPON');
+  // 쫀득바 협찬(인플루언서)=김바다(jd.sponsorship), 파워채널/매거진=황경원(other)
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_JD_SPON');
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (파워채널/매거진)' }, assignees), 'U_OTHER');
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (매거진)' }, assignees), 'U_OTHER');
   // 온드미디어는 상품군 무관 owned(김바다)
   assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '온드미디어' }, assignees), 'U_OWNED');
   assert.equal(assigneeForTarget({ productName: 'DB혼', channelCategory: '온드미디어' }, assignees), 'U_OWNED');
