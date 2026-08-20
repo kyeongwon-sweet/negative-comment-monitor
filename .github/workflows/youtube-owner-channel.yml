@@ -1,0 +1,58 @@
+name: YouTube owner channel monitor
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Collect/classify only; do not save, alert, or hide
+        required: false
+        type: boolean
+        default: true
+  schedule:
+    # 댓글 최초 감지 지연 상한을 약 3시간으로 유지. 댓글수 변화가 없는 영상은 본문 API를 호출하지 않는다.
+    - cron: '17 */3 * * *'
+
+concurrency:
+  group: youtube-owner-channel-production
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts
+      - run: npm run start:youtube-owner-channels
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: claude-haiku-4-5-20251001
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_SATELLITE: ${{ vars.SLACK_ASSIGNEE_SATELLITE }}
+          SLACK_ASSIGNEE_JD_SATELLITE: ${{ vars.SLACK_ASSIGNEE_JD_SATELLITE }}
+          YOUTUBE_OWNER_LOOKBACK_DAYS: '14'
+          YOUTUBE_OWNER_MAX_UPLOAD_PAGES: '10'
+          YOUTUBE_OWNER_MAX_THREAD_PAGES: '10'
+          YOUTUBE_OWNER_DEFAULT_PRODUCT_NAME: JD
+          YOUTUBE_OWNER_CHANNEL_AUTO_HIDE: 'true'
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+      - name: Notify Slack on failure
+        if: ${{ failure() }}
+        continue-on-error: true
+        run: node src/notify-failure.js
+        env:
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          FAILURE_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
