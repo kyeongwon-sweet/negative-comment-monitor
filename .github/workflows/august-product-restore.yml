@@ -1,0 +1,73 @@
+name: August ad comment product restore
+run-name: August product restore (${{ inputs.dry_run && 'dry-run' || 'conversion-hide' }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 읽기전용이면 true. false는 TikTok 전환 부정댓글 숨김까지 실행.
+        required: true
+        default: true
+        type: boolean
+      confirmation:
+        description: 실제 숨김 시 HIDE_TIKTOK_CONVERSION_AUGUST_2026
+        required: false
+        type: string
+      export_public_key_b64:
+        description: 결과 암호화용 RSA 공개키(base64 PEM)
+        required: true
+        type: string
+
+concurrency:
+  group: august-ad-comment-product-restore
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts
+      - name: Restore product codes and optionally hide TikTok conversion comments
+        run: node scripts/august-product-restore.mjs
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: claude-haiku-4-5-20251001
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_AWARENESS: ${{ vars.SLACK_ASSIGNEE_AWARENESS }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GOOGLE_ADS_DEVELOPER_TOKEN: ${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}
+          GOOGLE_ADS_LOGIN_CUSTOMER_ID: ${{ vars.GOOGLE_ADS_LOGIN_CUSTOMER_ID }}
+          GOOGLE_ADS_CUSTOMER_IDS: ${{ vars.GOOGLE_ADS_CUSTOMER_IDS }}
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          GOOGLE_ADS_REFRESH_TOKEN: ${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}
+          YOUTUBE_ADS_REFRESH_TOKEN: ${{ secrets.YOUTUBE_ADS_REFRESH_TOKEN }}
+          YOUTUBE_ADS_CHANNEL_ID: ${{ vars.YOUTUBE_ADS_CHANNEL_ID }}
+          AD_CAMPAIGN_NAME_FILTER: ${{ vars.AD_CAMPAIGN_NAME_FILTER }}
+          TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
+          TIKTOK_ADVERTISER_ID: ${{ vars.TIKTOK_ADVERTISER_ID }}
+          TIKTOK_ADS_PRODUCT_NAME: JD
+          TIKTOK_ADS_CHANNEL_CATEGORY: 인지 광고
+          TIKTOK_ADS_CONCURRENCY: '5'
+          TIKTOK_ADS_REQUEST_DELAY_MS: '250'
+          AUGUST_PRODUCT_RESTORE_DRY_RUN: ${{ inputs.dry_run }}
+          AUGUST_PRODUCT_RESTORE_CONFIRM: ${{ inputs.confirmation }}
+          AUGUST_PRODUCT_EXPORT_PUBLIC_KEY_B64: ${{ inputs.export_public_key_b64 }}
+          AUGUST_PRODUCT_EXPORT_PATH: outputs/august-product-restore-2026-08.enc.json
+      - name: Upload encrypted result only
+        uses: actions/upload-artifact@v4
+        with:
+          name: august-product-restore-${{ github.run_id }}
+          path: outputs/august-product-restore-2026-08.enc.json
+          if-no-files-found: error
+          retention-days: 1

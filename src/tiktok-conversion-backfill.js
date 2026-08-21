@@ -88,12 +88,12 @@ function moderationConfig(config) {
 
 export async function runTikTokConversionBackfill(
   config,
-  { dryRun = true, fetchImpl = fetch, now = Date.now(), sleep = wait } = {},
+  { dryRun = true, fetchImpl = fetch, now = Date.now(), sleep = wait, collected = null } = {},
 ) {
-  const collected = await buildTikTokAdEntries(config, fetchImpl, now);
+  const collectedData = collected || await buildTikTokAdEntries(config, fetchImpl, now);
   const stats = { calls: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
-  const risks = await classifyTargetsBatched(collected.entries, config, undefined, stats, fetchImpl);
-  const candidates = collectAugustConversionCandidates(collected.entries, risks, config);
+  const risks = await classifyTargetsBatched(collectedData.entries, config, undefined, stats, fetchImpl);
+  const candidates = collectAugustConversionCandidates(collectedData.entries, risks, config);
   const ids = candidates.map((item) => item.commentId);
   const failures = [];
   let verification = { hiddenIds: [], visibleIds: ids, missingIds: [], campaigns: 0, ads: 0, adgroups: 0 };
@@ -118,6 +118,7 @@ export async function runTikTokConversionBackfill(
 
   const hidden = new Set(verification.hiddenIds.map(String));
   const rows = candidates.map(({ commentId, row }) => ({
+    comment_id: String(commentId),
     ...row,
     '처리상태': dryRun ? '숨김대상(읽기전용)' : (hidden.has(String(commentId)) ? '숨김완료' : '숨김실패'),
   }));
@@ -125,10 +126,10 @@ export async function runTikTokConversionBackfill(
     rows,
     summary: {
       dryRun,
-      campaigns: collected.campaigns,
-      ads: collected.ads,
-      adgroups: collected.adgroups,
-      rawComments: collected.comments,
+      campaigns: collectedData.campaigns,
+      ads: collectedData.ads,
+      adgroups: collectedData.adgroups,
+      rawComments: collectedData.comments,
       negativeCandidates: candidates.length,
       hidden: dryRun ? 0 : verification.hiddenIds.length,
       visible: dryRun ? 0 : verification.visibleIds.length,
