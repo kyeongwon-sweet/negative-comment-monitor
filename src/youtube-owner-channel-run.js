@@ -39,6 +39,20 @@ function moderationConfig(config, allowedVideoIds) {
   };
 }
 
+// 소유 YouTube 오가닉 카드는 기존 관리 카테고리를 유지해야 [숨김] 버튼과
+// owner OAuth 자동숨김/keep 가드가 그대로 동작한다. 부모 스레드만 인지 광고와
+// 공유하도록 별도 라우팅 객체를 만들며, 원본 target은 변경하지 않는다.
+export function threadRouteForOwnerTarget(target) {
+  const originalCategory = String(target?.channelCategory || '').trim() || '소유 YouTube';
+  const category = originalCategory.toLowerCase().includes('소유 youtube')
+    ? '인지 광고'
+    : originalCategory;
+  return {
+    category,
+    target: category === originalCategory ? target : { ...target, channelCategory: category },
+  };
+}
+
 export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelConfig(), fetchImpl = fetch, now = Date.now()) {
   const collected = await collectYouTubeOwnerChannels(config, fetchImpl, now);
   const summary = {
@@ -64,12 +78,13 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
 
   async function threadFor(target) {
     const label = productLabel(productGroup(target.productName));
-    const category = target.channelCategory || '소유 YouTube';
+    const route = threadRouteForOwnerTarget(target);
+    const { category } = route;
     const scopeKey = `${label}|${category}`;
     if (threads.has(scopeKey)) return threads.get(scopeKey);
     const ts = await ensureDailyThread(config, {
       kstDate: kstDateKey(now), scopeKey, productLabel: label, category,
-      assignee: assigneeForTarget(target, config.slackAssignees),
+      assignee: assigneeForTarget(route.target, config.slackAssignees),
     }, fetchImpl);
     threads.set(scopeKey, ts);
     return ts;
