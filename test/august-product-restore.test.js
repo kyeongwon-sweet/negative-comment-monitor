@@ -20,14 +20,18 @@ test('8월 광고·소유 YouTube 알림을 원본 컨텍스트로 복원한다'
     { source: null, platform: 'youtube', comment_id: 'oc', post_url: 'https://youtube.com/watch?v=owner01', comment_text: '노맛', alerted_at: '2026-08-03T00:00:00Z' },
     { source: null, platform: 'youtube', comment_id: 'third', post_url: 'https://youtube.com/watch?v=thirdparty', comment_text: '제외', alerted_at: '2026-08-03T00:00:00Z' },
   ];
-  const youtube = { byVideo: new Map([['video01', { adNames: ['F_V_P망_인지_제작자'], campaignNames: [], titles: [] }]]) };
+  const youtube = { byVideo: new Map([
+    ['video01', { adNames: ['F_V_P망_인지_제작자'], campaignNames: [], titles: [] }],
+    ['owner01', { adNames: ['F_V_P애_인지_제작자'], campaignNames: [], titles: [] }],
+  ]) };
   const tiktok = { comments: [{ comment_id: 'tc', ad_name: 'F_V_JD멜_인지', campaign_name: '빙과' }] };
   const owners = new Map([['owner01', { video_title: '라라스윗 파인트 신상' }]]);
   const result = restoreRowsFromContexts(alerts, youtube, tiktok, owners);
   assert.equal(result.rows.length, 3);
-  assert.deepEqual(result.rows.map((row) => row['상품']), ['P망', 'JD멜', 'P']);
+  assert.deepEqual(result.rows.map((row) => row['상품']), ['P망', 'JD멜', 'P애']);
   assert.equal(result.rows[0]['처리상태'], '숨김완료');
   assert.equal(result.coverage.ownerYouTube.alerts, 1);
+  assert.equal(result.coverage.ownerYouTube.adCreativeMapped, 1);
 });
 
 test('TikTok 전체 조회 결과에서 전환 캠페인만 분류 입력으로 분리한다', () => {

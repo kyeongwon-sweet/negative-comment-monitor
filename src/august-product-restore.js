@@ -253,13 +253,20 @@ export function restoreRowsFromContexts(alerts, youtubeContext, tiktokContext, o
       const video = ownerCatalog.get(videoId);
       if (!video) continue;
       coverage.ownerYouTube.alerts += 1;
-      const product = inferOwnerVideoProduct({ snippet: { title: video.video_title || '' } }, '미확인');
+      const creative = youtubeContext.byVideo.get(videoId);
+      const evidence = creative
+        ? [...creative.adNames, ...creative.campaignNames, ...creative.titles, video.video_title]
+        : [video.video_title];
+      const titleProduct = inferOwnerVideoProduct({ snippet: { title: video.video_title || '' } }, '미확인');
+      const inferred = inferProductFromEvidence(evidence, titleProduct);
       coverage.ownerYouTube.mapped += 1;
+      if (creative) coverage.ownerYouTube.adCreativeMapped = (coverage.ownerYouTube.adCreativeMapped || 0) + 1;
+      if (inferred.ambiguous) coverage.ownerYouTube.ambiguous += 1;
       rows.push(restoredRow(alert, {
-        product,
+        product: inferred.product,
         channel: '소유 YouTube',
         platform: '유튜브',
-        creativeName: video.video_title || '',
+        creativeName: creative?.adNames?.[0] || creative?.campaignNames?.[0] || video.video_title || '',
       }));
     }
   }
