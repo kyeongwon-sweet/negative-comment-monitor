@@ -1,0 +1,36 @@
+name: TikTok single comment hide
+run-name: TikTok single comment hide
+
+on:
+  workflow_dispatch:
+    inputs:
+      alert_id:
+        description: Supabase negative_comment_alerts row ID (comment ID 입력 금지)
+        required: true
+        type: string
+      confirmation:
+        description: HIDE_ONE_TIKTOK_AD_ALERT
+        required: true
+        type: string
+
+jobs:
+  hide:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Hide and verify one TikTok ad comment
+        run: node src/tiktok-comment-hide.js
+        env:
+          TIKTOK_SINGLE_HIDE_ALERT_ID: ${{ inputs.alert_id }}
+          TIKTOK_SINGLE_HIDE_CONFIRM: ${{ inputs.confirmation }}
+          TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
+          TIKTOK_ADVERTISER_ID: ${{ vars.TIKTOK_ADVERTISER_ID }}
+          AD_CAMPAIGN_NAME_FILTER: ${{ vars.AD_CAMPAIGN_NAME_FILTER }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
