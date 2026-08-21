@@ -257,10 +257,13 @@ export function restoreRowsFromContexts(alerts, youtubeContext, tiktokContext, o
       const evidence = creative
         ? [...creative.adNames, ...creative.campaignNames, ...creative.titles, video.video_title]
         : [video.video_title];
-      const titleProduct = inferOwnerVideoProduct({ snippet: { title: video.video_title || '' } }, '미확인');
+      // 운영 owner-channel과 동일한 계약: 제목에 파인트/듬뿍/쫀득 신호가 없으면 이 두
+      // 소유 채널의 기본 상품인 JD로 둔다. 광고 소재 매핑이 있으면 그 정확 코드가 우선한다.
+      const titleProduct = inferOwnerVideoProduct({ snippet: { title: video.video_title || '' } }, 'JD');
       const inferred = inferProductFromEvidence(evidence, titleProduct);
       coverage.ownerYouTube.mapped += 1;
       if (creative) coverage.ownerYouTube.adCreativeMapped = (coverage.ownerYouTube.adCreativeMapped || 0) + 1;
+      if (!inferred.evidence) coverage.ownerYouTube.defaultedToJd = (coverage.ownerYouTube.defaultedToJd || 0) + 1;
       if (inferred.ambiguous) coverage.ownerYouTube.ambiguous += 1;
       rows.push(restoredRow(alert, {
         product: inferred.product,

@@ -34,6 +34,15 @@ test('8월 광고·소유 YouTube 알림을 원본 컨텍스트로 복원한다'
   assert.equal(result.coverage.ownerYouTube.adCreativeMapped, 1);
 });
 
+test('광고 소재와 파인트 제목 신호가 없는 소유 YouTube는 운영 기본값 JD를 유지한다', () => {
+  const result = restoreRowsFromContexts([{
+    source: null, platform: 'youtube', comment_id: 'oc', post_url: 'https://youtube.com/watch?v=owner02',
+    comment_text: '별로', alerted_at: '2026-08-03T00:00:00Z',
+  }], { byVideo: new Map() }, { comments: [] }, new Map([['owner02', { video_title: '개발자의 의도가 벗어난 아이스크림' }]]));
+  assert.equal(result.rows[0]['상품'], 'JD');
+  assert.equal(result.coverage.ownerYouTube.defaultedToJd, 1);
+});
+
 test('TikTok 전체 조회 결과에서 전환 캠페인만 분류 입력으로 분리한다', () => {
   const config = { tiktokCampaignNameFilter: '', tiktokAdsAlertAfter: '', tiktokAdsProductName: 'JD', tiktokAdsChannelCategory: '인지 광고', brandContext: '라라스윗', videoAssignees: {}, tiktokAdvertiserId: 'a' };
   const context = {
