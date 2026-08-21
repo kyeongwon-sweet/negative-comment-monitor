@@ -1,7 +1,11 @@
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { loadTikTokAdsConfig } from '../src/tiktok-ads.js';
-import { encryptConversionExport, runTikTokConversionBackfill } from '../src/tiktok-conversion-backfill.js';
+import {
+  augustConversionLookbackDays,
+  encryptConversionExport,
+  runTikTokConversionBackfill,
+} from '../src/tiktok-conversion-backfill.js';
 
 const CONFIRMATION = 'HIDE_TIKTOK_CONVERSION_AUGUST_2026';
 const dryRun = String(process.env.TIKTOK_CONVERSION_DRY_RUN || 'true').toLowerCase() !== 'false';
@@ -10,15 +14,16 @@ if (!dryRun && String(process.env.TIKTOK_CONVERSION_HIDE_CONFIRM || '') !== CONF
 }
 
 const base = loadTikTokAdsConfig(process.env);
+const now = Date.now();
 const config = {
   ...base,
   dryRun: true,
   tiktokCampaignNameFilter: '전환',
-  tiktokAdsLookbackDays: 35,
+  tiktokAdsLookbackDays: augustConversionLookbackDays(now),
   tiktokAdsMaxCommentsPerAdgroup: 1000,
   tiktokAdsAlertAfter: '',
 };
-const result = await runTikTokConversionBackfill(config, { dryRun });
+const result = await runTikTokConversionBackfill(config, { dryRun, now });
 const payload = {
   generatedAt: new Date().toISOString(),
   scope: { platform: '틱톡', campaignNameContains: '전환', monthKst: '2026-08' },

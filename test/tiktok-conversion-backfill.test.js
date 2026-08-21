@@ -2,11 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { constants, generateKeyPairSync, privateDecrypt, createDecipheriv } from 'node:crypto';
 import {
+  augustConversionLookbackDays,
   collectAugustConversionCandidates,
   encryptConversionExport,
   formatTikTokKst,
   productFromConversionAdTitle,
 } from '../src/tiktok-conversion-backfill.js';
+
+test('8월 월초를 포함하되 TikTok 최대 30일 제한을 넘지 않는다', () => {
+  assert.equal(augustConversionLookbackDays(Date.parse('2026-08-21T01:00:00Z')), 21);
+  assert.equal(augustConversionLookbackDays(Date.parse('2026-09-10T00:00:00Z')), 30);
+});
 
 test('전환 광고명에서 전환 바로 앞 상품 토큰을 추출한다', () => {
   assert.equal(productFromConversionAdTitle('[26.06]F_I_P애_전환_상시_홍정민', 'JD'), 'P애');

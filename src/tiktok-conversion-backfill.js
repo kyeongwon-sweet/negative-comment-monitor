@@ -4,6 +4,8 @@ import { buildTikTokAdEntries } from './tiktok-ads.js';
 import { hideWithIsolation, verifyHiddenTikTokComments } from './tiktok-bulk-hide.js';
 
 const AUGUST_PREFIX = '2026-08-';
+const DAY_MS = 24 * 60 * 60 * 1000;
+const AUGUST_START_UTC = Date.parse('2026-07-31T15:00:00Z'); // 2026-08-01 00:00 KST
 
 function chunk(values, size) {
   const out = [];
@@ -27,6 +29,12 @@ export function formatTikTokKst(timestamp) {
   else ms = Date.parse(raw);
   if (!Number.isFinite(ms)) return '';
   return new Date(ms + 9 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+}
+
+// TikTok comment/list는 최대 30일만 허용한다. 실행일이 8월인 동안 월초를 포함하는
+// 최소 일수만 요청해 8월 전체를 덮고 불필요한 7월 조회와 40002 오류를 피한다.
+export function augustConversionLookbackDays(now = Date.now()) {
+  return Math.min(30, Math.max(1, Math.ceil((now - AUGUST_START_UTC) / DAY_MS)));
 }
 
 function reasonForRisk(risk) {
