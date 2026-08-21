@@ -1,0 +1,55 @@
+name: YouTube owner pending comment hide
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 핵심 수집과 분리한 경량 DB-outbox 모더레이터. UTC 정각 데드존을 피하면서 15분 지연 상한을 유지한다.
+    - cron: '7,22,37,52 * * * *'
+
+concurrency:
+  group: youtube-owner-pending-hide-production
+  cancel-in-progress: false
+
+jobs:
+  moderate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Hide pending owned YouTube comments
+        id: owner_pending_hide
+        continue-on-error: true
+        run: npm run hide:youtube-owner-pending
+        env:
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          YOUTUBE_OWNER_BULK_HIDE_DRY_RUN: 'false'
+          YOUTUBE_OWNER_BULK_HIDE_CONFIRM: HIDE_ALL_YOUTUBE_AD_ALERTS
+          YOUTUBE_OWNER_ALERT_SCOPE: organic_satellite
+          YOUTUBE_OWNER_BULK_HIDE_BATCH_SIZE: '50'
+          YOUTUBE_OWNER_BULK_HIDE_ACTOR: youtube-owner-pending-auto-hide
+      - name: Notify Slack of auxiliary degraded state
+        if: ${{ steps.owner_pending_hide.outcome == 'failure' }}
+        continue-on-error: true
+        run: node src/notify-auxiliary-degraded.js
+        env:
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          AUXILIARY_COMPONENT: YouTube 소유채널 15분 자동숨김
+          AUXILIARY_REASON: pending owner moderation failed
+          FAILURE_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: Record auxiliary outcome
+        if: ${{ always() }}
+        run: |
+          echo "### YouTube owner pending moderation" >> "$GITHUB_STEP_SUMMARY"
+          echo "- moderation: ${{ steps.owner_pending_hide.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- core monitor impact: none" >> "$GITHUB_STEP_SUMMARY"
