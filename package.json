@@ -10,6 +10,7 @@
     "restore:tiktok-comment": "node src/tiktok-comment-restore.js",
     "start:youtube-ads": "node src/youtube-ads-run.js",
     "start:youtube-owner-channels": "node src/youtube-owner-channel-run.js",
+    "sync:negative-comment-sheet": "node src/negative-comment-sheet-sync.js",
     "moderate:youtube-owner": "node src/youtube-owner-moderation.js",
     "audit:youtube-owner-hidden": "node src/youtube-owner-hidden-audit.js",
     "oauth:youtube-satellite": "node scripts/youtube-satellite-owner-oauth.mjs",

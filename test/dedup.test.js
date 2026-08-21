@@ -31,18 +31,27 @@ test('loadSeenFingerprints returns recorded values', async () => {
 test('recordAlert writes a conflict-safe row', async () => {
   let request;
   const config = { supabaseUrl: 'https://db.test', supabaseKey: 'key', slackChannelId: 'C1' };
-  const fetchImpl = async (url, options) => { request = { url, options }; return { ok: true }; };
-  await recordAlert(config, { url: 'https://x.com/u/status/1' }, { id: 'c1', platform: 'twitter', text: 'bad' }, 'fp', '1.2', 'hash123', fetchImpl);
+  const fetchImpl = async (url, options) => { request = { url, options }; return { ok: true, json: async () => [{ id: 1 }] }; };
+  const inserted = await recordAlert(config,
+    { url: 'https://x.com/u/status/1', productName: 'JD멜', channelCategory: '바이럴 (영상)', channelName: '채널', assetName: '소재' },
+    { id: 'c1', platform: 'twitter', text: 'bad', timestamp: '2026-08-21T00:00:00Z', risk: { category: '제품 불만', reason: '맛이 없다고 평가' } },
+    'fp', '1.2', 'hash123', fetchImpl);
   assert.match(request.url, /on_conflict=fingerprint/);
   const body = JSON.parse(request.options.body);
   assert.equal(body.fingerprint, 'fp');
   assert.equal(body.classifier_hash, 'hash123'); // 알림 당시 해시 저장(#8 오탐률 집계용)
+  assert.equal(body.category, '제품 불만');
+  assert.equal(body.reason, '맛이 없다고 평가');
+  assert.equal(body.product_name, 'JD멜');
+  assert.equal(body.channel_category, '바이럴 (영상)');
+  assert.equal(body.comment_timestamp, '2026-08-21T00:00:00Z');
+  assert.equal(inserted.id, 1);
 });
 
 test('recordAlert preserves Meta ad source identifiers for server-side moderation', async () => {
   let body;
   const config = { supabaseUrl: 'https://db.test', supabaseKey: 'key', slackChannelId: 'C1' };
-  const fetchImpl = async (_url, options) => { body = JSON.parse(options.body); return { ok: true }; };
+  const fetchImpl = async (_url, options) => { body = JSON.parse(options.body); return { ok: true, json: async () => [{ id: 1 }] }; };
   const target = { url: 'https://instagram.com/p/ABC/', source: 'meta_ads', metaMediaId: 'm1', metaAdId: 'a1' };
   await recordAlert(config, target, { id: 'c1', platform: 'instagram', text: 'bad' }, 'fp', '1.2', null, fetchImpl);
   assert.equal(body.source, 'meta_ads');

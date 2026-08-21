@@ -59,6 +59,19 @@ jobs:
           YOUTUBE_OWNER_DEFAULT_PRODUCT_NAME: JD
           YOUTUBE_OWNER_CHANNEL_AUTO_HIDE: 'true'
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+      - name: Sync new negative comments to Google Sheet
+        if: ${{ always() }}
+        continue-on-error: true
+        run: npm run sync:negative-comment-sheet
+        env:
+          NEGATIVE_COMMENT_SHEET_WEBHOOK_URL: ${{ secrets.NEGATIVE_COMMENT_SHEET_WEBHOOK_URL }}
+          NEGATIVE_COMMENT_SHEET_WEBHOOK_TOKEN: ${{ secrets.NEGATIVE_COMMENT_SHEET_WEBHOOK_TOKEN }}
+          NEGATIVE_COMMENT_SHEET_FAILURE_THRESHOLD: '3'
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
       - name: Notify Slack of auxiliary degraded state
         if: ${{ steps.schema.outcome == 'failure' || steps.owner_monitor.outcome == 'failure' }}
         continue-on-error: true

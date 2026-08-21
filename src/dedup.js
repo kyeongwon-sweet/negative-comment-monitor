@@ -54,7 +54,7 @@ export async function recordAlert(config, target, comment, fingerprint, slackTs 
     method: 'POST',
     headers: headers(config, {
       'Content-Type': 'application/json',
-      Prefer: 'resolution=ignore-duplicates,return=minimal',
+      Prefer: 'resolution=ignore-duplicates,return=representation',
     }),
     body: JSON.stringify({
       fingerprint,
@@ -68,7 +68,16 @@ export async function recordAlert(config, target, comment, fingerprint, slackTs 
       source: String(target.source || '') || null,
       meta_media_id: String(target.metaMediaId || '') || null,
       meta_ad_id: String(target.metaAdId || '') || null,
+      category: String(comment.risk?.category || '') || null,
+      reason: String(comment.risk?.reason || comment.risk?.matchedTerms?.join(', ') || '') || null,
+      product_name: String(target.productName || '') || null,
+      channel_category: String(target.channelCategory || '') || null,
+      channel_name: String(target.channelName || '') || null,
+      asset_name: String(target.assetName || target.adTitle || '') || null,
+      comment_timestamp: String(comment.timestamp || '') || null,
     }),
   });
   if (!response.ok) throw new Error(`Dedup POST ${response.status}: ${(await response.text()).slice(0, 200)}`);
+  const rows = typeof response.json === 'function' ? await response.json() : [];
+  return Array.isArray(rows) && rows.length ? rows[0] : null;
 }
