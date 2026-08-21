@@ -38,6 +38,10 @@ function parseCsv(value) {
 }
 
 function apiErrorMessage(payload) {
+  if (typeof payload?.error === 'string') {
+    const description = String(payload.error_description || '').trim();
+    return description ? `${payload.error}: ${description}` : payload.error;
+  }
   return payload?.error?.message || payload?.message || 'unknown error';
 }
 
