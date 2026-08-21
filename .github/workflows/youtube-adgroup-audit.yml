@@ -1,0 +1,72 @@
+name: YouTube ad-group comment audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      ad_group_filter:
+        description: Ad-group name substring
+        required: true
+        default: 무디
+        type: string
+      apply_missing:
+        description: Send and persist newly found negative comments
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: youtube-adgroup-comment-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts
+      - name: Audit all comments in matching YouTube ad groups
+        run: node src/youtube-adgroup-audit.js
+        env:
+          YOUTUBE_ADGROUP_NAME_FILTER: ${{ inputs.ad_group_filter }}
+          APPLY_MISSING: ${{ inputs.apply_missing }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: claude-haiku-4-5-20251001
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_AWARENESS: ${{ vars.SLACK_ASSIGNEE_AWARENESS }}
+          META_AD_VIDEO_ASSIGNEES: ${{ vars.META_AD_VIDEO_ASSIGNEES }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GOOGLE_ADS_DEVELOPER_TOKEN: ${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          GOOGLE_ADS_REFRESH_TOKEN: ${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}
+          YOUTUBE_ADS_REFRESH_TOKEN: ${{ secrets.YOUTUBE_ADS_REFRESH_TOKEN }}
+          GOOGLE_ADS_LOGIN_CUSTOMER_ID: ${{ vars.GOOGLE_ADS_LOGIN_CUSTOMER_ID }}
+          GOOGLE_ADS_CUSTOMER_IDS: ${{ vars.GOOGLE_ADS_CUSTOMER_IDS }}
+          YOUTUBE_ADS_CHANNEL_ID: ${{ vars.YOUTUBE_ADS_CHANNEL_ID }}
+          AD_CAMPAIGN_NAME_FILTER: ${{ vars.AD_CAMPAIGN_NAME_FILTER }}
+          YOUTUBE_ADS_PRODUCT_NAME: JD멜
+          YOUTUBE_ADS_CHANNEL_CATEGORY: 인지 광고
+          YOUTUBE_ADS_MAX_THREAD_PAGES: '100'
+          YOUTUBE_ADS_SLACK_RETRIES: '6'
+          DRY_RUN: 'false'
+      - name: Sync any recovered alerts to Google Sheet
+        if: ${{ always() && inputs.apply_missing }}
+        continue-on-error: true
+        run: npm run sync:negative-comment-sheet
+        env:
+          NEGATIVE_COMMENT_SHEET_WEBHOOK_URL: ${{ secrets.NEGATIVE_COMMENT_SHEET_WEBHOOK_URL }}
+          NEGATIVE_COMMENT_SHEET_WEBHOOK_TOKEN: ${{ secrets.NEGATIVE_COMMENT_SHEET_WEBHOOK_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
