@@ -18,6 +18,16 @@ function required(env, name) {
   return value;
 }
 
+function positiveInt(value, fallback, max) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(max, Math.floor(parsed));
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function parseSlackTimestamps(value) {
   const result = [...new Set(String(value || '').split(',').map((item) => item.trim()).filter(Boolean))];
   if (!result.length) throw new Error('At least one Slack timestamp is required');
@@ -41,6 +51,8 @@ export function loadYouTubeRestoreConfig(env = process.env) {
     youtubeApiBase: String(env.YOUTUBE_API_BASE || 'https://www.googleapis.com/youtube/v3').trim().replace(/\/$/, ''),
     actor: String(env.YOUTUBE_RESTORE_ACTOR || 'U0B2Y0ZC8QZ').trim(),
     falsePositiveReason: String(env.YOUTUBE_RESTORE_FP_REASON || 'positive_neutral').trim(),
+    verificationAttempts: positiveInt(env.YOUTUBE_RESTORE_VERIFY_ATTEMPTS, 30, 60),
+    verificationDelayMs: positiveInt(env.YOUTUBE_RESTORE_VERIFY_DELAY_MS, 10_000, 30_000),
   };
 }
 
@@ -179,8 +191,13 @@ export async function restoreYouTubeComments(config = loadYouTubeRestoreConfig()
     const hiddenOrMissing = ids.filter((id) => before.rejected.has(id) || before.missing.has(id));
     alreadyVisible += ids.filter((id) => before.visible.has(id)).length;
     if (hiddenOrMissing.length) await setPublished(config, hiddenOrMissing, accessToken, fetchImpl);
-    const after = await listYouTubeCommentStatesIsolated(config, ids, accessToken, fetchImpl);
-    if (after.channelError || after.failed.length || after.rejected.size || after.missing.size || after.visible.size !== ids.length) {
+    let after;
+    for (let attempt = 1; attempt <= (config.verificationAttempts || 1); attempt += 1) {
+      after = await listYouTubeCommentStatesIsolated(config, ids, accessToken, fetchImpl);
+      if (!after.channelError && !after.failed.length && !after.rejected.size && !after.missing.size && after.visible.size === ids.length) break;
+      if (attempt < (config.verificationAttempts || 1)) await (config.sleep || wait)(config.verificationDelayMs || 1);
+    }
+    if (!after || after.channelError || after.failed.length || after.rejected.size || after.missing.size || after.visible.size !== ids.length) {
       throw new Error('YouTube public restore could not be fully verified');
     }
     restored += hiddenOrMissing.length;

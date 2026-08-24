@@ -67,7 +67,7 @@ test('사람 오탐인 선택 댓글만 published 복원하고 공개 상태를 
   const config = {
     googleAdsClientId: 'client', googleAdsClientSecret: 'secret', supabaseUrl: 'https://db.test', supabaseKey: 'service',
     slackBotToken: 'slack', slackChannelId: 'C1', slackTimestamps: ['1.1', '1.2'], youtubeApiBase: 'https://youtube.test',
-    actor: 'U0', falsePositiveReason: 'positive_neutral',
+    actor: 'U0', falsePositiveReason: 'positive_neutral', verificationAttempts: 1, verificationDelayMs: 1,
   };
   const result = await restoreYouTubeComments(config, fetchImpl, Date.parse('2026-08-24T00:00:00Z'));
   assert.equal(result.requested, 2);
@@ -85,6 +85,7 @@ test('사람 유지 결정이 아니면 플랫폼을 호출하지 않는다', as
   const config = {
     googleAdsClientId: 'client', googleAdsClientSecret: 'secret', supabaseUrl: 'https://db.test', supabaseKey: 'service',
     slackBotToken: '', slackChannelId: 'C1', slackTimestamps: ['1.1'], youtubeApiBase: 'https://youtube.test', actor: 'U0', falsePositiveReason: 'other',
+    verificationAttempts: 1, verificationDelayMs: 1,
   };
   await assert.rejects(() => restoreYouTubeComments(config, async (input) => {
     if (String(input).includes('/negative_comment_alerts?')) return response(200, [{
