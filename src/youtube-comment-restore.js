@@ -172,15 +172,18 @@ export async function restoreYouTubeComments(config = loadYouTubeRestoreConfig()
     const ids = [...new Set(ownerRows.map((row) => String(row.comment_id)))];
     const before = await listYouTubeCommentStatesIsolated(config, ids, accessToken, fetchImpl);
     if (before.channelError || before.failed.length) throw new Error('YouTube ground-truth lookup failed before restore');
-    const rejected = ids.filter((id) => before.rejected.has(id));
+    // YouTube는 rejected 댓글을 comments.list 결과에서 아예 빼기도 한다. 숨김 직후의
+    // missing은 삭제와 구분할 수 없으므로 published를 시도하고, 그 뒤 실제 visible로
+    // 나타난 댓글만 복원 성공으로 확정한다. 삭제된 댓글이면 setModerationStatus/사후
+    // 조회에서 실패하므로 성공을 위조하지 않는다.
+    const hiddenOrMissing = ids.filter((id) => before.rejected.has(id) || before.missing.has(id));
     alreadyVisible += ids.filter((id) => before.visible.has(id)).length;
-    if (before.missing.size) throw new Error('A requested YouTube comment is unavailable and cannot be restored');
-    if (rejected.length) await setPublished(config, rejected, accessToken, fetchImpl);
+    if (hiddenOrMissing.length) await setPublished(config, hiddenOrMissing, accessToken, fetchImpl);
     const after = await listYouTubeCommentStatesIsolated(config, ids, accessToken, fetchImpl);
     if (after.channelError || after.failed.length || after.rejected.size || after.missing.size || after.visible.size !== ids.length) {
       throw new Error('YouTube public restore could not be fully verified');
     }
-    restored += rejected.length;
+    restored += hiddenOrMissing.length;
   }
   const slack = await syncRestoredCards(config, rows, fetchImpl, now);
   return {

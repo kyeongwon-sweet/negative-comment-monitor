@@ -58,7 +58,8 @@ test('사람 오탐인 선택 댓글만 published 복원하고 공개 상태를 
     }
     if (url.includes('/comments?')) {
       const ids = new URL(url).searchParams.get('id').split(',');
-      return response(200, { items: ids.map((id) => ({ id, snippet: { moderationStatus: published ? 'published' : 'rejected' } })) });
+      // 실제 API처럼 숨김 댓글은 직접 조회에서 빠질 수 있다. 복원 뒤에만 공개로 보인다.
+      return response(200, { items: published ? ids.map((id) => ({ id, snippet: { moderationStatus: 'published' } })) : [] });
     }
     if (url === 'https://slack.com/api/chat.update') return response(200, { ok: true });
     throw new Error(`unexpected ${url}`);
