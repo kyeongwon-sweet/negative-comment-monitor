@@ -184,9 +184,11 @@ jobs:
           TIKTOK_ADS_AUTO_HIDE: 'true'
           DRY_RUN: 'false'
       - name: Poll YouTube awareness ad comments
+        id: youtube_ads
         # Google Ads 관리자 산하 활성 일반 계정에서 설정 키워드가 포함된 캠페인 영상을 찾고,
         # 채널 OAuth로 조회 가능한 광고 영상 댓글과 답글을 읽는다. KST 하루 1회 멱등 실행.
         if: ${{ always() }}
+        continue-on-error: true
         run: node src/youtube-ads-run.js
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -218,6 +220,23 @@ jobs:
           YOUTUBE_ADS_FORCE: ${{ github.event_name == 'workflow_dispatch' }}
           YOUTUBE_OWNER_AUTO_HIDE: 'true'
           DRY_RUN: 'false'
+      - name: Record YouTube Ads auxiliary outcome
+        if: ${{ always() }}
+        continue-on-error: true
+        run: node src/record-auxiliary-outcome.js
+        env:
+          AUXILIARY_HEALTH_KEY: youtube_ads
+          AUXILIARY_OUTCOME: ${{ steps.youtube_ads.outcome }}
+          AUXILIARY_COMPONENT: YouTube 인지광고 수집
+          AUXILIARY_REASON: Google Ads 또는 YouTube OAuth/API 단계 실패
+          AUXILIARY_FAILURE_THRESHOLD: '3'
+          AUXILIARY_ALERT_COOLDOWN_HOURS: '24'
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          FAILURE_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
       - name: Sync new negative comments to Google Sheet
         if: ${{ always() }}
         continue-on-error: true

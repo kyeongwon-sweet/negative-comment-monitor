@@ -7,6 +7,7 @@ import {
   loadNegativeCommentSheetSyncConfig,
   sheetRowFromAlert,
   syncPendingNegativeComments,
+  validateSheetWebhookUrl,
 } from '../src/negative-comment-sheet-sync.js';
 
 function response(status, data) {
@@ -20,7 +21,7 @@ function response(status, data) {
 
 const config = {
   enabled: true,
-  webhookUrl: 'https://script.test/exec', webhookToken: 'secret',
+  webhookUrl: 'https://script.google.com/macros/s/test/exec', webhookToken: 'secret',
   supabaseUrl: 'https://db.test', supabaseKey: 'db-key',
   slackBotToken: 'slack', slackChannelId: 'C1', assignee: 'U1',
   batchSize: 200, failureThreshold: 3, alertCooldownHours: 24,
@@ -29,9 +30,24 @@ const config = {
 test('시트 설정은 URL과 token이 모두 있을 때만 활성화한다', () => {
   assert.equal(loadNegativeCommentSheetSyncConfig({}).enabled, false);
   assert.equal(loadNegativeCommentSheetSyncConfig({
-    NEGATIVE_COMMENT_SHEET_WEBHOOK_URL: 'https://script.test/exec',
+    NEGATIVE_COMMENT_SHEET_WEBHOOK_URL: 'https://script.google.com/macros/s/test/exec',
     NEGATIVE_COMMENT_SHEET_WEBHOOK_TOKEN: 'token',
   }).enabled, true);
+});
+
+test('시트 webhook은 HTTPS Apps Script /exec URL만 허용한다', () => {
+  assert.equal(
+    validateSheetWebhookUrl('https://script.google.com/macros/s/test/exec'),
+    'https://script.google.com/macros/s/test/exec',
+  );
+  assert.throws(
+    () => validateSheetWebhookUrl('#브이로그 #fyp #라라스윗'),
+    /Apps Script \/exec URL/,
+  );
+  assert.throws(
+    () => validateSheetWebhookUrl('https://example.com/exec'),
+    /Apps Script \/exec URL/,
+  );
 });
 
 test('DB 알림을 고정 11열+숨은 중복키 행으로 매핑한다', () => {

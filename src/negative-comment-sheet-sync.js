@@ -22,6 +22,21 @@ function clean(value) {
   return String(value ?? '').trim();
 }
 
+export function validateSheetWebhookUrl(value) {
+  const raw = clean(value);
+  try {
+    const url = new URL(raw);
+    const allowedHost = url.hostname === 'script.google.com'
+      || url.hostname.endsWith('.script.googleusercontent.com');
+    if (url.protocol !== 'https:' || !allowedHost || !/\/exec\/?$/.test(url.pathname)) {
+      throw new Error('not an Apps Script /exec URL');
+    }
+    return url.toString();
+  } catch {
+    throw new Error('NEGATIVE_COMMENT_SHEET_WEBHOOK_URL must be an HTTPS Apps Script /exec URL');
+  }
+}
+
 function headers(config, extra = {}) {
   return { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, ...extra };
 }
@@ -91,7 +106,10 @@ export async function loadPendingSheetAlerts(config, fetchImpl = fetch) {
 }
 
 export async function appendSheetRows(config, rows, fetchImpl = fetch) {
-  const response = await fetchImpl(config.webhookUrl, {
+  // Secret 슬롯에 댓글 캡션 같은 임의 문자열이 덮어써져도 fetch까지 전달하지 않는다.
+  // 명확한 degraded 원인으로 기록해 다음 회차 재시도·운영 경고가 작동하게 한다.
+  const webhookUrl = validateSheetWebhookUrl(config.webhookUrl);
+  const response = await fetchImpl(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token: config.webhookToken, rows }),
