@@ -1,0 +1,33 @@
+name: Negative comment sheet sync
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: negative-comment-sheet-sync-production
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts
+      - name: Sync pending negative comments to Google Sheet
+        run: npm run sync:negative-comment-sheet
+        env:
+          NEGATIVE_COMMENT_SHEET_WEBHOOK_URL: ${{ secrets.NEGATIVE_COMMENT_SHEET_WEBHOOK_URL }}
+          NEGATIVE_COMMENT_SHEET_WEBHOOK_TOKEN: ${{ secrets.NEGATIVE_COMMENT_SHEET_WEBHOOK_TOKEN }}
+          NEGATIVE_COMMENT_SHEET_BATCH_SIZE: '500'
+          NEGATIVE_COMMENT_SHEET_FAILURE_THRESHOLD: '3'
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
