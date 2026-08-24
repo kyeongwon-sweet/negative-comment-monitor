@@ -36,18 +36,24 @@ jobs:
           YOUTUBE_OWNER_ALERT_SCOPE: organic_satellite
           YOUTUBE_OWNER_BULK_HIDE_BATCH_SIZE: '50'
           YOUTUBE_OWNER_BULK_HIDE_ACTOR: youtube-owner-pending-auto-hide
-      - name: Notify Slack of auxiliary degraded state
-        if: ${{ steps.owner_pending_hide.outcome == 'failure' }}
+      - name: Record auxiliary outcome
+        if: ${{ always() }}
         continue-on-error: true
-        run: node src/notify-auxiliary-degraded.js
+        run: node src/record-auxiliary-outcome.js
         env:
+          AUXILIARY_HEALTH_KEY: youtube_owner_pending_hide
+          AUXILIARY_OUTCOME: ${{ steps.owner_pending_hide.outcome }}
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
           AUXILIARY_COMPONENT: YouTube 소유채널 15분 자동숨김
-          AUXILIARY_REASON: pending owner moderation failed
+          AUXILIARY_REASON: pending owner moderation failed or made no progress
+          AUXILIARY_FAILURE_THRESHOLD: '3'
+          AUXILIARY_ALERT_COOLDOWN_HOURS: '24'
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           FAILURE_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      - name: Record auxiliary outcome
+      - name: Write run summary
         if: ${{ always() }}
         run: |
           echo "### YouTube owner pending moderation" >> "$GITHUB_STEP_SUMMARY"

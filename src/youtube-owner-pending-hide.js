@@ -35,17 +35,77 @@ export async function loadTrackedOwnerVideoIds(config, fetchImpl = fetch) {
   return ids;
 }
 
-export function pendingOwnerModerationConfig(config, allowedVideoIds) {
+export function pendingOwnerModerationConfig(
+  config,
+  allowedVideoIds,
+  alertScope = YOUTUBE_OWNER_ALERT_SCOPES.ORGANIC_SATELLITE,
+) {
   return {
     ...config,
     dryRun: false,
     singleAlert: false,
     autoHideAllNegatives: true,
-    alertScope: YOUTUBE_OWNER_ALERT_SCOPES.ORGANIC_SATELLITE,
+    alertScope,
     allowedVideoIds,
     batchSize: 50,
     actor: 'youtube-owner-pending-auto-hide',
   };
+}
+
+const SUM_FIELDS = [
+  'totalAlerts',
+  'eligibleCandidates',
+  'trackedEligibleCandidates',
+  'matchedCandidates',
+  'missingCommentId',
+  'unmatchedVideo',
+  'alreadyMarkedHidden',
+  'skippedHumanDecision',
+  'attempted',
+  'hidden',
+  'unavailableOrAlreadyHidden',
+  'moderationUnavailable',
+  'moderationFailed',
+  'acceptedUnverified',
+  'channelFailures',
+  'persistenceFailed',
+  'dbUpdated',
+  'slackUpdated',
+  'slackUpdateFailed',
+];
+
+export function combinePendingModerationResults(results) {
+  const combined = {};
+  for (const field of SUM_FIELDS) {
+    combined[field] = results.reduce((sum, result) => sum + Number(result?.[field] || 0), 0);
+  }
+  combined.scopes = results.map((result) => ({
+    alertScope: result.alertScope,
+    eligibleCandidates: Number(result.eligibleCandidates || 0),
+    trackedEligibleCandidates: Number(result.trackedEligibleCandidates || 0),
+    matchedCandidates: Number(result.matchedCandidates || 0),
+    attempted: Number(result.attempted || 0),
+    hidden: Number(result.hidden || 0),
+    unavailableOrAlreadyHidden: Number(result.unavailableOrAlreadyHidden || 0),
+    moderationFailed: Number(result.moderationFailed || 0),
+  }));
+  return combined;
+}
+
+export function assertPendingModerationMadeProgress(result) {
+  const matched = Number(result.matchedCandidates || 0);
+  const tracked = Number(result.trackedEligibleCandidates || 0);
+  const handled = Number(result.attempted || 0)
+    + Number(result.unavailableOrAlreadyHidden || 0)
+    + Number(result.moderationFailed || 0)
+    + Number(result.channelFailures || 0);
+  if ((matched > 0 || tracked > 0) && handled === 0) {
+    throw new Error(
+      `YouTube owner pending moderation made no progress `
+      + `(tracked=${tracked}, matched=${matched}, attempted=0)`,
+    );
+  }
+  return result;
 }
 
 export async function hidePendingYouTubeOwnerAlerts(
@@ -58,12 +118,24 @@ export async function hidePendingYouTubeOwnerAlerts(
   if (!allowedVideoIds.size) {
     return { skipped: 'no-tracked-owner-videos', trackedVideos: 0 };
   }
-  const result = await moderateImpl(
-    pendingOwnerModerationConfig(config, allowedVideoIds),
-    fetchImpl,
-    now,
-  );
-  return { ...result, trackedVideos: allowedVideoIds.size };
+  // 오가닉(source=null)과 광고(source=youtube_ads)는 같은 owner OAuth로 숨길 수 있다.
+  // 기존 구현은 오가닉 범위만 실행해 광고에서 204 뒤 확인 대기 상태로 남은 댓글이
+  // 영구히 재검증되지 않았다. 두 범위를 분리 호출해 사람 keep 결정은 기존 엔진에서 보존한다.
+  const results = [];
+  for (const alertScope of [
+    YOUTUBE_OWNER_ALERT_SCOPES.ORGANIC_SATELLITE,
+    YOUTUBE_OWNER_ALERT_SCOPES.ADS,
+  ]) {
+    results.push(await moderateImpl(
+      pendingOwnerModerationConfig(config, allowedVideoIds, alertScope),
+      fetchImpl,
+      now,
+    ));
+  }
+  return assertPendingModerationMadeProgress({
+    ...combinePendingModerationResults(results),
+    trackedVideos: allowedVideoIds.size,
+  });
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
@@ -73,6 +145,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
       console.log(JSON.stringify({
         trackedVideos: result.trackedVideos || 0,
         totalAlerts: result.totalAlerts || 0,
+        eligibleCandidates: result.eligibleCandidates || 0,
+        trackedEligibleCandidates: result.trackedEligibleCandidates || 0,
+        matchedCandidates: result.matchedCandidates || 0,
         attempted: result.attempted || 0,
         hidden: result.hidden || 0,
         unavailableOrAlreadyHidden: result.unavailableOrAlreadyHidden || 0,

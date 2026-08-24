@@ -141,7 +141,7 @@ function chunk(values, size) {
   return result;
 }
 
-function videoIdFromAlert(alert) {
+export function videoIdFromAlert(alert) {
   const key = extractPostKey(alert.post_url);
   return key && key.startsWith('yt:') ? key.slice(3) : '';
 }
@@ -482,6 +482,10 @@ export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModera
     autoHideAllNegatives: config.autoHideAllNegatives,
   };
   const candidateAlerts = alerts.filter((alert) => alertDisposition(alert, dispositionOptions) === 'eligible');
+  const allowed = allowedVideoIdSet(config);
+  const trackedEligibleCandidates = allowed.size
+    ? candidateAlerts.filter((alert) => allowed.has(videoIdFromAlert(alert))).length
+    : 0;
   // 숨길 후보가 없으면 OAuth refresh·YouTube API를 전혀 호출하지 않는다. 15분 웨이크에서
   // 미처리 댓글이 없을 때 채널 수만큼 토큰을 갱신하는 낭비를 막는다.
   if (!candidateAlerts.length) {
@@ -489,6 +493,9 @@ export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModera
       dryRun: config.dryRun,
       alertScope: config.alertScope || YOUTUBE_OWNER_ALERT_SCOPES.ADS,
       totalAlerts: alerts.length,
+      eligibleCandidates: 0,
+      trackedEligibleCandidates,
+      matchedCandidates: 0,
       ownerTokens: 0,
       validOwnerTokens: 0,
       ownerTokenFailures: [],
@@ -531,10 +538,15 @@ export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModera
 
   const mapped = await mapVideosToOwners(config, candidateAlerts, validOwners, accessTokens, fetchImpl);
   const grouped = groupAlertsByOwner(alerts, mapped.ownerByVideo, dispositionOptions);
+  const matchedCandidates = [...grouped.groups.values()]
+    .reduce((sum, rows) => sum + rows.length, 0);
   const result = {
     dryRun: config.dryRun,
     alertScope: config.alertScope || YOUTUBE_OWNER_ALERT_SCOPES.ADS,
     totalAlerts: alerts.length,
+    eligibleCandidates: candidateAlerts.length,
+    trackedEligibleCandidates,
+    matchedCandidates,
     ownerTokens: owners.length,
     validOwnerTokens: validOwners.length,
     ownerTokenFailures,
