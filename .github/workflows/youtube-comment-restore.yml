@@ -1,0 +1,40 @@
+name: YouTube selected comments restore
+
+on:
+  workflow_dispatch:
+    inputs:
+      slack_channel_id:
+        description: Slack channel containing the alert cards
+        required: true
+        type: string
+      slack_ts_csv:
+        description: Comma-separated Slack message timestamps (never pass comment IDs)
+        required: true
+        type: string
+      confirmation:
+        description: Enter RESTORE_YOUTUBE_COMMENTS
+        required: true
+        type: string
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Restore exact DB-backed YouTube comments and persist false positives
+        run: node src/youtube-comment-restore.js
+        env:
+          YOUTUBE_RESTORE_SLACK_CHANNEL_ID: ${{ inputs.slack_channel_id }}
+          YOUTUBE_RESTORE_SLACK_TS_CSV: ${{ inputs.slack_ts_csv }}
+          YOUTUBE_RESTORE_CONFIRM: ${{ inputs.confirmation }}
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
