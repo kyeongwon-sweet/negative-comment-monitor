@@ -71,6 +71,7 @@ export function loadYouTubeOwnerChannelConfig(env = process.env, now = Date.now(
     youtubeApiBase: String(env.YOUTUBE_API_BASE || 'https://www.googleapis.com/youtube/v3').trim().replace(/\/$/, ''),
     youtubeAdsMaxThreadPages: positiveInt(env.YOUTUBE_OWNER_MAX_THREAD_PAGES, 10, 100),
     youtubeAdsMaxReplyPages: positiveInt(env.YOUTUBE_OWNER_MAX_REPLY_PAGES, 100, 100),
+    youtubeOwnerQuickMaxThreadPages: positiveInt(env.YOUTUBE_OWNER_QUICK_MAX_THREAD_PAGES, 2, 10),
     youtubeOwnerDeepMaxThreadPages: positiveInt(env.YOUTUBE_OWNER_DEEP_MAX_THREAD_PAGES, 100, 100),
     youtubeOwnerHighCommentThreshold: positiveInt(env.YOUTUBE_OWNER_HIGH_COMMENT_THRESHOLD, 200, 100_000),
     youtubeOwnerHighCommentRescanHours: positiveInt(env.YOUTUBE_OWNER_HIGH_COMMENT_RESCAN_HOURS, 24, 168),
@@ -172,20 +173,23 @@ export function shouldScanOwnerVideo(video, previous, options = {}) {
     due: current > 0,
     reason: current > 0 ? 'first-scan' : 'zero-baseline',
     current,
-    ...(current > 0 && highComment ? { deepScan: true } : {}),
+    ...(current > 0 && highComment ? { highComment: true, deepScan: true } : {}),
   };
   const rawLast = previous.last_scanned_count;
   const last = rawLast == null || rawLast === '' ? Number.NaN : Number(rawLast);
-  if (!Number.isFinite(last) || last !== current) {
-    return { due: true, reason: 'changed', current, ...(highComment ? { deepScan: true } : {}) };
-  }
+  const lastScanned = Date.parse(previous.last_scanned_at || '');
+  const cadenceMs = Number(options.highCommentRescanHours || 24) * 60 * 60 * 1000;
+  const now = Number(options.now || Date.now());
+  const deepDue = highComment && (!Number.isFinite(lastScanned) || now - lastScanned >= cadenceMs);
+  if (!Number.isFinite(last) || last !== current) return {
+    due: true,
+    reason: 'changed',
+    current,
+    ...(highComment ? { highComment: true } : {}),
+    ...(deepDue ? { deepScan: true } : {}),
+  };
   if (highComment) {
-    const lastScanned = Date.parse(previous.last_scanned_at || '');
-    const cadenceMs = Number(options.highCommentRescanHours || 24) * 60 * 60 * 1000;
-    const now = Number(options.now || Date.now());
-    if (!Number.isFinite(lastScanned) || now - lastScanned >= cadenceMs) {
-      return { due: true, reason: 'high-comment-cadence', current, deepScan: true };
-    }
+    if (deepDue) return { due: true, reason: 'high-comment-cadence', current, highComment: true, deepScan: true };
   }
   return { due: false, reason: 'unchanged', current };
 }
@@ -230,7 +234,7 @@ export async function fetchRecentOwnerUploads(config, channel, accessToken, fetc
   };
 }
 
-function stateRow(channel, video, current, now, scanned, previous = null) {
+function stateRow(channel, video, current, now, scanned, previous = null, preserveScanMarker = false) {
   return {
     channel_id: channel.channelId,
     video_id: String(video.id),
@@ -241,7 +245,11 @@ function stateRow(channel, video, current, now, scanned, previous = null) {
     // PostgREST bulk upsert는 배열 행들의 키 집합이 다르면 400을 낼 수 있다. 변화 없음 행도
     // 직전 스캔 값을 명시해 모든 행을 동일한 완전 스키마로 보낸다.
     last_scanned_count: scanned ? current : Number(previous?.last_scanned_count),
-    last_scanned_at: scanned ? new Date(now).toISOString() : (previous?.last_scanned_at || null),
+    // 고댓글 영상의 빠른 변화 스캔은 최신 200개만 보므로 일일 전수검사 기준시각을
+    // 전진시키지 않는다. last_scanned_at은 이 경우 마지막 전수검사 시각으로 유지한다.
+    last_scanned_at: scanned
+      ? (preserveScanMarker ? (previous?.last_scanned_at || null) : new Date(now).toISOString())
+      : (previous?.last_scanned_at || null),
   };
 }
 
@@ -291,10 +299,15 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
         if (decision.deepScan) counts.deepDue += 1;
         const scanConfig = decision.deepScan
           ? { ...config, youtubeAdsMaxThreadPages: config.youtubeOwnerDeepMaxThreadPages }
-          : config;
+          : decision.highComment
+            ? { ...config, youtubeAdsMaxThreadPages: config.youtubeOwnerQuickMaxThreadPages }
+            : config;
         const comments = await fetchYouTubeVideoComments(scanConfig, videoId, accessToken, fetchImpl);
         counts.comments += comments.length;
-        stateUpdates.push(stateRow(channel, video, decision.current, now, true));
+        stateUpdates.push(stateRow(
+          channel, video, decision.current, now, true, previous,
+          decision.highComment === true && decision.deepScan !== true,
+        ));
         if (!comments.length) continue;
         const productName = inferOwnerVideoProduct(video, config.youtubeOwnerDefaultProductName);
         entries.push({
@@ -310,7 +323,7 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
             youtubeVideoId: videoId,
             ownerChannelId: channel.channelId,
             isManagedAccount: true,
-            fullContextReview: decision.deepScan === true,
+            fullContextReview: decision.highComment === true || decision.deepScan === true,
             bypassClassificationCache: decision.forceReclassify === true,
           },
           comments,

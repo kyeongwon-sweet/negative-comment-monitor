@@ -42,13 +42,18 @@ test('고댓글 영상은 댓글수 불변이어도 일일 심층검사하고 �
   const stale = { last_scanned_count: 495, last_scanned_at: '2026-08-22T00:00:00Z' };
   assert.deepEqual(shouldScanOwnerVideo(video, stale, {
     now, highCommentThreshold: 200, highCommentRescanHours: 24,
-  }), { due: true, reason: 'high-comment-cadence', current: 495, deepScan: true });
+  }), { due: true, reason: 'high-comment-cadence', current: 495, highComment: true, deepScan: true });
   assert.equal(shouldScanOwnerVideo(video, { ...stale, last_scanned_at: '2026-08-23T23:00:00Z' }, {
     now, highCommentThreshold: 200, highCommentRescanHours: 24,
   }).due, false);
   assert.deepEqual(shouldScanOwnerVideo(video, stale, {
     now, forceVideoIds: new Set(['viral']), forceReclassify: true,
   }), { due: true, reason: 'forced-deep-scan', current: 495, deepScan: true, forceReclassify: true });
+  assert.deepEqual(shouldScanOwnerVideo({ ...video, statistics: { commentCount: '496' } }, {
+    last_scanned_count: 495, last_scanned_at: '2026-08-23T23:00:00Z',
+  }, { now, highCommentThreshold: 200, highCommentRescanHours: 24 }), {
+    due: true, reason: 'changed', current: 496, highComment: true,
+  });
 });
 
 test('product inference keeps organic routing useful without changing posted_at', () => {
