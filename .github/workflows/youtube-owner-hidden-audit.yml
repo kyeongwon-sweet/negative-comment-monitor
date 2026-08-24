@@ -17,6 +17,15 @@ on:
         description: For repair enter REHIDE_VISIBLE_YOUTUBE_AD_ALERTS
         required: false
         type: string
+      video_ids:
+        description: Optional comma-separated video IDs to scope the audit
+        required: false
+        type: string
+      include_organic:
+        description: Include source=null owned/satellite alerts for the scoped videos
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   audit:
@@ -40,3 +49,5 @@ jobs:
           YOUTUBE_HIDDEN_AUDIT_REPAIR_VISIBLE: ${{ inputs.repair_visible }}
           YOUTUBE_HIDDEN_AUDIT_CONFIRM: ${{ inputs.confirmation }}
           YOUTUBE_HIDDEN_AUDIT_BATCH_SIZE: '50'
+          YOUTUBE_HIDDEN_AUDIT_VIDEO_IDS: ${{ inputs.video_ids }}
+          YOUTUBE_HIDDEN_AUDIT_INCLUDE_ORGANIC: ${{ inputs.include_organic }}

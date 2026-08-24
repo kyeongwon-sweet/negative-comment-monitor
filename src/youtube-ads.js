@@ -66,6 +66,9 @@ export function loadYouTubeAdsConfig(env = process.env) {
     youtubeAdsChannelCategory: String(env.YOUTUBE_ADS_CHANNEL_CATEGORY || '인지 광고').trim(),
     youtubeAdsLookbackDays: positiveInt(env.YOUTUBE_ADS_LOOKBACK_DAYS, 14, 90),
     youtubeAdsMaxThreadPages: positiveInt(env.YOUTUBE_ADS_MAX_THREAD_PAGES, 10, 100),
+    youtubeAdsMaxReplyPages: positiveInt(env.YOUTUBE_ADS_MAX_REPLY_PAGES, 100, 100),
+    youtubeAdsDeepMaxThreadPages: positiveInt(env.YOUTUBE_ADS_DEEP_MAX_THREAD_PAGES, 100, 100),
+    youtubeAdsHighCommentThreshold: positiveInt(env.YOUTUBE_ADS_HIGH_COMMENT_THRESHOLD, 200, 100_000),
     youtubeAdsAlertAfter: String(env.YOUTUBE_ADS_ALERT_AFTER || '').trim(),
     // 대량 과거 알림은 Slack 채널별 전송 제한을 넘지 않도록 메시지 사이를 띄운다.
     // 정기 실행은 소량이므로 기본 0ms, 수동 백필 워크플로만 1.2초를 사용한다.
@@ -299,7 +302,7 @@ export async function fetchOwnedYouTubeVideos(config, videoAssets, channelId, ac
   const videos = [];
   for (let offset = 0; offset < ids.length; offset += 50) {
     const payload = await youtubeJson(config, 'videos', {
-      part: 'id,snippet,status', id: ids.slice(offset, offset + 50).join(','), maxResults: 50,
+      part: 'id,snippet,status,statistics', id: ids.slice(offset, offset + 50).join(','), maxResults: 50,
     }, accessToken, fetchImpl);
     for (const item of payload.items || []) {
       // Google Ads의 일치 캠페인에 연결된 영상 자산 자체를 수집 신뢰 경계로 삼는다.
@@ -332,7 +335,7 @@ function normalizeYouTubeComment(comment, videoId, parentId = '') {
 async function fetchAllReplies(config, parentId, videoId, accessToken, fetchImpl) {
   const replies = [];
   let pageToken = '';
-  for (let page = 0; page < 100; page += 1) {
+  for (let page = 0; page < (config.youtubeAdsMaxReplyPages || 100); page += 1) {
     const payload = await youtubeJson(config, 'comments', {
       part: 'id,snippet', parentId, maxResults: 100, textFormat: 'plainText', pageToken,
     }, accessToken, fetchImpl);
@@ -417,7 +420,13 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
   const entries = [];
   let commentCount = 0;
   for (const video of videos) {
-    const comments = (await fetchYouTubeVideoComments(config, video.id, youtubeToken, fetchImpl))
+    const totalComments = Number(video.statistics?.commentCount);
+    const highComment = Number.isFinite(totalComments)
+      && totalComments >= config.youtubeAdsHighCommentThreshold;
+    const scanConfig = highComment
+      ? { ...config, youtubeAdsMaxThreadPages: config.youtubeAdsDeepMaxThreadPages }
+      : config;
+    const comments = (await fetchYouTubeVideoComments(scanConfig, video.id, youtubeToken, fetchImpl))
       .filter((comment) => comment.text.trim() && commentAfter(comment, safeCutoff));
     commentCount += comments.length;
     if (!comments.length) continue;
@@ -446,6 +455,7 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
         googleAdsCampaignIds: video.adAsset?.campaignIds || [],
         youtubeVideoId: video.id,
         extraAssignees,
+        fullContextReview: highComment,
       },
       comments,
     });

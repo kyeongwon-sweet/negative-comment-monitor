@@ -61,6 +61,7 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
     channels: collected.channels,
     videos: collected.videos,
     due: collected.due,
+    deepDue: collected.deepDue,
     unchanged: collected.unchanged,
     zeroBaseline: collected.zeroBaseline,
     noSignal: collected.noSignal,
@@ -148,7 +149,7 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
       kstDate: kstDateKey(now), apifyUsd: 0, anthropicUsd: estimatedUsd,
     }, fetchImpl);
   }
-  console.error(`[youtube-owner-channel] channels=${summary.channels}/${summary.configuredOwners} videos=${summary.videos} due=${summary.due} unchanged=${summary.unchanged} noSignal=${summary.noSignal} comments=${summary.comments} alerts=${summary.sentAlerts} failures=${summary.channelFailures.length} est=$${estimatedUsd.toFixed(5)}`);
+  console.error(`[youtube-owner-channel] channels=${summary.channels}/${summary.configuredOwners} videos=${summary.videos} due=${summary.due} deepDue=${summary.deepDue} unchanged=${summary.unchanged} noSignal=${summary.noSignal} comments=${summary.comments} alerts=${summary.sentAlerts} failures=${summary.channelFailures.length} est=$${estimatedUsd.toFixed(5)}`);
   if (summary.channelFailures.length) {
     summary.degraded.push({
       stage: 'collection',

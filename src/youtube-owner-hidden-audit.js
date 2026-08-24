@@ -3,12 +3,13 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { extractPostKey } from './delta.js';
 import {
-  loadYouTubeAdAlerts,
+  loadYouTubeOwnerAlerts,
   loadYouTubeOwnerTokens,
   mapVideosToOwners,
   refreshAndVerifyOwner,
   listYouTubeCommentStatesIsolated,
   rejectCommentsIsolated,
+  YOUTUBE_OWNER_ALERT_SCOPES,
 } from './youtube-owner-moderation.js';
 
 export const YOUTUBE_HIDDEN_AUDIT_CONFIRMATION = 'REHIDE_VISIBLE_YOUTUBE_AD_ALERTS';
@@ -40,6 +41,8 @@ export function loadYouTubeHiddenAuditConfig(env = process.env) {
     supabaseKey: required(env, 'SUPABASE_SERVICE_ROLE_KEY'),
     youtubeApiBase: String(env.YOUTUBE_API_BASE || 'https://www.googleapis.com/youtube/v3').trim().replace(/\/$/, ''),
     batchSize: positiveInt(env.YOUTUBE_HIDDEN_AUDIT_BATCH_SIZE, 50, 50),
+    auditVideoIds: new Set(String(env.YOUTUBE_HIDDEN_AUDIT_VIDEO_IDS || '').split(',').map((item) => item.trim()).filter(Boolean)),
+    includeOrganic: String(env.YOUTUBE_HIDDEN_AUDIT_INCLUDE_ORGANIC || 'false').toLowerCase() === 'true',
     dryRun,
     repairVisible,
   };
@@ -54,6 +57,20 @@ function expectedHidden(alert) {
   return EXPECTED_HIDDEN_DECISIONS.has(String(alert.review_decision || '').trim().toLowerCase());
 }
 
+async function loadAuditAlerts(config, fetchImpl) {
+  const ads = await loadYouTubeOwnerAlerts({ ...config, alertScope: YOUTUBE_OWNER_ALERT_SCOPES.ADS }, fetchImpl);
+  const rows = [...ads];
+  if (config.includeOrganic) {
+    rows.push(...await loadYouTubeOwnerAlerts({
+      ...config,
+      alertScope: YOUTUBE_OWNER_ALERT_SCOPES.ORGANIC_SATELLITE,
+      allowedVideoIds: config.auditVideoIds,
+    }, fetchImpl));
+  }
+  if (!config.auditVideoIds?.size) return rows;
+  return rows.filter((row) => config.auditVideoIds.has(videoIdFromAlert(row)));
+}
+
 // DB에서 이미 숨김이 기대되는 YouTube 광고 댓글 전체를 소유 채널 OAuth로 대조한다.
 // repairVisible=true인 라이브 실행만 실제 공개 댓글을 rejected로 되돌린다.
 // review_decision/reviewed_by/reviewed_at은 사람/자동 처리 감사 원본이므로 쓰지 않는다.
@@ -63,7 +80,7 @@ export async function auditHiddenYouTubeOwnerAlerts(
 ) {
   const owners = await loadYouTubeOwnerTokens(config, fetchImpl);
   if (!owners.length) throw new Error('No stored YouTube owner OAuth tokens');
-  const alerts = await loadYouTubeAdAlerts(config, fetchImpl);
+  const alerts = await loadAuditAlerts(config, fetchImpl);
   const candidates = alerts.filter(expectedHidden);
 
   const accessTokens = new Map();

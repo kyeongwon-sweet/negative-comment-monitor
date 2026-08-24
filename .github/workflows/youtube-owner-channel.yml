@@ -8,6 +8,15 @@ on:
         required: false
         type: boolean
         default: true
+      force_video_ids:
+        description: Comma-separated YouTube video IDs to deep scan now
+        required: false
+        type: string
+      force_reclassify:
+        description: Bypass classifier cache for forced videos (human false-positive decisions still win)
+        required: false
+        type: boolean
+        default: false
   schedule:
     # 댓글 최초 감지 지연 상한을 약 3시간으로 유지. 댓글수 변화가 없는 영상은 본문 API를 호출하지 않는다.
     - cron: '17 */3 * * *'
@@ -55,6 +64,12 @@ jobs:
           YOUTUBE_OWNER_LOOKBACK_DAYS: '14'
           YOUTUBE_OWNER_MAX_UPLOAD_PAGES: '10'
           YOUTUBE_OWNER_MAX_THREAD_PAGES: '10'
+          YOUTUBE_OWNER_MAX_REPLY_PAGES: '100'
+          YOUTUBE_OWNER_DEEP_MAX_THREAD_PAGES: '100'
+          YOUTUBE_OWNER_HIGH_COMMENT_THRESHOLD: '200'
+          YOUTUBE_OWNER_HIGH_COMMENT_RESCAN_HOURS: '24'
+          YOUTUBE_OWNER_FORCE_VIDEO_IDS: ${{ github.event_name == 'workflow_dispatch' && inputs.force_video_ids || '' }}
+          YOUTUBE_OWNER_FORCE_RECLASSIFY: ${{ github.event_name == 'workflow_dispatch' && inputs.force_reclassify && 'true' || 'false' }}
           YOUTUBE_OWNER_ALERT_DELAY_MS: '1100'
           YOUTUBE_OWNER_DEFAULT_PRODUCT_NAME: JD
           YOUTUBE_OWNER_CHANNEL_AUTO_HIDE: 'true'

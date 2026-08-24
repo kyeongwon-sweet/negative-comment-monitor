@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyCommentsHybrid } from '../src/hybrid-classify.js';
+import { classifyCommentsHybrid, classifyTargetsBatched } from '../src/hybrid-classify.js';
 import { commentFingerprint } from '../src/dedup.js';
 
 const CACHE_CFG = { anthropicKey: 'key', supabaseUrl: 'https://db.example', supabaseKey: 'svc' };
@@ -38,6 +38,28 @@ test('광고 source(meta/tiktok/youtube)는 전 댓글을 LLM 문맥판정으로
       async (items) => { received = items; return items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' })); });
     assert.equal(received?.length, 2, `${source}는 전 댓글(2개)을 LLM으로 보내야 함`);
   }
+});
+
+test('고댓글 소유채널 심층검사는 전 댓글을 검토하고 강제 재분류면 캐시를 우회한다', async () => {
+  const comment = { id: 'c1', platform: 'youtube', text: '기업아님???' };
+  const target = { platform: 'youtube', postKey: 'yt:v1', brandName: '라라스윗', fullContextReview: true, bypassClassificationCache: true };
+  let liveCalled = false;
+  const fetchImpl = async (url, opts = {}) => {
+    if (String(url).includes('negative_comment_alerts')) return { ok: true, json: async () => [] };
+    if (opts.method === 'POST') return { ok: true, json: async () => [] };
+    throw new Error('classification cache must not be read during forced reclassification');
+  };
+  const [[result]] = await classifyTargetsBatched(
+    [{ comments: [comment], target }], CACHE_CFG,
+    async () => {
+      liveCalled = true;
+      return [{ alert: true, category: '광고/바이럴 의심', reason: '광고를 의심함', priority: 'normal' }];
+    },
+    {},
+    fetchImpl,
+  );
+  assert.equal(liveCalled, true);
+  assert.equal(result.alert, true);
 });
 
 test('threads the usage stats accumulator through to the LLM classifier', async () => {

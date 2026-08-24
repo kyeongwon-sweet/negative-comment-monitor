@@ -36,6 +36,10 @@ function nonnegativeInt(value, fallback, max = Number.MAX_SAFE_INTEGER) {
   return Math.min(max, Math.floor(parsed));
 }
 
+function csvSet(value) {
+  return new Set(String(value || '').split(',').map((item) => item.trim()).filter(Boolean));
+}
+
 function parseExtraChannels(raw) {
   if (!String(raw || '').trim()) return [];
   const parsed = JSON.parse(String(raw));
@@ -66,6 +70,12 @@ export function loadYouTubeOwnerChannelConfig(env = process.env, now = Date.now(
     googleAdsClientSecret: required(env, 'GOOGLE_ADS_CLIENT_SECRET'),
     youtubeApiBase: String(env.YOUTUBE_API_BASE || 'https://www.googleapis.com/youtube/v3').trim().replace(/\/$/, ''),
     youtubeAdsMaxThreadPages: positiveInt(env.YOUTUBE_OWNER_MAX_THREAD_PAGES, 10, 100),
+    youtubeAdsMaxReplyPages: positiveInt(env.YOUTUBE_OWNER_MAX_REPLY_PAGES, 100, 100),
+    youtubeOwnerDeepMaxThreadPages: positiveInt(env.YOUTUBE_OWNER_DEEP_MAX_THREAD_PAGES, 100, 100),
+    youtubeOwnerHighCommentThreshold: positiveInt(env.YOUTUBE_OWNER_HIGH_COMMENT_THRESHOLD, 200, 100_000),
+    youtubeOwnerHighCommentRescanHours: positiveInt(env.YOUTUBE_OWNER_HIGH_COMMENT_RESCAN_HOURS, 24, 168),
+    youtubeOwnerForceVideoIds: csvSet(env.YOUTUBE_OWNER_FORCE_VIDEO_IDS),
+    youtubeOwnerForceReclassify: String(env.YOUTUBE_OWNER_FORCE_RECLASSIFY || 'false').toLowerCase() === 'true',
     youtubeOwnerLookbackDays: positiveInt(env.YOUTUBE_OWNER_LOOKBACK_DAYS, 14, 90),
     youtubeOwnerMaxUploadPages: positiveInt(env.YOUTUBE_OWNER_MAX_UPLOAD_PAGES, 10, 100),
     youtubeOwnerDefaultProductName: String(env.YOUTUBE_OWNER_DEFAULT_PRODUCT_NAME || 'JD').trim(),
@@ -149,13 +159,34 @@ export function inferOwnerVideoProduct(video, fallback = 'JD') {
   return String(fallback || 'JD').trim() || 'JD';
 }
 
-export function shouldScanOwnerVideo(video, previous) {
+export function shouldScanOwnerVideo(video, previous, options = {}) {
   const current = Number(video?.statistics?.commentCount);
   if (!Number.isFinite(current) || current < 0) return { due: false, reason: 'no-signal', current: null };
-  if (!previous) return { due: current > 0, reason: current > 0 ? 'first-scan' : 'zero-baseline', current };
+  const videoId = String(video?.id || '').trim();
+  const forceVideoIds = options.forceVideoIds instanceof Set ? options.forceVideoIds : new Set();
+  if (videoId && forceVideoIds.has(videoId)) {
+    return { due: true, reason: 'forced-deep-scan', current, deepScan: true, forceReclassify: options.forceReclassify === true };
+  }
+  const highComment = current >= Number(options.highCommentThreshold || Number.MAX_SAFE_INTEGER);
+  if (!previous) return {
+    due: current > 0,
+    reason: current > 0 ? 'first-scan' : 'zero-baseline',
+    current,
+    ...(current > 0 && highComment ? { deepScan: true } : {}),
+  };
   const rawLast = previous.last_scanned_count;
   const last = rawLast == null || rawLast === '' ? Number.NaN : Number(rawLast);
-  if (!Number.isFinite(last) || last !== current) return { due: true, reason: 'changed', current };
+  if (!Number.isFinite(last) || last !== current) {
+    return { due: true, reason: 'changed', current, ...(highComment ? { deepScan: true } : {}) };
+  }
+  if (highComment) {
+    const lastScanned = Date.parse(previous.last_scanned_at || '');
+    const cadenceMs = Number(options.highCommentRescanHours || 24) * 60 * 60 * 1000;
+    const now = Number(options.now || Date.now());
+    if (!Number.isFinite(lastScanned) || now - lastScanned >= cadenceMs) {
+      return { due: true, reason: 'high-comment-cadence', current, deepScan: true };
+    }
+  }
   return { due: false, reason: 'unchanged', current };
 }
 
@@ -224,7 +255,7 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
   const stateUpdates = [];
   const allowedVideoIds = new Set();
   const channelFailures = [];
-  const counts = { ownerTokens: storedOwners.length, configuredOwners: owners.length, channels: 0, videos: 0, due: 0, unchanged: 0, zeroBaseline: 0, noSignal: 0, comments: 0 };
+  const counts = { ownerTokens: storedOwners.length, configuredOwners: owners.length, channels: 0, videos: 0, due: 0, deepDue: 0, unchanged: 0, zeroBaseline: 0, noSignal: 0, comments: 0 };
 
   for (const owner of owners) {
     const channel = configured.get(owner.channelId);
@@ -238,7 +269,13 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
         if (!videoId) continue;
         allowedVideoIds.add(videoId);
         const previous = states.get(videoId);
-        const decision = shouldScanOwnerVideo(video, previous);
+        const decision = shouldScanOwnerVideo(video, previous, {
+          now,
+          forceVideoIds: config.youtubeOwnerForceVideoIds,
+          forceReclassify: config.youtubeOwnerForceReclassify,
+          highCommentThreshold: config.youtubeOwnerHighCommentThreshold,
+          highCommentRescanHours: config.youtubeOwnerHighCommentRescanHours,
+        });
         if (decision.reason === 'no-signal') { counts.noSignal += 1; continue; }
         if (decision.reason === 'zero-baseline') {
           counts.zeroBaseline += 1;
@@ -251,7 +288,11 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
           continue;
         }
         counts.due += 1;
-        const comments = await fetchYouTubeVideoComments(config, videoId, accessToken, fetchImpl);
+        if (decision.deepScan) counts.deepDue += 1;
+        const scanConfig = decision.deepScan
+          ? { ...config, youtubeAdsMaxThreadPages: config.youtubeOwnerDeepMaxThreadPages }
+          : config;
+        const comments = await fetchYouTubeVideoComments(scanConfig, videoId, accessToken, fetchImpl);
         counts.comments += comments.length;
         stateUpdates.push(stateRow(channel, video, decision.current, now, true));
         if (!comments.length) continue;
@@ -269,6 +310,8 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
             youtubeVideoId: videoId,
             ownerChannelId: channel.channelId,
             isManagedAccount: true,
+            fullContextReview: decision.deepScan === true,
+            bypassClassificationCache: decision.forceReclassify === true,
           },
           comments,
         });
