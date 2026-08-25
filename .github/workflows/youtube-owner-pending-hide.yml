@@ -35,6 +35,8 @@ jobs:
           YOUTUBE_OWNER_BULK_HIDE_CONFIRM: HIDE_ALL_YOUTUBE_AD_ALERTS
           YOUTUBE_OWNER_ALERT_SCOPE: organic_satellite
           YOUTUBE_OWNER_BULK_HIDE_BATCH_SIZE: '50'
+          YOUTUBE_OWNER_HIDE_VERIFY_ATTEMPTS: '5'
+          YOUTUBE_OWNER_HIDE_VERIFY_DELAY_MS: '3000'
           YOUTUBE_OWNER_BULK_HIDE_ACTOR: youtube-owner-pending-auto-hide
       - name: Record auxiliary outcome
         if: ${{ always() }}

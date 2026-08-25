@@ -13,6 +13,10 @@ export const YOUTUBE_OWNER_ALERT_SCOPES = Object.freeze({
 });
 const OWNER_TOKEN_PREFIX = 'youtube_owner:';
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function required(env, name) {
   const value = String(env[name] || '').trim();
   if (!value) throw new Error(`Missing environment variable: ${name}`);
@@ -56,6 +60,8 @@ export function loadYouTubeOwnerModerationConfig(env = process.env) {
     alertMessageTs,
     alertScope,
     batchSize: positiveInt(env.YOUTUBE_OWNER_BULK_HIDE_BATCH_SIZE, 50, 50),
+    hideVerificationAttempts: positiveInt(env.YOUTUBE_OWNER_HIDE_VERIFY_ATTEMPTS, 5, 10),
+    hideVerificationDelayMs: positiveInt(env.YOUTUBE_OWNER_HIDE_VERIFY_DELAY_MS, 3_000, 30_000),
     actor: String(env.YOUTUBE_OWNER_BULK_HIDE_ACTOR || 'codex-bulk-owner-oauth').trim(),
     slackBotToken: String(env.SLACK_BOT_TOKEN || '').trim(),
     slackUpdateDelayMs: positiveInt(env.YOUTUBE_HIDDEN_SLACK_DELAY_MS, singleAlert ? 1 : 1100, 10_000),
@@ -387,6 +393,7 @@ export async function rejectCommentsIsolated(config, ids, accessToken, fetchImpl
     unavailable: [],
     failed: [],
     acceptedUnverified: [],
+    verificationRetries: 0,
     channelError: null,
   };
   async function visit(batch) {
@@ -409,27 +416,37 @@ export async function rejectCommentsIsolated(config, ids, accessToken, fetchImpl
       return;
     }
 
-    // setModerationStatus는 성공 시 본문 없이 204만 반환한다. 공식 API는 rejected
-    // 댓글을 다시 나열하지 않으므로, owner 토큰으로 즉시 재조회해 사라진 ID만 확정한다.
-    // 확인 조회 자체가 실패하면 DB/Slack을 성공으로 바꾸지 않고 다음 실행의 재시도 여지를 남긴다.
-    const verification = await listVisibleCommentIdsIsolated(config, batch, accessToken, fetchImpl);
-    if (verification.channelError) {
-      result.acceptedUnverified.push(...batch);
-      result.channelError = verification.channelError;
-      return;
+    // setModerationStatus는 성공 시 본문 없이 204만 반환한다. rejected 댓글은 목록에서
+    // 사라지지만 그 반영이 수 초 늦을 수 있으므로, POST를 반복하지 않고 아직 보이는
+    // 댓글만 짧게 재조회한다. 확정 전에는 DB/Slack을 성공으로 바꾸지 않는다.
+    const maxAttempts = positiveInt(config.hideVerificationAttempts, 5, 10);
+    const delayMs = positiveInt(config.hideVerificationDelayMs, 3_000, 30_000);
+    const sleep = typeof config.sleep === 'function' ? config.sleep : wait;
+    const confirmedSet = new Set();
+    let pending = [...batch];
+    for (let attempt = 1; attempt <= maxAttempts && pending.length; attempt += 1) {
+      const verification = await listVisibleCommentIdsIsolated(config, pending, accessToken, fetchImpl);
+      if (verification.channelError) {
+        result.acceptedUnverified.push(...pending);
+        result.channelError = verification.channelError;
+        break;
+      }
+      for (const id of verification.unavailable) confirmedSet.add(id);
+      const failed = new Set(verification.failed.map((item) => item.id));
+      pending = pending.filter((id) => verification.visible.has(id) || failed.has(id));
+      if (pending.length && attempt < maxAttempts) {
+        result.verificationRetries += 1;
+        await sleep(delayMs);
+      }
     }
-    const unverified = new Set(verification.failed.map((item) => item.id));
-    const confirmed = batch.filter((id) => verification.unavailable.has(id));
-    result.acceptedUnverified.push(...batch.filter((id) => unverified.has(id)));
+    const confirmed = batch.filter((id) => confirmedSet.has(id));
     if (confirmed.length) {
       result.confirmed.push(...confirmed);
       await onConfirmed(confirmed);
     }
-
-    // 204 뒤에도 조회되는 댓글은 성공으로 기록하지 않는다. 전파 지연일 수도 있으므로
-    // 즉석 재숨김/이진분할로 쿼터를 태우지 않고 미확인 상태로 남겨 다음 실행이 재검사한다.
-    const stillVisible = batch.filter((id) => verification.visible.has(id));
-    result.acceptedUnverified.push(...stillVisible);
+    // 모든 재확인 뒤에도 보이거나 조회가 실패한 댓글은 성공으로 기록하지 않는다.
+    // 다음 15분 회차의 사전 조회가 실제 비노출을 확인하면 멱등하게 수렴한다.
+    if (!result.channelError) result.acceptedUnverified.push(...pending);
   }
   for (const batch of chunk(ids, config.batchSize)) await visit(batch);
   return result;
@@ -511,6 +528,7 @@ export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModera
       moderationUnavailable: 0,
       moderationFailed: 0,
       acceptedUnverified: 0,
+      verificationRetries: 0,
       channelFailures: 0,
       persistenceFailed: 0,
       dbUpdated: 0,
@@ -562,6 +580,7 @@ export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModera
     moderationUnavailable: 0,
     moderationFailed: 0,
     acceptedUnverified: 0,
+    verificationRetries: 0,
     channelFailures: 0,
     persistenceFailed: 0,
     dbUpdated: 0,
@@ -589,6 +608,7 @@ export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModera
       moderationUnavailable: 0,
       moderationFailed: 0,
       acceptedUnverified: 0,
+      verificationRetries: 0,
       error: null,
     };
     if (!commentIds.length) {
@@ -673,10 +693,12 @@ export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModera
       ownerResult.moderationUnavailable = moderation.unavailable.length;
       ownerResult.moderationFailed += moderation.failed.length;
       ownerResult.acceptedUnverified = moderation.acceptedUnverified.length;
+      ownerResult.verificationRetries = moderation.verificationRetries;
       result.hidden += moderation.confirmed.length;
       result.moderationUnavailable += moderation.unavailable.length;
       result.moderationFailed += moderation.failed.length;
       result.acceptedUnverified += moderation.acceptedUnverified.length;
+      result.verificationRetries += moderation.verificationRetries;
       if (moderation.channelError) {
         ownerResult.error = { stage: 'moderation', ...moderation.channelError };
         result.channelFailures += 1;
@@ -701,6 +723,7 @@ async function writeSummary(result) {
     `- 숨김 중 삭제·미존재: ${result.moderationUnavailable}`,
     `- 숨김 실패: ${result.moderationFailed}`,
     `- API 접수 후 확인 불가: ${result.acceptedUnverified}`,
+    `- 전파 지연 재확인: ${result.verificationRetries}`,
     `- 채널 단위 실패: ${result.channelFailures} (토큰 실패 ${result.ownerTokenFailures.length})`,
     `- 소유 채널 미매칭: ${result.unmatchedVideo}`,
     `- DB 갱신: ${result.dbUpdated}`,

@@ -24,6 +24,7 @@ function config(overrides = {}) {
     googleAdsClientId: 'client', googleAdsClientSecret: 'secret',
     supabaseUrl: 'https://db.test', supabaseKey: 'service',
     youtubeApiBase: 'https://youtube.test', dryRun: false, batchSize: 50,
+    hideVerificationAttempts: 1, hideVerificationDelayMs: 1, sleep: async () => {},
     actor: 'bulk-test',
     ...overrides,
   };
@@ -317,6 +318,44 @@ test('204 뒤에도 보이는 댓글은 성공 기록·즉시 재시도 없이 �
   assert.equal(result.acceptedUnverified, 1);
   assert.equal(moderationCalls, 1);
   assert.equal(patchCalls, 0);
+});
+
+test('204 직후 published여도 짧게 재확인해 rejected 전파를 확정하고 한 번만 기록한다', async () => {
+  let moderationCalls = 0;
+  let verificationReads = 0;
+  let patchCalls = 0;
+  let waits = 0;
+  const alert = { id: 1, comment_id: 'delayedA', post_url: 'https://youtube.com/watch?v=videoA1' };
+  const result = await moderateYouTubeOwnerAlerts(config({
+    hideVerificationAttempts: 5,
+    sleep: async () => { waits += 1; },
+  }), async (input, init = {}) => {
+    const url = String(input);
+    if (url.includes('/rest/v1/meta_tokens')) return response(200, [{ kind: 'youtube_owner:ownerA', token: 'refreshA' }]);
+    if (url.includes('/rest/v1/negative_comment_alerts') && (!init.method || init.method === 'GET')) return response(200, [alert]);
+    if (url.includes('oauth2.googleapis.com')) return response(200, { access_token: 'accessA' });
+    if (url.includes('/channels')) return response(200, { items: [{ id: 'ownerA' }] });
+    if (url.includes('/videos')) return response(200, { items: [{ id: 'videoA1', snippet: { channelId: 'ownerA' } }] });
+    if (url.includes('/comments?')) {
+      // 첫 호출은 숨김 전 노출 확인. POST 뒤 두 번은 전파 지연, 세 번째에 목록에서 사라진다.
+      if (moderationCalls) verificationReads += 1;
+      return response(200, { items: moderationCalls && verificationReads >= 3 ? [] : [{ id: 'delayedA' }] });
+    }
+    if (url.includes('/comments/setModerationStatus')) { moderationCalls += 1; return response(204); }
+    if (url.includes('/rest/v1/negative_comment_alerts') && init.method === 'PATCH') {
+      patchCalls += 1;
+      return response(200, [{ id: 1 }]);
+    }
+    throw new Error(`unexpected ${url}`);
+  });
+
+  assert.equal(result.hidden, 1);
+  assert.equal(result.acceptedUnverified, 0);
+  assert.equal(result.verificationRetries, 2);
+  assert.equal(moderationCalls, 1);
+  assert.equal(verificationReads, 3);
+  assert.equal(waits, 2);
+  assert.equal(patchCalls, 1);
 });
 
 test('한 채널의 403은 그 채널만 중단하고 다른 소유 채널은 계속 숨긴다', async () => {
