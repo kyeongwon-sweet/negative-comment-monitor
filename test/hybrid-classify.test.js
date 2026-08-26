@@ -269,3 +269,22 @@ test('보류는 캐시를 오염시키지 않고 복구 회차에서 실분류�
   assert.equal(recovered[0][0].deferred, undefined);
   assert.equal(cacheWrites, 1, '복구 후 실분류 결과만 캐시');
 });
+
+test('read-only 감사 분류는 실분류해도 운영 캐시를 쓰지 않는다', async () => {
+  const config = {
+    anthropicKey: 'k', supabaseUrl: 'https://db.example', supabaseKey: 'svc',
+    classificationCacheReadOnly: true,
+  };
+  let writes = 0;
+  const fetchImpl = async (url, options = {}) => {
+    if (String(url).includes('comment_classification_cache') && options.method === 'POST') writes += 1;
+    return { ok: true, json: async () => [] };
+  };
+  const [[result]] = await classifyTargetsBatched([{
+    target: { platform: 'youtube', postKey: 'yt:audit', brandName: '라라스윗', bypassClassificationCache: true },
+    comments: [{ id: 'audit-comment', platform: 'youtube', text: '광고인가요?' }],
+  }], config, async () => [{ alert: false, category: '정상댓글', reason: '', priority: 'none' }], {}, fetchImpl);
+
+  assert.equal(result.engine, 'llm');
+  assert.equal(writes, 0);
+});

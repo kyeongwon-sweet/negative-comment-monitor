@@ -107,6 +107,11 @@ export function loadYouTubeOwnerChannelConfig(env = process.env, now = Date.now(
     youtubeOwnerOverloadRatioPercent: positiveNumber(env.YOUTUBE_OWNER_OVERLOAD_RATIO_PERCENT, 40, 100),
     youtubeOwnerOverloadMinComments: positiveInt(env.YOUTUBE_OWNER_OVERLOAD_MIN_COMMENTS, 10, 10_000),
     youtubeOwnerOverloadCooldownHours: positiveNumber(env.YOUTUBE_OWNER_OVERLOAD_COOLDOWN_HOURS, 24, 168),
+    youtubeOwnerCoverageAlertCooldownHours: positiveNumber(
+      env.YOUTUBE_OWNER_COVERAGE_ALERT_COOLDOWN_HOURS,
+      168,
+      24 * 30,
+    ),
     youtubeOwnerChannels: uniqueChannels([
       ...YOUTUBE_OWNER_CHANNELS,
       ...parseExtraChannels(env.YOUTUBE_OWNER_CHANNELS_JSON),
@@ -346,12 +351,36 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
   const storedOwners = await loadYouTubeOwnerTokens(config, fetchImpl);
   const configured = new Map(config.youtubeOwnerChannels.map((channel) => [channel.channelId, channel]));
   const owners = storedOwners.filter((owner) => configured.has(owner.channelId));
+  const authenticatedChannelIds = new Set(owners.map((owner) => owner.channelId));
+  const missingOAuthChannels = config.youtubeOwnerChannels
+    .filter((channel) => !authenticatedChannelIds.has(channel.channelId))
+    .map((channel) => ({
+      name: channel.name,
+      channelId: channel.channelId,
+      channelCategory: channel.channelCategory,
+    }));
   if (!owners.length) throw new Error('No configured YouTube owner OAuth channels are available');
   const entries = [];
   const stateUpdates = [];
   const allowedVideoIds = new Set();
   const channelFailures = [];
-  const counts = { ownerTokens: storedOwners.length, configuredOwners: owners.length, channels: 0, videos: 0, due: 0, deepDue: 0, riskDue: 0, unchanged: 0, zeroBaseline: 0, noSignal: 0, comments: 0 };
+  const counts = {
+    ownerTokens: storedOwners.length,
+    // configuredOwners는 기존 소비자 호환을 위해 '인증되어 실제 실행 가능한 채널 수' 의미를 유지한다.
+    configuredOwners: owners.length,
+    totalConfiguredChannels: config.youtubeOwnerChannels.length,
+    authenticatedChannels: owners.length,
+    missingOAuthChannels,
+    channels: 0,
+    videos: 0,
+    due: 0,
+    deepDue: 0,
+    riskDue: 0,
+    unchanged: 0,
+    zeroBaseline: 0,
+    noSignal: 0,
+    comments: 0,
+  };
 
   for (const owner of owners) {
     const channel = configured.get(owner.channelId);

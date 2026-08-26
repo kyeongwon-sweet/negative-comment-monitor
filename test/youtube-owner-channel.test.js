@@ -35,6 +35,7 @@ test('owner channel config includes the two existing owners and eight satellites
   assert.equal(config.youtubeOwnerRecentNegativeRescanHours, 3);
   assert.equal(config.youtubeOwnerHistoricalNegativeThreshold, 5);
   assert.equal(config.youtubeOwnerHistoricalNegativeRescanHours, 24);
+  assert.equal(config.youtubeOwnerCoverageAlertCooldownHours, 168);
 });
 
 test('comment-count gate baselines zero and scans first-positive or changed videos only', () => {
@@ -170,6 +171,9 @@ test('collector lists recent uploads and calls commentThreads only for changed c
   config.youtubeOwnerChannels = config.youtubeOwnerChannels.filter((row) => row.channelId === 'owner-1');
   const result = await collectYouTubeOwnerChannels(config, fetchImpl, now);
   assert.equal(result.channels, 1);
+  assert.equal(result.totalConfiguredChannels, 1);
+  assert.equal(result.authenticatedChannels, 1);
+  assert.deepEqual(result.missingOAuthChannels, []);
   assert.equal(result.videos, 3);
   assert.equal(result.due, 1);
   assert.equal(result.unchanged, 1);
@@ -212,4 +216,39 @@ test('collector isolates one owner OAuth failure and continues another owner', a
   assert.equal(result.channels, 1);
   assert.equal(result.channelFailures.length, 1);
   assert.equal(result.channelFailures[0].channelId, 'bad');
+});
+
+test('collector reports configured channels without owner OAuth instead of shrinking the denominator', async () => {
+  const fetchImpl = async (input) => {
+    const url = new URL(String(input));
+    if (url.hostname === 'db.test' && url.pathname.endsWith('/youtube_owner_video_state')) return json([]);
+    if (url.hostname === 'db.test' && url.pathname.endsWith('/negative_comment_alerts')) return json([]);
+    if (url.hostname === 'db.test' && url.pathname.endsWith('/meta_tokens')) {
+      return json([{ kind: 'youtube_owner:connected', token: 'refresh' }]);
+    }
+    if (url.hostname === 'oauth2.googleapis.com') return json({ access_token: 'access' });
+    if (url.pathname.endsWith('/channels') && url.searchParams.get('mine') === 'true') return json({ items: [{ id: 'connected' }] });
+    if (url.pathname.endsWith('/channels')) return json({ items: [{
+      id: 'connected', snippet: { title: 'connected' }, contentDetails: { relatedPlaylists: { uploads: 'UU' } },
+    }] });
+    if (url.pathname.endsWith('/playlistItems')) return json({ items: [] });
+    throw new Error(`unexpected ${url}`);
+  };
+  const config = loadYouTubeOwnerChannelConfig({
+    SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'db', SLACK_BOT_TOKEN: 'slack',
+    GOOGLE_ADS_CLIENT_ID: 'client', GOOGLE_ADS_CLIENT_SECRET: 'secret',
+    YOUTUBE_OWNER_CHANNELS_JSON: JSON.stringify([
+      { name: '연결됨', channelId: 'connected' },
+      { name: '미연결', channelId: 'missing' },
+    ]),
+  });
+  config.youtubeOwnerChannels = config.youtubeOwnerChannels.filter((row) => ['connected', 'missing'].includes(row.channelId));
+
+  const result = await collectYouTubeOwnerChannels(config, fetchImpl);
+  assert.equal(result.totalConfiguredChannels, 2);
+  assert.equal(result.authenticatedChannels, 1);
+  assert.equal(result.channels, 1);
+  assert.deepEqual(result.missingOAuthChannels, [{
+    name: '미연결', channelId: 'missing', channelCategory: '소유 YouTube',
+  }]);
 });

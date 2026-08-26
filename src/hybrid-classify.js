@@ -232,7 +232,10 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
     // 일부 응답 누락도 정상으로 추측하지 않는다. 누락 슬롯만 보류하고 성공 슬롯은 그대로 보존한다.
     deferUnresolved(missing);
   }
-  if (classifierHash && toStore.length) await storeCache(config, toStore, classifierHash, fetchImpl);
+  // 감사/진단 실행은 기존 FP·캐시를 읽되 운영 캐시는 변경하지 않는 진짜 read-only 모드다.
+  if (classifierHash && toStore.length && config.classificationCacheReadOnly !== true) {
+    await storeCache(config, toStore, classifierHash, fetchImpl);
+  }
 
   return prepared.map((p) => p.out);
 }

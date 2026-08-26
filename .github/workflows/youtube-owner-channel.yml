@@ -84,6 +84,8 @@ jobs:
           YOUTUBE_OWNER_OVERLOAD_RATIO_PERCENT: '40'
           YOUTUBE_OWNER_OVERLOAD_MIN_COMMENTS: '10'
           YOUTUBE_OWNER_OVERLOAD_COOLDOWN_HOURS: '24'
+          # OAuth 미연결 채널 커버리지 경고는 인증된 채널 수집을 막지 않고 주 1회 이하로만 알린다.
+          YOUTUBE_OWNER_COVERAGE_ALERT_COOLDOWN_HOURS: '168'
           YOUTUBE_OWNER_FORCE_VIDEO_IDS: ${{ github.event_name == 'workflow_dispatch' && inputs.force_video_ids || '' }}
           YOUTUBE_OWNER_FORCE_RECLASSIFY: ${{ github.event_name == 'workflow_dispatch' && inputs.force_reclassify && 'true' || 'false' }}
           YOUTUBE_OWNER_ALERT_DELAY_MS: '1100'

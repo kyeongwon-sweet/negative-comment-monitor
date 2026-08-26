@@ -1,0 +1,63 @@
+name: YouTube owner detection coverage audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_ids:
+        description: Optional comma-separated owner video IDs; empty selects highest-comment recent videos
+        required: false
+        type: string
+      max_videos:
+        description: Maximum videos when auto-selecting
+        required: true
+        default: '5'
+        type: string
+      force_reclassify:
+        description: Ignore classification cache for the audit (read-only; human FP still wins)
+        required: true
+        default: true
+        type: boolean
+  schedule:
+    # 주 1회 KST 일요일 14:19. UTC 00시 혼잡구간을 피하고 최고댓글 표본 5개만 읽기전용 대조한다.
+    - cron: '19 5 * * 0'
+
+concurrency:
+  group: youtube-owner-detection-coverage-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts
+      - name: Audit public owner comments against recorded alerts (read-only)
+        run: node src/youtube-owner-coverage-audit.js
+        env:
+          LLM_PROVIDER: gemini
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-3.1-flash-lite
+          GEMINI_REQUEST_INTERVAL_MS: '5000'
+          # 주간 감사 자체는 Gemini 무료 티어만 사용해 유료 Anthropic 폴백 비용을 만들지 않는다.
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          YOUTUBE_OWNER_COVERAGE_AUDIT_VIDEO_IDS: ${{ github.event_name == 'workflow_dispatch' && inputs.video_ids || '' }}
+          YOUTUBE_OWNER_COVERAGE_AUDIT_MAX_VIDEOS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_videos || '5' }}
+          YOUTUBE_OWNER_COVERAGE_AUDIT_FORCE_RECLASSIFY: ${{ github.event_name != 'workflow_dispatch' || inputs.force_reclassify }}
+          YOUTUBE_OWNER_MAX_UPLOAD_PAGES: '10'
+          YOUTUBE_OWNER_DEEP_MAX_THREAD_PAGES: '100'
+          YOUTUBE_OWNER_MAX_REPLY_PAGES: '100'
+          YOUTUBE_OWNER_HIGH_COMMENT_THRESHOLD: '200'
+          YOUTUBE_OWNER_LOOKBACK_DAYS: '14'
+          DRY_RUN: 'true'

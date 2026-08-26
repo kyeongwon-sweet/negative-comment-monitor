@@ -16,6 +16,7 @@
     "sync:negative-comment-sheet": "node src/negative-comment-sheet-sync.js",
     "moderate:youtube-owner": "node src/youtube-owner-moderation.js",
     "audit:youtube-owner-hidden": "node src/youtube-owner-hidden-audit.js",
+    "audit:youtube-owner-coverage": "node src/youtube-owner-coverage-audit.js",
     "oauth:youtube-satellite": "node scripts/youtube-satellite-owner-oauth.mjs",
     "oauth:youtube-satellite:submit": "node scripts/youtube-satellite-owner-oauth-submit.mjs",
     "sync:youtube-hidden-slack": "node src/youtube-hidden-slack-sync.js",

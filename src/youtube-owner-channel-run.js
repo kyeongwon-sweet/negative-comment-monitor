@@ -20,6 +20,7 @@ import {
   maybeWarnOwnerCommentOverload,
 } from './youtube-owner-overload.js';
 import { monitorLlmHealth } from './llm-health.js';
+import { monitorOwnerOAuthCoverage, summarizeOwnerOAuthCoverage } from './youtube-owner-coverage.js';
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -90,6 +91,9 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
   const summary = {
     ownerTokens: collected.ownerTokens,
     configuredOwners: collected.configuredOwners,
+    totalConfiguredChannels: collected.totalConfiguredChannels,
+    authenticatedChannels: collected.authenticatedChannels,
+    missingOAuthChannels: collected.missingOAuthChannels,
     channels: collected.channels,
     videos: collected.videos,
     due: collected.due,
@@ -108,6 +112,17 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
     degraded: [],
     softDegraded: [],
   };
+  const coverage = summarizeOwnerOAuthCoverage(collected);
+  summary.oauthCoverage = coverage;
+  if (!config.dryRun) {
+    try {
+      summary.oauthCoverage = await monitorOwnerOAuthCoverage(config, collected, fetchImpl, now);
+    } catch (error) {
+      // OAuth 커버리지 경고 자체의 장애는 인증된 채널 수집·숨김을 막지 않는다.
+      summary.softDegraded.push({ stage: 'oauth-coverage-health', error: String(error?.message || error) });
+      console.error(`[youtube-owner-channel:coverage-health-degraded] ${error.message}`);
+    }
+  }
   if (collected.riskSignalFailure) {
     // 위험도 재스캔 신호가 사라지면 commentCount 상쇄 구멍이 다시 열린다. 수집 자체는
     // 끝까지 진행하되 보조 모니터를 degraded로 표시해 무음 퇴행을 막는다.
@@ -243,7 +258,7 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
       kstDate: kstDateKey(now), apifyUsd: 0, anthropicUsd: estimatedUsd,
     }, fetchImpl);
   }
-  console.error(`[youtube-owner-channel] channels=${summary.channels}/${summary.configuredOwners} videos=${summary.videos} due=${summary.due} deepDue=${summary.deepDue} riskDue=${summary.riskDue} riskSignals=${summary.riskSignals} unchanged=${summary.unchanged} noSignal=${summary.noSignal} comments=${summary.comments} alerts=${summary.sentAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} fallback=${llmStats.keywordFallbackComments || 0} deferred=${llmStats.llmDeferredComments || 0} failures=${summary.channelFailures.length} softDegraded=${summary.softDegraded.length} est=$${estimatedUsd.toFixed(5)}`);
+  console.error(`[youtube-owner-channel] channels=${summary.channels}/${summary.totalConfiguredChannels} authenticated=${summary.authenticatedChannels} missingOAuth=${summary.oauthCoverage.missing} videos=${summary.videos} due=${summary.due} deepDue=${summary.deepDue} riskDue=${summary.riskDue} riskSignals=${summary.riskSignals} unchanged=${summary.unchanged} noSignal=${summary.noSignal} comments=${summary.comments} alerts=${summary.sentAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} fallback=${llmStats.keywordFallbackComments || 0} deferred=${llmStats.llmDeferredComments || 0} failures=${summary.channelFailures.length} softDegraded=${summary.softDegraded.length} est=$${estimatedUsd.toFixed(5)}`);
   if (summary.channelFailures.length) {
     summary.degraded.push({
       stage: 'collection',
