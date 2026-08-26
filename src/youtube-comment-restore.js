@@ -301,9 +301,11 @@ export async function autoRestoreYouTubeFalsePositives(
       result.failed += ids.length;
       continue;
     }
+    const publishedBefore = await listPublishedIdsForRows(config, ownerRows, token, fetchImpl);
+    const visibleBefore = new Set([...before.visible, ...publishedBefore.published]);
     result.failed += before.failed.length;
-    result.alreadyVisible += before.visible.size;
-    const candidates = ids.filter((id) => before.rejected.has(id) || before.missing.has(id));
+    result.alreadyVisible += ids.filter((id) => visibleBefore.has(id)).length;
+    const candidates = ids.filter((id) => !visibleBefore.has(id) && (before.rejected.has(id) || before.missing.has(id)));
     const acceptedRows = [];
     for (const id of candidates) {
       result.restoreAttempted += 1;
