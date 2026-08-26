@@ -53,7 +53,9 @@ jobs:
           LLM_PROVIDER: gemini
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.1-flash-lite
-          GEMINI_REQUEST_INTERVAL_MS: '1500'
+          # 무료 Gemini의 분당 호출 한도를 넘겨 마지막 분류 청크가 키워드로
+          # 폴백하지 않도록 소유채널 전수 스캔은 보수적으로 12 RPM 이하로 제한한다.
+          GEMINI_REQUEST_INTERVAL_MS: '5000'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5-20251001
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
