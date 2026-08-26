@@ -118,3 +118,17 @@ test('일반·위성 target에는 과부하 경고 상태조회도 하지 않는
   assert.equal(result.checked, false);
   assert.equal(called, false);
 });
+
+test('소유 영상도 과부하가 아니면 기존 경고 쿨다운을 지우는 health success를 기록하지 않는다', async () => {
+  let called = false;
+  const result = await maybeWarnOwnerCommentOverload(
+    config,
+    target,
+    { total: 100, negatives: 3, ratioPercent: 3, overloaded: false },
+    '1.2', '',
+    async () => { called = true; throw new Error('must not call'); },
+  );
+  assert.equal(result.checked, true);
+  assert.equal(result.alerted, false);
+  assert.equal(called, false);
+});

@@ -101,6 +101,9 @@ export async function maybeWarnOwnerCommentOverload(
   if (target?.ownedChannelBrandHostilityScope !== true || !safeVideoId(target)) {
     return { checked: false, alerted: false };
   }
+  // 과부하가 아닌 관측을 generic health의 success로 기록하면 last_alerted_at이 지워져
+  // 같은 영상에 경고가 반복된다. 과부하 상태일 때만 실패형 쿨다운 레코드를 전진시킨다.
+  if (!assessment.overloaded) return { checked: true, alerted: false };
   const healthConfig = {
     ...config,
     platformFailureThreshold: 1,
@@ -114,7 +117,7 @@ export async function maybeWarnOwnerCommentOverload(
       ? `negative=${assessment.negatives}/${assessment.total} (${assessment.ratioPercent.toFixed(1)}%)`
       : null,
   }, fetchImpl, now);
-  if (!assessment.overloaded || (!health.shouldEscalate && health.persisted)) {
+  if (!health.shouldEscalate && health.persisted) {
     return { checked: true, alerted: false, health };
   }
   try {
