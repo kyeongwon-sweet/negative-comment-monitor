@@ -35,6 +35,53 @@ test('Anthropic 500이어도 크래시 없이 키워드 폴백(캐시 미사용)
   } finally { restore(); }
 });
 
+test('Anthropic 실패 폴백은 회차 통계에 댓글수·배치수를 남긴다', async () => {
+  const restore = stubFetch({
+    anthropic: async () => ({
+      ok: false, status: 400,
+      json: async () => ({ error: { type: 'invalid_request_error', message: 'credit balance is too low' } }),
+    }),
+    supabase: async () => { throw new Error('n/a'); },
+  });
+  const stats = { calls: 0, reviewed: 0, cacheHits: 0, cacheMiss: 0 };
+  try {
+    const out = await classifyTargetsBatched(
+      [{ target: T, comments: [ambiguous(0), ambiguous(1)] }],
+      { anthropicKey: 'k' },
+      classifyCommentsLLM,
+      stats,
+    );
+    assert.equal(out[0][0].engine, 'keyword');
+    assert.equal(stats.keywordFallback, true);
+    assert.equal(stats.keywordFallbackBatches, 1);
+    assert.equal(stats.keywordFallbackComments, 2);
+    assert.equal(stats.lastFailureCode, 'credit');
+  } finally { restore(); }
+});
+
+test('영구 오류는 첫 배치 뒤 회로차단해 남은 배치를 재호출하지 않는다', async () => {
+  let calls = 0;
+  const restore = stubFetch({
+    anthropic: async () => {
+      calls += 1;
+      return {
+        ok: false, status: 401,
+        json: async () => ({ error: { type: 'authentication_error', message: 'invalid api key' } }),
+      };
+    },
+    supabase: async () => { throw new Error('n/a'); },
+  });
+  const stats = { calls: 0, reviewed: 0, cacheHits: 0, cacheMiss: 0 };
+  try {
+    const comments = Array.from({ length: 30 }, (_, index) => ambiguous(index));
+    await classifyTargetsBatched([{ target: { ...T, fullContextReview: true }, comments }], { anthropicKey: 'bad' }, classifyCommentsLLM, stats);
+    assert.equal(calls, 1);
+    assert.equal(stats.keywordFallbackBatches, 2);
+    assert.equal(stats.keywordFallbackComments, 30);
+    assert.equal(stats.lastFailureKind, 'persistent');
+  } finally { restore(); }
+});
+
 test('Anthropic 네트워크 예외여도 키워드 폴백(classifyCommentsLLM이 null 반환)', async () => {
   const restore = stubFetch({ anthropic: async () => { throw new Error('ECONNRESET'); }, supabase: async () => { throw new Error('n/a'); } });
   try {

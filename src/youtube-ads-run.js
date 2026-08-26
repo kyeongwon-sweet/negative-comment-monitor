@@ -11,6 +11,7 @@ import { maybeAlertCosts, postCostWarning, recordRunCost, sumDailyCost } from '.
 import { buildYouTubeAdEntries, loadYouTubeAdsConfig } from './youtube-ads.js';
 import { inAdMorningWindow, dailyAdRunKey, hasAdRunToday } from './ad-common.js';
 import { moderateYouTubeOwnerAlerts } from './youtube-owner-moderation.js';
+import { monitorLlmHealth } from './llm-health.js';
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -102,7 +103,7 @@ export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl =
     return summary;
   }
 
-  const llmStats = { calls: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
+  const llmStats = { calls: 0, attempts: 0, failedAttempts: 0, persistentFailures: 0, transientFailures: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
   // 광고(source=youtube_ads)는 hybrid-classify의 AD_COMMENT_SOURCES에 포함되어 전 댓글 문맥검토됨.
   const risksPerEntry = await classifyTargetsBatched(collected.entries, config, undefined, llmStats, fetchImpl);
   let classifierHash = null;
@@ -151,7 +152,10 @@ export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl =
 
   const estimatedUsd = estimateUsd(llmStats, config.anthropicModel);
   summary.llm = { ...llmStats, estUsd: Number(estimatedUsd.toFixed(5)) };
-  console.error(`[youtube-ads] customers=${summary.customers} campaigns=${summary.campaigns} assets=${summary.assets} videos=${summary.videos} owned=${summary.ownedVideos || 0} external=${summary.externalVideos || 0} namedAds=${summary.namedAdVideos || 0} creatorAssigned=${summary.creatorAssignedVideos || 0} comments=${summary.comments} alerts=${summary.sentAlerts} managedAlerts=${summary.managedAlerts} externalAlerts=${summary.externalAlerts} llmCalls=${llmStats.calls} est=$${estimatedUsd.toFixed(5)}`);
+  summary.llmHealth = await monitorLlmHealth(config, llmStats, {
+    scope: 'youtube-ads', label: 'YouTube 인지 광고', totalComments: summary.comments, notify: !config.dryRun,
+  }, fetchImpl, now);
+  console.error(`[youtube-ads] customers=${summary.customers} campaigns=${summary.campaigns} assets=${summary.assets} videos=${summary.videos} owned=${summary.ownedVideos || 0} external=${summary.externalVideos || 0} namedAds=${summary.namedAdVideos || 0} creatorAssigned=${summary.creatorAssignedVideos || 0} comments=${summary.comments} alerts=${summary.sentAlerts} managedAlerts=${summary.managedAlerts} externalAlerts=${summary.externalAlerts} llmCalls=${llmStats.calls} llmFailed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} est=$${estimatedUsd.toFixed(5)}`);
 
   if (!config.dryRun) {
     await autoHideYouTubeAlerts(config, summary, fetchImpl, now);

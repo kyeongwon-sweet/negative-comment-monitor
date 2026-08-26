@@ -17,6 +17,7 @@ import { APIFY_LOW_BALANCE_USD, DEFAULT_COST_THRESHOLDS, estimateApifyUsd, fetch
 import { hasAdRunToday } from './ad-common.js';
 import { autoHideOrganicSatelliteYouTube } from './youtube-organic-auto-hide.js';
 import { recordPlatformOutcome } from './platform-health.js';
+import { monitorLlmHealth } from './llm-health.js';
 
 export async function runMonitor(config = loadConfig()) {
   const runNow = Date.now();
@@ -141,7 +142,7 @@ export async function runMonitor(config = loadConfig()) {
   const scrapedTargets = [];
   let sentAlerts = 0;
   // LLM 사용량 계측(내용·키 미기록, 카운트/토큰만). cacheHits/cacheMiss=분류 캐시 적중 현황.
-  const llmStats = { calls: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
+  const llmStats = { calls: 0, attempts: 0, failedAttempts: 0, persistentFailures: 0, transientFailures: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
   const apifyCommentsByPlatform = {}; // 플랫폼별 수집 댓글 수(Apify 비용 추정 입력)
   const summary = {
     fetchedTargets: rawTargets.length,
@@ -289,7 +290,17 @@ export async function runMonitor(config = loadConfig()) {
   // LLM 사용량 요약 + 예상 비용(단가는 pricing.js에 분리).
   const estUsd = estimateUsd(llmStats, config.anthropicModel);
   summary.llm = { ...llmStats, estUsd: Number(estUsd.toFixed(5)) };
-  console.error(`[llm] calls=${llmStats.calls} reviewed=${llmStats.reviewed} cacheHit=${llmStats.cacheHits} cacheMiss=${llmStats.cacheMiss} in=${llmStats.inputTokens} out=${llmStats.outputTokens} promptCacheR=${llmStats.cacheRead} promptCacheC=${llmStats.cacheCreate} est=$${estUsd.toFixed(5)} (${config.anthropicModel})`);
+  try {
+    summary.llmHealth = await monitorLlmHealth(config, llmStats, {
+      scope: 'core', label: '일반 협찬·바이럴·위성 모니터',
+      totalComments: entries.reduce((sum, entry) => sum + entry.comments.length, 0),
+      notify: !config.dryRun,
+    }, fetch, runNow);
+  } catch (error) {
+    summary.llmHealth = { degraded: true, healthCheckFailed: true, error: String(error.message || error).slice(0, 200) };
+    console.error(`[llm-health:degraded] 상태 경고 실패 — ${error.message}`);
+  }
+  console.error(`[llm] calls=${llmStats.calls} attempts=${llmStats.attempts || 0} failed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} reviewed=${llmStats.reviewed} cacheHit=${llmStats.cacheHits} cacheMiss=${llmStats.cacheMiss} in=${llmStats.inputTokens} out=${llmStats.outputTokens} promptCacheR=${llmStats.cacheRead} promptCacheC=${llmStats.cacheCreate} est=$${estUsd.toFixed(5)} (${config.anthropicModel})`);
 
   // 90일 초과 분류 캐시 정리(best-effort — 실패해도 무시).
   if (!config.dryRun) await purgeCache(config);

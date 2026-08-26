@@ -94,6 +94,44 @@ test('classifyCommentsLLM retries transient Anthropic overload without leaking c
   assert.equal(stats.calls, 1);
 });
 
+test('Anthropic credit 400은 재시도하지 않고 persistent/credit으로 구분한다', async () => {
+  let attempts = 0;
+  const stats = { calls: 0, reviewed: 0 };
+  const fetchImpl = async () => {
+    attempts += 1;
+    return {
+      ok: false,
+      status: 400,
+      json: async () => ({
+        type: 'error',
+        error: { type: 'invalid_request_error', message: 'Your credit balance is too low to access the API.' },
+      }),
+    };
+  };
+  const out = await classifyCommentsLLM([{ text: '검토 대상' }], { anthropicKey: 'k' }, fetchImpl, stats);
+  assert.equal(out, null);
+  assert.equal(attempts, 1);
+  assert.equal(stats.failedAttempts, 1);
+  assert.equal(stats.persistentFailures, 1);
+  assert.equal(stats.transientFailures || 0, 0);
+  assert.equal(stats.lastFailureCode, 'credit');
+  assert.equal(stats.lastFailureKind, 'persistent');
+});
+
+test('Anthropic 401 키 오류도 재시도 없이 persistent/auth로 구분한다', async () => {
+  const stats = { calls: 0, reviewed: 0 };
+  const out = await classifyCommentsLLM([{ text: '검토 대상' }], { anthropicKey: 'bad-key' }, async () => ({
+    ok: false,
+    status: 401,
+    json: async () => ({ error: { type: 'authentication_error', message: 'invalid x-api-key' } }),
+  }), stats);
+  assert.equal(out, null);
+  assert.equal(stats.failedAttempts, 1);
+  assert.equal(stats.persistentFailures, 1);
+  assert.equal(stats.lastFailureCode, 'auth');
+  assert.equal(stats.lastFailureKind, 'persistent');
+});
+
 test('소유채널 확대 정책은 표시된 댓글이 있을 때만 프롬프트에 추가된다', async () => {
   const prompts = [];
   const fetchImpl = async (url, init) => {

@@ -16,6 +16,34 @@ function retryDelayMs(response, attempt, config) {
   return Math.min(15_000, base * (2 ** attempt));
 }
 
+async function safeAnthropicFailure(response) {
+  const status = Number(response?.status || 0);
+  let payload = {};
+  try { payload = await response.json(); } catch { payload = {}; }
+  const type = String(payload?.error?.type || payload?.type || '').toLowerCase();
+  const message = String(payload?.error?.message || '').toLowerCase();
+  let code = 'http';
+  if (/credit balance|billing|purchase credits/.test(message)) code = 'credit';
+  else if (status === 401 || status === 403 || /auth|api key|permission/.test(`${type} ${message}`)) code = 'auth';
+  else if (status === 429 || /rate.limit/.test(`${type} ${message}`)) code = 'rate_limit';
+  else if (status >= 500) code = 'server';
+  else if (status === 400) code = 'invalid_request';
+  const kind = [400, 401, 403].includes(status) ? 'persistent'
+    : TRANSIENT_HTTP_STATUSES.has(status) ? 'transient'
+      : 'persistent';
+  return { status: status || 'http', code, kind };
+}
+
+function recordFailure(stats, failure) {
+  if (!stats) return;
+  stats.failedAttempts = (stats.failedAttempts || 0) + 1;
+  if (failure.kind === 'persistent') stats.persistentFailures = (stats.persistentFailures || 0) + 1;
+  else stats.transientFailures = (stats.transientFailures || 0) + 1;
+  stats.lastFailureStatus = failure.status;
+  stats.lastFailureCode = failure.code;
+  stats.lastFailureKind = failure.kind;
+}
+
 async function fetchAnthropicWithRetry(url, init, config, fetchImpl, stats) {
   const maxAttempts = Math.max(1, Math.min(5, Number(config?.anthropicMaxAttempts || 4)));
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -23,17 +51,12 @@ async function fetchAnthropicWithRetry(url, init, config, fetchImpl, stats) {
     try {
       const response = await fetchImpl(url, init);
       if (response.ok) return response;
-      if (stats) {
-        stats.failedAttempts = (stats.failedAttempts || 0) + 1;
-        stats.lastFailureStatus = Number(response.status || 0) || 'http';
-      }
+      const failure = await safeAnthropicFailure(response);
+      recordFailure(stats, failure);
       if (!TRANSIENT_HTTP_STATUSES.has(Number(response.status)) || attempt + 1 >= maxAttempts) return response;
       await wait(retryDelayMs(response, attempt, config));
     } catch (error) {
-      if (stats) {
-        stats.failedAttempts = (stats.failedAttempts || 0) + 1;
-        stats.lastFailureStatus = 'network';
-      }
+      recordFailure(stats, { status: 'network', code: 'network', kind: 'transient' });
       // 네트워크 예외는 fetch 내부 재시도 여부를 알 수 없고 장시간 워크플로를 붙잡을 수 있어
       // 기존 fail-soft 경로로 즉시 넘긴다. 429/5xx처럼 명시적인 일시 HTTP 응답만 재시도한다.
       throw error;

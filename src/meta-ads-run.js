@@ -17,6 +17,7 @@ import {
   markMetaAdEventsProcessed,
 } from './meta-ads.js';
 import { autoHideMetaAwareness } from './awareness-auto-hide.js';
+import { monitorLlmHealth } from './llm-health.js';
 
 // 인지 광고는 '아침 배치'로만 발송한다(부정댓글 관리 시간 정렬). 단, 특정 아침 크론에 의존하면
 // GitHub이 그 크론을 드롭할 때 배치가 통째로 누락된다(실측: 아침 크론 드롭 사고). 그래서 안정적인
@@ -44,7 +45,7 @@ export async function runMetaAds(config = loadMetaAdsConfig(), fetchImpl = fetch
     return summary;
   }
 
-  const llmStats = { calls: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
+  const llmStats = { calls: 0, attempts: 0, failedAttempts: 0, persistentFailures: 0, transientFailures: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
   try {
     const entries = await buildMetaAdEntries(config, events, fetchImpl);
     summary.entries = entries.length;
@@ -89,14 +90,24 @@ export async function runMetaAds(config = loadMetaAdsConfig(), fetchImpl = fetch
 
     const estimatedUsd = estimateUsd(llmStats, config.anthropicModel);
     summary.llm = { ...llmStats, estUsd: Number(estimatedUsd.toFixed(5)) };
-    console.error(`[meta-ads] events=${events.length} alerts=${summary.sentAlerts} llmCalls=${llmStats.calls} est=$${estimatedUsd.toFixed(5)}`);
+    summary.llmHealth = await monitorLlmHealth(config, llmStats, {
+      scope: 'meta-ads', label: 'Meta 인지 광고', totalComments: events.length, notify: !config.dryRun,
+    }, fetchImpl, now);
+    console.error(`[meta-ads] events=${events.length} alerts=${summary.sentAlerts} llmCalls=${llmStats.calls} llmFailed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} est=$${estimatedUsd.toFixed(5)}`);
 
     if (!config.dryRun) {
       if (config.metaAdsAutoHide) {
         summary.moderation = await autoHideMetaAwareness(config, fetchImpl, now);
         if (summary.moderation.failed || summary.moderation.slack.failed) throw new Error('Meta awareness auto-hide failed');
       }
-      summary.processedEvents = await markMetaAdEventsProcessed(config, eventIds, fetchImpl, now);
+      if (summary.llmHealth.degraded) {
+        // 큐를 완료 처리하면 크레딧/인증 복구 뒤 LLM 재분류 기회가 영구 소실된다.
+        // 키워드 알림은 dedup이 보호하므로 이벤트는 pending으로 남겨 다음 아침 회차에 재시도한다.
+        summary.processedEvents = 0;
+        summary.retryPendingEvents = eventIds.length;
+      } else {
+        summary.processedEvents = await markMetaAdEventsProcessed(config, eventIds, fetchImpl, now);
+      }
       try {
         const kstDate = kstDateKey(now);
         await recordRunCost(config, { runKey: runKey(process.env, now), kstDate, apifyUsd: 0, anthropicUsd: estimatedUsd }, fetchImpl);

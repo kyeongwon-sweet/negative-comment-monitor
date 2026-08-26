@@ -77,3 +77,28 @@ export async function recordPlatformOutcome(config, outcome, fetchImpl = fetch, 
     return { persisted: false, platform, consecutiveFailures: outcome.ok ? 0 : 1, shouldEscalate: false, error: error.message };
   }
 }
+
+// 경고 전송이 실패했을 때 쿨다운 claim만 되돌린다. 실패 streak·원인은 보존해
+// 다음 회차가 같은 장애를 다시 알릴 수 있게 한다.
+export async function clearPlatformAlertClaim(config, platformValue, fetchImpl = fetch, now = Date.now()) {
+  const platform = String(platformValue || '').trim().toLowerCase();
+  if (!platform || !enabled(config)) return false;
+  try {
+    const previous = await loadHealth(config, platform, fetchImpl);
+    if (!previous) return false;
+    await saveHealth(config, {
+      platform,
+      consecutive_failures: Number(previous.consecutive_failures || 0),
+      last_status: previous.last_status || 'failure',
+      last_success_at: previous.last_success_at || null,
+      last_failure_at: previous.last_failure_at || null,
+      last_error: previous.last_error || null,
+      last_alerted_at: null,
+      updated_at: new Date(now).toISOString(),
+    }, fetchImpl);
+    return true;
+  } catch (error) {
+    console.error(`[platform-health] ${platform} 경고 claim 해제 실패: ${error.message}`);
+    return false;
+  }
+}

@@ -74,6 +74,8 @@ export function loadConfig(env = process.env, now = Date.now()) {
     // LLM 분류(의미 기반). 키 있으면 자동 사용, 없거나 실패 시 키워드 분류로 폴백.
     anthropicKey: String(env.ANTHROPIC_API_KEY || '').trim(),
     anthropicModel: String(env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001').trim(),
+    llmFailureThreshold: Math.max(1, Number(env.LLM_FAILURE_THRESHOLD || 3)),
+    llmFailureAlertCooldownHours: Math.max(1, Number(env.LLM_FAILURE_ALERT_COOLDOWN_HOURS || 12)),
     sourceSpreadsheetId: String(env.SOURCE_SPREADSHEET_ID || '10WpAQU9TAsi3hRZ3ELvcQYj7Z228ILXfF6BUGz495Ak').trim(),
     sourceSheetName: String(env.SOURCE_SHEET_NAME || '콘텐츠 대시보드 연동').trim(),
     excludedChannelCategory: String(env.EXCLUDED_CHANNEL_CATEGORY || '무상시딩').trim(),

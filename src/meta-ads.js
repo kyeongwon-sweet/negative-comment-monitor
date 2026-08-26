@@ -52,6 +52,8 @@ export function loadMetaAdsConfig(env = process.env, now = Date.now()) {
     brandContext: String(env.BRAND_CONTEXT || '라라스윗 쫀득바').trim(),
     anthropicKey: String(env.ANTHROPIC_API_KEY || '').trim(),
     anthropicModel: String(env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001').trim(),
+    llmFailureThreshold: Math.max(1, Number(env.LLM_FAILURE_THRESHOLD || 3)),
+    llmFailureAlertCooldownHours: Math.max(1, Number(env.LLM_FAILURE_ALERT_COOLDOWN_HOURS || 12)),
     metaGraphBase: String(env.META_GRAPH_BASE || DEFAULT_META_GRAPH).trim().replace(/\/$/, ''),
     metaTokenKind: String(env.META_TOKEN_KIND || 'ig_ads').trim(),
     metaAdsProductName: String(env.META_ADS_PRODUCT_NAME || 'JD').trim(),

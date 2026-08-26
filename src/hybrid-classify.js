@@ -25,7 +25,19 @@ async function prepareLocal(comments, target, config, stats, fetchImpl) {
   for (let index = 0; index < comments.length; index += 1) {
     if (reviewAll || needsContextualReview(comments[index], target)) reviewIndexes.push(index);
   }
-  if (!reviewIndexes.length || !config.anthropicKey) return { out, pending: [], classifierHash: null };
+  if (!reviewIndexes.length) return { out, pending: [], classifierHash: null };
+  if (!config.anthropicKey) {
+    if (stats) {
+      stats.keywordFallback = true;
+      stats.keywordFallbackBatches = (stats.keywordFallbackBatches || 0) + 1;
+      stats.keywordFallbackComments = (stats.keywordFallbackComments || 0) + reviewIndexes.length;
+      stats.missingKey = true;
+      stats.lastFailureCode = 'missing_key';
+      stats.lastFailureKind = 'persistent';
+      stats.persistentFailures = (stats.persistentFailures || 0) + 1;
+    }
+    return { out, pending: [], classifierHash: null };
+  }
 
   let classifierHash = null;
   let cacheHits = new Map();
@@ -102,9 +114,22 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
   }
   const classifierHash = prepared.find((p) => p.classifierHash)?.classifierHash || null;
 
+  function recordKeywordFallback(count) {
+    if (!stats || !count) return;
+    stats.keywordFallback = true;
+    stats.keywordFallbackBatches = (stats.keywordFallbackBatches || 0) + 1;
+    stats.keywordFallbackComments = (stats.keywordFallbackComments || 0) + count;
+  }
+
   const toStore = [];
   for (let start = 0; start < flat.length; start += LLM_BATCH) {
     const slice = flat.slice(start, start + LLM_BATCH);
+    // 크레딧·키·권한·잘못된 요청 같은 영구 오류는 같은 회차에서 다시 시도해도 회복되지 않는다.
+    // 첫 실패 뒤 남은 배치는 호출하지 않고 폴백 수만 정확히 기록한다(400×N 요청 폭주 방지).
+    if (stats?.lastFailureKind === 'persistent') {
+      recordKeywordFallback(slice.length);
+      continue;
+    }
     let reviewed = null;
     try {
       reviewed = await llmClassifier(slice.map((s) => ({
@@ -115,7 +140,10 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
     } catch {
       reviewed = null; // 호출 실패 → 이 배치는 키워드 유지
     }
-    if (!reviewed) continue; // JSON 파싱 실패 등으로 null → 키워드 폴백
+    if (!reviewed) {
+      recordKeywordFallback(slice.length);
+      continue; // JSON 파싱 실패 등으로 null → 키워드 폴백
+    }
     for (let k = 0; k < slice.length; k += 1) {
       const result = reviewed[k];
       if (!result) continue; // 일부 응답 누락/부족 → 해당 항목만 키워드 유지

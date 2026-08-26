@@ -19,6 +19,7 @@ import {
   assessOwnerCommentOverload,
   maybeWarnOwnerCommentOverload,
 } from './youtube-owner-overload.js';
+import { monitorLlmHealth } from './llm-health.js';
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -170,12 +171,9 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
 
   const estimatedUsd = estimateUsd(llmStats, config.anthropicModel);
   summary.llm = { ...llmStats, estUsd: Number(estimatedUsd.toFixed(5)) };
-  if (llmStats.failedAttempts > 0 && llmStats.reviewed < llmStats.cacheMiss) {
-    summary.degraded.push({
-      stage: 'classification',
-      error: `LLM reviewed ${llmStats.reviewed}/${llmStats.cacheMiss} cache misses after ${llmStats.failedAttempts} failed attempt(s)`,
-    });
-  }
+  summary.llmHealth = await monitorLlmHealth(config, llmStats, {
+    scope: 'youtube-owner', label: 'YouTube 소유 채널', totalComments: summary.comments, notify: !config.dryRun,
+  }, fetchImpl, now);
   if (!config.dryRun) {
     await recordRunCost(config, {
       runKey: `youtube-owner-channel:${process.env.GITHUB_RUN_ID || now}:${process.env.GITHUB_RUN_ATTEMPT || '1'}`,
