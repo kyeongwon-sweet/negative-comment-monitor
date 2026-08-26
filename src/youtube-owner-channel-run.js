@@ -58,6 +58,30 @@ export function threadRouteForOwnerTarget(target) {
   };
 }
 
+export function ownerRunFailure(summary = {}) {
+  const hardDegraded = Array.isArray(summary.degraded) ? summary.degraded : [];
+  if (!hardDegraded.length) return null;
+  const error = new Error(`YouTube owner-channel degraded in ${hardDegraded.map((item) => item.stage).join(', ')}`);
+  error.summary = summary;
+  return error;
+}
+
+export function recordOwnerLlmSoftDegraded(summary, health = null, error = null) {
+  if (!Array.isArray(summary.softDegraded)) summary.softDegraded = [];
+  if (error) {
+    summary.softDegraded.push({
+      stage: 'llm-health',
+      error: String(error?.message || error),
+    });
+    return;
+  }
+  if (!health?.degraded) return;
+  summary.softDegraded.push({
+    stage: 'llm-classification',
+    error: `${health.failureCode || 'unknown'}; fallback=${health.keywordFallbackComments || 0}/${health.candidateComments || 0}`,
+  });
+}
+
 export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelConfig(), fetchImpl = fetch, now = Date.now()) {
   const collected = await collectYouTubeOwnerChannels(config, fetchImpl, now);
   const summary = {
@@ -77,6 +101,7 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
     overloadWarningFailures: 0,
     channelFailures: collected.channelFailures,
     degraded: [],
+    softDegraded: [],
   };
   const llmStats = { calls: 0, attempts: 0, failedAttempts: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
   const risksPerEntry = await classifyTargetsBatched(collected.entries, config, undefined, llmStats, fetchImpl);
@@ -171,27 +196,38 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
 
   const estimatedUsd = estimateUsd(llmStats, config.anthropicModel);
   summary.llm = { ...llmStats, estUsd: Number(estimatedUsd.toFixed(5)) };
-  summary.llmHealth = await monitorLlmHealth(config, llmStats, {
-    scope: 'youtube-owner', label: 'YouTube 소유 채널', totalComments: summary.comments, notify: !config.dryRun,
-  }, fetchImpl, now);
+  try {
+    summary.llmHealth = await monitorLlmHealth(config, llmStats, {
+      scope: 'youtube-owner', label: 'YouTube 소유 채널', totalComments: summary.comments, notify: !config.dryRun,
+    }, fetchImpl, now);
+    recordOwnerLlmSoftDegraded(summary, summary.llmHealth);
+  } catch (error) {
+    // 헬스 기록/Slack 경고 자체가 실패해도 이미 산출한 키워드 판정과 알림을 버리지 않는다.
+    // 분류 공급자 전면 실패는 soft-degraded(exit 0)이며, 수집·DB·모더레이션 장애만 hard-degraded다.
+    summary.llmHealth = {
+      degraded: true,
+      keywordFallback: Number(llmStats.keywordFallbackComments || 0) > 0,
+      keywordFallbackComments: Number(llmStats.keywordFallbackComments || 0),
+      healthMonitorError: String(error?.message || error),
+    };
+    recordOwnerLlmSoftDegraded(summary, null, error);
+    console.error(`[youtube-owner-channel:soft-degraded] llm-health — ${error.message}`);
+  }
   if (!config.dryRun) {
     await recordRunCost(config, {
       runKey: `youtube-owner-channel:${process.env.GITHUB_RUN_ID || now}:${process.env.GITHUB_RUN_ATTEMPT || '1'}`,
       kstDate: kstDateKey(now), apifyUsd: 0, anthropicUsd: estimatedUsd,
     }, fetchImpl);
   }
-  console.error(`[youtube-owner-channel] channels=${summary.channels}/${summary.configuredOwners} videos=${summary.videos} due=${summary.due} deepDue=${summary.deepDue} unchanged=${summary.unchanged} noSignal=${summary.noSignal} comments=${summary.comments} alerts=${summary.sentAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} fallback=${llmStats.keywordFallbackComments || 0} failures=${summary.channelFailures.length} est=$${estimatedUsd.toFixed(5)}`);
+  console.error(`[youtube-owner-channel] channels=${summary.channels}/${summary.configuredOwners} videos=${summary.videos} due=${summary.due} deepDue=${summary.deepDue} unchanged=${summary.unchanged} noSignal=${summary.noSignal} comments=${summary.comments} alerts=${summary.sentAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} fallback=${llmStats.keywordFallbackComments || 0} failures=${summary.channelFailures.length} softDegraded=${summary.softDegraded.length} est=$${estimatedUsd.toFixed(5)}`);
   if (summary.channelFailures.length) {
     summary.degraded.push({
       stage: 'collection',
       error: `${summary.channelFailures.length} channel(s) failed`,
     });
   }
-  if (summary.degraded.length) {
-    const error = new Error(`YouTube owner-channel degraded in ${summary.degraded.map((item) => item.stage).join(', ')}`);
-    error.summary = summary;
-    throw error;
-  }
+  const failure = ownerRunFailure(summary);
+  if (failure) throw failure;
   return summary;
 }
 
