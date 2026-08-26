@@ -55,8 +55,10 @@ test('과부하 경고는 Studio 링크·담당자를 포함하고 Slack 성공 
   assert.equal(body.thread_ts, '123.45');
   assert.match(body.text, /<@U1>/);
   assert.match(body.text, /썰푸는앵무새 \(UCQKpvEBNiMBrGzI2f2tAFeA\) 채널로 전환/);
+  assert.match(body.text, /댓글창 사용 중지 권고/);
+  assert.match(body.text, /댓글 → 꺼짐/);
+  assert.match(body.text, /studio\.youtube\.com\/video\/Video_ABC-1\/edit/);
   assert.match(body.text, /studio\.youtube\.com\/channel\/UCQKpvEBNiMBrGzI2f2tAFeA\/comments/);
-  assert.doesNotMatch(body.text, /studio\.youtube\.com\/video\/Video_ABC-1\/edit/);
   assert.match(body.text, /테스트 &lt;영상&gt;/);
 });
 
@@ -67,7 +69,8 @@ test('채널 ID가 없으면 잘못된 채널 URL 대신 Studio 홈과 채널 �
     '',
   );
   assert.match(text, /썰푸는앵무새 채널로 전환/);
-  assert.match(text, /<https:\/\/studio\.youtube\.com\/\|썰푸는앵무새 댓글 관리 열기>/);
+  assert.match(text, /<https:\/\/studio\.youtube\.com\/video\/Video_ABC-1\/edit\|댓글 설정 바로 열기>/);
+  assert.match(text, /<https:\/\/studio\.youtube\.com\/\|썰푸는앵무새 댓글 관리>/);
 });
 
 test('일반·위성 target에는 과부하 경고 상태조회도 하지 않는다', async () => {

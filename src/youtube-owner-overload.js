@@ -33,16 +33,19 @@ export function buildOwnerOverloadWarning(target, assessment, assignee = '') {
   const channelName = escapeMrkdwn(String(target?.channelName || channelId || '소유 채널').trim().slice(0, 80));
   const title = escapeMrkdwn(String(target?.caption || target?.channelName || videoId).split(' / ')[0].slice(0, 120));
   const watchUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
-  const studioUrl = channelId
+  const studioCommentsUrl = channelId
     ? `https://studio.youtube.com/channel/${encodeURIComponent(channelId)}/comments`
     : 'https://studio.youtube.com/';
+  const studioVideoUrl = videoId
+    ? `https://studio.youtube.com/video/${encodeURIComponent(videoId)}/edit`
+    : 'https://studio.youtube.com/';
   const channelLabel = channelId ? `${channelName} (${escapeMrkdwn(channelId)})` : channelName;
-  return `🚨 *소유 YouTube 댓글 과부하 — 운영 설정 검토 권고*\n`
+  return `🚨 *소유 YouTube 댓글 과부하 — 댓글창 사용 중지 권고*\n`
     + `${mention}${title}\n`
     + `이번 확인 댓글 ${assessment.total}개 중 부정 ${assessment.negatives}개 (${assessment.ratioPercent.toFixed(1)}%)입니다.\n`
-    + `하나씩 숨기기보다 YouTube Studio에서 댓글 사용 중지 또는 댓글 전체 보류를 검토해 주세요.\n`
-    + `${channelLabel} 채널로 전환한 뒤 댓글 관리 화면을 열어 주세요.\n`
-    + `<${watchUrl}|영상 열기> · <${studioUrl}|${channelName} 댓글 관리 열기>`;
+    + `과부하 임계치에 도달했습니다. 하나씩 숨기기보다 이 영상의 댓글을 사용 중지해 주세요.\n`
+    + `${channelLabel} 채널로 전환한 뒤 영상 설정에서 '댓글 → 꺼짐'으로 저장하세요.\n`
+    + `<${watchUrl}|영상 열기> · <${studioVideoUrl}|댓글 설정 바로 열기> · <${studioCommentsUrl}|${channelName} 댓글 관리>`;
 }
 
 export async function maybeWarnOwnerCommentOverload(
