@@ -49,7 +49,9 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           YOUTUBE_FP_AUTO_RESTORE: AUTO_RESTORE_YOUTUBE_FALSE_POSITIVES
-          YOUTUBE_FP_AUTO_RESTORE_LOOKBACK_HOURS: '48'
+          # 과거 rejected 오탐도 3일 안에는 한 번 복원을 시도한다. 성공 미확인 행은
+          # DB에 격리 표식을 남겨 이후 15분 회차의 반복 호출·경고를 막는다.
+          YOUTUBE_FP_AUTO_RESTORE_LOOKBACK_HOURS: '72'
           YOUTUBE_FP_AUTO_RESTORE_MAX_ROWS: '100'
           YOUTUBE_RESTORE_VERIFY_ATTEMPTS: '5'
           YOUTUBE_RESTORE_VERIFY_DELAY_MS: '3000'
