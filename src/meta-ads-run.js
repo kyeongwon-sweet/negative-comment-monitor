@@ -93,7 +93,7 @@ export async function runMetaAds(config = loadMetaAdsConfig(), fetchImpl = fetch
     summary.llmHealth = await monitorLlmHealth(config, llmStats, {
       scope: 'meta-ads', label: 'Meta 인지 광고', totalComments: events.length, notify: !config.dryRun,
     }, fetchImpl, now);
-    console.error(`[meta-ads] events=${events.length} alerts=${summary.sentAlerts} llmCalls=${llmStats.calls} llmFailed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} est=$${estimatedUsd.toFixed(5)}`);
+    console.error(`[meta-ads] events=${events.length} alerts=${summary.sentAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} llmFailed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} est=$${estimatedUsd.toFixed(5)}`);
 
     if (!config.dryRun) {
       if (config.metaAdsAutoHide) {

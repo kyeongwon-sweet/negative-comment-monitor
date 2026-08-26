@@ -58,3 +58,12 @@ test('TikTok collection safety defaults are bounded and persistent failures need
   assert.equal(config.platformFailureThreshold, 3);
   assert.equal(config.platformFailureAlertCooldownHours, 12);
 });
+
+test('LLM 기본 공급자는 현재 무료 Gemini 안정 모델이고 Anthropic은 폴백 설정으로 남는다', () => {
+  const config = loadConfig({ ...BASE_ENV, GEMINI_API_KEY: 'gemini', ANTHROPIC_API_KEY: 'anthropic' });
+  assert.equal(config.llmProvider, 'gemini');
+  assert.equal(config.geminiModel, 'gemini-3.1-flash-lite');
+  assert.equal(config.geminiRequestIntervalMs, 1500);
+  assert.equal(config.geminiKey, 'gemini');
+  assert.equal(config.anthropicKey, 'anthropic');
+});

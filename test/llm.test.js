@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyCommentsLLM } from '../src/llm.js';
+import { classifyCommentsLLM, configuredLlmProviders, hasConfiguredLlmProvider } from '../src/llm.js';
 
 function makeFetch(usageList) {
   let call = 0;
@@ -143,4 +143,101 @@ test('소유채널 확대 정책은 표시된 댓글이 있을 때만 프롬프�
   assert.match(prompts[0], /소유 YouTube 채널 확대 정책/);
   assert.match(prompts[0], /\[소유채널\] 라라스윗 왤케 비호감/);
   assert.doesNotMatch(prompts[1], /소유 YouTube 채널 확대 정책/);
+});
+
+test('Gemini 구조화 JSON 응답을 분류하고 공급자별 무료 사용량을 기록한다', async () => {
+  const requests = [];
+  const stats = {};
+  const out = await classifyCommentsLLM(
+    [{ text: '라라스윗 비호감', ownedChannelBrandHostilityScope: true }],
+    { llmProvider: 'gemini', geminiKey: 'g', geminiModel: 'gemini-3.1-flash-lite', geminiRequestIntervalMs: 0 },
+    async (url, init) => {
+      requests.push({ url, init });
+      return {
+        ok: true,
+        json: async () => ({
+          candidates: [{ content: { parts: [{ text: '[{"i":0,"alert":true,"category":"브랜드 적대/조롱","reason":"브랜드를 비호감이라고 깎아내림"}]' }] } }],
+          usageMetadata: { promptTokenCount: 120, candidatesTokenCount: 30, cachedContentTokenCount: 4 },
+        }),
+      };
+    },
+    stats,
+  );
+  assert.equal(out[0].alert, true);
+  assert.equal(out[0].category, '브랜드 적대/조롱');
+  assert.match(requests[0].url, /gemini-3\.1-flash-lite:generateContent$/);
+  assert.equal(requests[0].init.headers['x-goog-api-key'], 'g');
+  const body = JSON.parse(requests[0].init.body);
+  assert.equal(body.generationConfig.responseMimeType, 'application/json');
+  assert.equal(body.generationConfig.responseJsonSchema.type, 'array');
+  assert.match(body.contents[0].parts[0].text, /\[소유채널\]/);
+  assert.equal(stats.geminiCalls, 1);
+  assert.equal(stats.geminiInputTokens, 120);
+  assert.equal(stats.anthropicCalls || 0, 0);
+  assert.equal(stats.lastSuccessfulProvider, 'gemini');
+});
+
+test('Gemini 429는 백오프 재시도 후 성공한다', async () => {
+  let attempts = 0;
+  const stats = {};
+  const out = await classifyCommentsLLM(
+    [{ text: '검토' }],
+    { llmProvider: 'gemini', geminiKey: 'g', geminiRequestIntervalMs: 0, geminiRetryBaseMs: 0 },
+    async () => {
+      attempts += 1;
+      if (attempts === 1) return {
+        ok: false,
+        status: 429,
+        headers: { get: () => null },
+        json: async () => ({ error: { status: 'RESOURCE_EXHAUSTED', message: 'quota exceeded' } }),
+      };
+      return {
+        ok: true,
+        json: async () => ({ candidates: [{ content: { parts: [{ text: '[]' }] } }] }),
+      };
+    },
+    stats,
+  );
+  assert.equal(out.length, 1);
+  assert.equal(attempts, 2);
+  assert.equal(stats.transientFailures, 1);
+  assert.equal(stats.lastSuccessfulProvider, 'gemini');
+});
+
+test('Gemini 영구 실패 시 Anthropic으로 폴백하고 키워드 폴백은 하지 않는다', async () => {
+  const urls = [];
+  const stats = {};
+  const out = await classifyCommentsLLM(
+    [{ text: '검토' }],
+    { llmProvider: 'gemini', geminiKey: 'bad', anthropicKey: 'anthropic', geminiRequestIntervalMs: 0 },
+    async (url) => {
+      urls.push(String(url));
+      if (String(url).includes('generativelanguage')) return {
+        ok: false,
+        status: 401,
+        json: async () => ({ error: { status: 'UNAUTHENTICATED', message: 'API key not valid' } }),
+      };
+      return {
+        ok: true,
+        json: async () => ({
+          content: [{ text: '[{"i":0,"alert":false,"category":"정상","reason":""}]' }],
+          usage: { input_tokens: 10, output_tokens: 2 },
+        }),
+      };
+    },
+    stats,
+  );
+  assert.equal(out[0].alert, false);
+  assert.equal(urls.length, 2);
+  assert.equal(stats.providerCircuit.gemini, true);
+  assert.equal(stats.anthropicCalls, 1);
+  assert.equal(stats.lastSuccessfulProvider, 'anthropic');
+  assert.equal(stats.llmCircuitOpen || false, false);
+});
+
+test('공급자 설정 감지는 Gemini 단독·Anthropic 단독·무키를 구분한다', () => {
+  assert.deepEqual(configuredLlmProviders({ llmProvider: 'gemini', geminiKey: 'g', anthropicKey: 'a' }), ['gemini', 'anthropic']);
+  assert.deepEqual(configuredLlmProviders({ anthropicKey: 'a' }), ['anthropic']);
+  assert.equal(hasConfiguredLlmProvider({ geminiKey: 'g' }), true);
+  assert.equal(hasConfiguredLlmProvider({}), false);
 });

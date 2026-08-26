@@ -92,3 +92,26 @@ test('sends only ambiguous marketing, dissatisfaction, and competitor terms to c
   assert.equal(needsContextualReview({ text: 'ㅅㅂ 진짜 노맛' }, target), false);
   assert.equal(needsContextualReview({ text: '맛있어요' }, target), false);
 });
+
+test('명백한 브랜드 적대 키워드는 소유 YouTube 채널에서만 즉시 탐지한다', () => {
+  const owned = {
+    brandName: '라라스윗',
+    productName: '쫀득바',
+    ownedChannelBrandHostilityScope: true,
+  };
+  const thirdParty = { brandName: '라라스윗', productName: '쫀득바' };
+  for (const text of [
+    '라라스윗 왤케 비호감',
+    '이건 짜고 친 조작 아니냐',
+    '허위로 만들어서 이미지 망침',
+    '공정위에 신고해야 한다',
+    '댓글창 열어놓은 거 웃기네',
+  ]) {
+    const result = classifyNegativeComment({ text }, owned);
+    assert.equal(result.alert, true, text);
+    assert.equal(result.category, '브랜드 적대/조롱', text);
+  }
+  // 동일 표현을 협찬·제3자 채널에 새 즉시 규칙으로 확대하지 않는다.
+  assert.equal(classifyNegativeComment({ text: '라라스윗 왤케 비호감' }, thirdParty).alert, false);
+  assert.equal(classifyNegativeComment({ text: '공정위에 신고해야 한다' }, thirdParty).alert, false);
+});

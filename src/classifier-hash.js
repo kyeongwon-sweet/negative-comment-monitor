@@ -24,9 +24,16 @@ function sourceHash() {
   return cachedSourceHash;
 }
 
-// config.anthropicModel까지 포함(모델 교체도 재분류를 유발). 파일 읽기 실패 시 throw →
+// 공급자와 양쪽 모델 ID까지 포함(주 공급자·폴백 모델 교체도 재분류를 유발). 파일 읽기 실패 시 throw →
 // 호출부(cache.js)가 잡아서 캐시 없이 실시간 분류로 폴백한다.
 export function computeClassifierHash(config = {}) {
-  const model = config.anthropicModel || 'claude-haiku-4-5-20251001';
-  return createHash('sha256').update(sourceHash()).update('|model:').update(model).digest('hex');
+  const provider = config.llmProvider || (config.geminiKey ? 'gemini' : 'anthropic');
+  const geminiModel = config.geminiModel || 'gemini-3.1-flash-lite';
+  const anthropicModel = config.anthropicModel || 'claude-haiku-4-5-20251001';
+  return createHash('sha256')
+    .update(sourceHash())
+    .update('|provider:').update(provider)
+    .update('|gemini:').update(geminiModel)
+    .update('|anthropic:').update(anthropicModel)
+    .digest('hex');
 }

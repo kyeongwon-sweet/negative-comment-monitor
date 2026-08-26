@@ -67,6 +67,10 @@ jobs:
           APIFY_TIKTOK_BATCH_SIZE: '50'
           PLATFORM_FAILURE_THRESHOLD: '3'
           PLATFORM_FAILURE_ALERT_COOLDOWN_HOURS: '12'
+          LLM_PROVIDER: gemini
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-3.1-flash-lite
+          GEMINI_REQUEST_INTERVAL_MS: '1500'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5-20251001
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
@@ -127,6 +131,10 @@ jobs:
         if: ${{ always() }}
         run: node src/meta-ads-run.js
         env:
+          LLM_PROVIDER: gemini
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-3.1-flash-lite
+          GEMINI_REQUEST_INTERVAL_MS: '1500'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5-20251001
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
@@ -156,6 +164,10 @@ jobs:
         if: ${{ always() }}
         run: node src/tiktok-ads-run.js
         env:
+          LLM_PROVIDER: gemini
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-3.1-flash-lite
+          GEMINI_REQUEST_INTERVAL_MS: '1500'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5-20251001
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
@@ -191,6 +203,10 @@ jobs:
         continue-on-error: true
         run: node src/youtube-ads-run.js
         env:
+          LLM_PROVIDER: gemini
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-3.1-flash-lite
+          GEMINI_REQUEST_INTERVAL_MS: '1500'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5-20251001
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}

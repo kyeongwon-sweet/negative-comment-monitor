@@ -20,3 +20,11 @@ test('computeClassifierHash: 모델 미지정 시 기본 모델로 계산', () =
   const explicit = computeClassifierHash({ anthropicModel: 'claude-haiku-4-5-20251001' });
   assert.equal(dflt, explicit);
 });
+
+test('computeClassifierHash: LLM 공급자나 Gemini 모델이 바뀌면 캐시가 자동 무효화된다', () => {
+  const anthropic = computeClassifierHash({ llmProvider: 'anthropic' });
+  const gemini = computeClassifierHash({ llmProvider: 'gemini', geminiModel: 'gemini-3.1-flash-lite' });
+  const otherGemini = computeClassifierHash({ llmProvider: 'gemini', geminiModel: 'gemini-3.5-flash-lite' });
+  assert.notEqual(anthropic, gemini);
+  assert.notEqual(gemini, otherGemini);
+});

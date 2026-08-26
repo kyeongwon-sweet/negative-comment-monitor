@@ -25,3 +25,13 @@ export const PROFANITY_KEYWORDS = [
   '엿먹', '좆', 'ㅈ같', '좆같',
 ];
 
+// 소유 YouTube 채널에서만 적용하는 명백한 브랜드 적대 표현.
+// 일반 협찬·제3자 채널에 전역 적용하면 댓글러 간 대화까지 오탐할 수 있으므로
+// classify.js가 ownedChannelBrandHostilityScope=true일 때만 사용한다.
+export const OWNED_BRAND_HOSTILITY_KEYWORDS = [
+  '비호감', '불매', '망해라', '이미지 망',
+  '허위광고', '허위 광고', '허위로', '허위 정보',
+  '조작', '주작', '짜고친', '짜고 친', '구라',
+  '고소', '신고', '공정위', '저격',
+  '댓글창 열어', '댓글창을 열어', '더 팔리겠다',
+];

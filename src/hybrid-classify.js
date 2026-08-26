@@ -1,5 +1,5 @@
 import { classifyNegativeComment, needsContextualReview } from './classify.js';
-import { classifyCommentsLLM } from './llm.js';
+import { classifyCommentsLLM, hasConfiguredLlmProvider } from './llm.js';
 import { commentFingerprint } from './dedup.js';
 import { cacheEnabled, computeClassifierHash, lookupCache, storeCache } from './cache.js';
 import { loadFalsePositives } from './review.js';
@@ -26,13 +26,13 @@ async function prepareLocal(comments, target, config, stats, fetchImpl) {
     if (reviewAll || needsContextualReview(comments[index], target)) reviewIndexes.push(index);
   }
   if (!reviewIndexes.length) return { out, pending: [], classifierHash: null };
-  if (!config.anthropicKey) {
+  if (!hasConfiguredLlmProvider(config)) {
     if (stats) {
       stats.keywordFallback = true;
       stats.keywordFallbackBatches = (stats.keywordFallbackBatches || 0) + 1;
       stats.keywordFallbackComments = (stats.keywordFallbackComments || 0) + reviewIndexes.length;
       stats.missingKey = true;
-      stats.lastFailureCode = 'missing_key';
+      stats.lastFailureCode = 'missing_llm_key';
       stats.lastFailureKind = 'persistent';
       stats.persistentFailures = (stats.persistentFailures || 0) + 1;
     }
@@ -126,7 +126,7 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
     const slice = flat.slice(start, start + LLM_BATCH);
     // 크레딧·키·권한·잘못된 요청 같은 영구 오류는 같은 회차에서 다시 시도해도 회복되지 않는다.
     // 첫 실패 뒤 남은 배치는 호출하지 않고 폴백 수만 정확히 기록한다(400×N 요청 폭주 방지).
-    if (stats?.lastFailureKind === 'persistent') {
+    if (stats?.llmCircuitOpen === true) {
       recordKeywordFallback(slice.length);
       continue;
     }

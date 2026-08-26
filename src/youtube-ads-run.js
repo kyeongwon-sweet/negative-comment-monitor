@@ -155,7 +155,7 @@ export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl =
   summary.llmHealth = await monitorLlmHealth(config, llmStats, {
     scope: 'youtube-ads', label: 'YouTube 인지 광고', totalComments: summary.comments, notify: !config.dryRun,
   }, fetchImpl, now);
-  console.error(`[youtube-ads] customers=${summary.customers} campaigns=${summary.campaigns} assets=${summary.assets} videos=${summary.videos} owned=${summary.ownedVideos || 0} external=${summary.externalVideos || 0} namedAds=${summary.namedAdVideos || 0} creatorAssigned=${summary.creatorAssignedVideos || 0} comments=${summary.comments} alerts=${summary.sentAlerts} managedAlerts=${summary.managedAlerts} externalAlerts=${summary.externalAlerts} llmCalls=${llmStats.calls} llmFailed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} est=$${estimatedUsd.toFixed(5)}`);
+  console.error(`[youtube-ads] customers=${summary.customers} campaigns=${summary.campaigns} assets=${summary.assets} videos=${summary.videos} owned=${summary.ownedVideos || 0} external=${summary.externalVideos || 0} namedAds=${summary.namedAdVideos || 0} creatorAssigned=${summary.creatorAssignedVideos || 0} comments=${summary.comments} alerts=${summary.sentAlerts} managedAlerts=${summary.managedAlerts} externalAlerts=${summary.externalAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} llmFailed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} est=$${estimatedUsd.toFixed(5)}`);
 
   if (!config.dryRun) {
     await autoHideYouTubeAlerts(config, summary, fetchImpl, now);

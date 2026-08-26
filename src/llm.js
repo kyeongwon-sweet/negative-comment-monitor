@@ -1,37 +1,62 @@
-// Claude 기반 부정댓글 분류(의미 판단). 키워드로 못 잡는 표현("에바", "걍 메로나임",
-// 성분 의혹, 반어 등)까지 문맥으로 판단한다.
-// ANTHROPIC_API_KEY가 있을 때만 동작하고, 실패/미설정 시 null을 반환해 호출부가 키워드 분류로 폴백한다.
+// 공급자 독립 LLM 분류기. 기본 체인은 Gemini 무료 티어 → Anthropic → 키워드다.
+// 어떤 공급자도 사용할 수 없거나 모두 실패하면 null을 반환하고 호출부가 키워드로 폴백한다.
 
 const CHUNK = 25;
 const TRANSIENT_HTTP_STATUSES = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
+const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-lite';
+const DEFAULT_ANTHROPIC_MODEL = 'claude-haiku-4-5-20251001';
+
+let nextGeminiRequestAt = 0;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function retryDelayMs(response, attempt, config) {
-  const retryAfter = Number(response?.headers?.get?.('retry-after'));
-  if (Number.isFinite(retryAfter) && retryAfter > 0) return Math.min(15_000, retryAfter * 1000);
-  const base = Math.max(0, Number(config?.anthropicRetryBaseMs ?? 1_000));
-  return Math.min(15_000, base * (2 ** attempt));
+function boundedAttempts(value, fallback = 4) {
+  return Math.max(1, Math.min(5, Number(value || fallback)));
 }
 
-async function safeAnthropicFailure(response) {
+function providerOrder(config = {}) {
+  const requested = String(config.llmProvider || (config.geminiKey ? 'gemini' : 'anthropic')).trim().toLowerCase();
+  return requested === 'anthropic' ? ['anthropic', 'gemini'] : ['gemini', 'anthropic'];
+}
+
+function providerConfigured(provider, config = {}) {
+  return provider === 'gemini' ? Boolean(config.geminiKey) : Boolean(config.anthropicKey);
+}
+
+export function configuredLlmProviders(config = {}) {
+  return providerOrder(config).filter((provider) => providerConfigured(provider, config));
+}
+
+export function hasConfiguredLlmProvider(config = {}) {
+  return configuredLlmProviders(config).length > 0;
+}
+
+function retryDelayMs(response, attempt, baseMs) {
+  const retryAfter = Number(response?.headers?.get?.('retry-after'));
+  if (Number.isFinite(retryAfter) && retryAfter > 0) return Math.min(30_000, retryAfter * 1000);
+  const parsed = Number(baseMs);
+  const base = Number.isFinite(parsed) ? Math.max(0, parsed) : 1_000;
+  return Math.min(30_000, base * (2 ** attempt));
+}
+
+async function safeFailure(response, provider) {
   const status = Number(response?.status || 0);
   let payload = {};
   try { payload = await response.json(); } catch { payload = {}; }
-  const type = String(payload?.error?.type || payload?.type || '').toLowerCase();
-  const message = String(payload?.error?.message || '').toLowerCase();
+  const type = String(payload?.error?.status || payload?.error?.type || payload?.type || '').toLowerCase();
+  const message = String(payload?.error?.message || payload?.message || '').toLowerCase();
   let code = 'http';
-  if (/credit balance|billing|purchase credits/.test(message)) code = 'credit';
-  else if (status === 401 || status === 403 || /auth|api key|permission/.test(`${type} ${message}`)) code = 'auth';
-  else if (status === 429 || /rate.limit/.test(`${type} ${message}`)) code = 'rate_limit';
+  if (provider === 'anthropic' && /credit balance|billing|purchase credits/.test(message)) code = 'credit';
+  else if (status === 401 || status === 403 || /auth|api key|permission|forbidden/.test(`${type} ${message}`)) code = 'auth';
+  else if (status === 429 || /rate.limit|resource_exhausted|quota/.test(`${type} ${message}`)) code = 'rate_limit';
   else if (status >= 500) code = 'server';
   else if (status === 400) code = 'invalid_request';
   const kind = [400, 401, 403].includes(status) ? 'persistent'
     : TRANSIENT_HTTP_STATUSES.has(status) ? 'transient'
       : 'persistent';
-  return { status: status || 'http', code, kind };
+  return { provider, status: status || 'http', code, kind };
 }
 
 function recordFailure(stats, failure) {
@@ -39,30 +64,54 @@ function recordFailure(stats, failure) {
   stats.failedAttempts = (stats.failedAttempts || 0) + 1;
   if (failure.kind === 'persistent') stats.persistentFailures = (stats.persistentFailures || 0) + 1;
   else stats.transientFailures = (stats.transientFailures || 0) + 1;
+  stats.providerFailures ||= {};
+  stats.providerFailures[failure.provider] = (stats.providerFailures[failure.provider] || 0) + 1;
+  stats.lastFailureProvider = failure.provider;
   stats.lastFailureStatus = failure.status;
   stats.lastFailureCode = failure.code;
   stats.lastFailureKind = failure.kind;
 }
 
-async function fetchAnthropicWithRetry(url, init, config, fetchImpl, stats) {
-  const maxAttempts = Math.max(1, Math.min(5, Number(config?.anthropicMaxAttempts || 4)));
+function openPersistentCircuit(stats, provider) {
+  if (!stats) return;
+  stats.providerCircuit ||= {};
+  stats.providerCircuit[provider] = true;
+}
+
+async function fetchWithRetry(provider, url, init, config, fetchImpl, stats) {
+  const maxAttempts = boundedAttempts(
+    provider === 'gemini' ? config?.geminiMaxAttempts : config?.anthropicMaxAttempts,
+  );
+  const baseMs = provider === 'gemini'
+    ? Number(config?.geminiRetryBaseMs ?? 1_000)
+    : Number(config?.anthropicRetryBaseMs ?? 1_000);
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    if (stats) stats.attempts = (stats.attempts || 0) + 1;
+    if (stats) {
+      stats.attempts = (stats.attempts || 0) + 1;
+      const key = `${provider}Attempts`;
+      stats[key] = (stats[key] || 0) + 1;
+    }
     try {
       const response = await fetchImpl(url, init);
       if (response.ok) return response;
-      const failure = await safeAnthropicFailure(response);
+      const failure = await safeFailure(response, provider);
       recordFailure(stats, failure);
+      if (failure.kind === 'persistent') openPersistentCircuit(stats, provider);
       if (!TRANSIENT_HTTP_STATUSES.has(Number(response.status)) || attempt + 1 >= maxAttempts) return response;
-      await wait(retryDelayMs(response, attempt, config));
+      await wait(retryDelayMs(response, attempt, baseMs));
     } catch (error) {
-      recordFailure(stats, { status: 'network', code: 'network', kind: 'transient' });
-      // 네트워크 예외는 fetch 내부 재시도 여부를 알 수 없고 장시간 워크플로를 붙잡을 수 있어
-      // 기존 fail-soft 경로로 즉시 넘긴다. 429/5xx처럼 명시적인 일시 HTTP 응답만 재시도한다.
+      recordFailure(stats, { provider, status: 'network', code: 'network', kind: 'transient' });
       throw error;
     }
   }
   return null;
+}
+
+async function waitForGeminiSlot(config) {
+  const interval = Math.max(0, Number(config?.geminiRequestIntervalMs ?? 1_500));
+  const remaining = nextGeminiRequestAt - Date.now();
+  if (remaining > 0) await wait(remaining);
+  nextGeminiRequestAt = Date.now() + interval;
 }
 
 const OWNED_CHANNEL_POLICY =
@@ -95,57 +144,164 @@ const PROMPT_TAIL =
   '"category":"제품 불만|광고/바이럴 의심|성분/진위 의혹|경쟁품 비교|판매방식 불만|욕설/비속어|브랜드 적대/조롱|정상",' +
   '"reason":"한줄 근거, 한자 쓰지 말고 순우리말로(예: 貶下→깎아내림, 是非→시비) (정상이면 빈 문자열)"}]';
 
-// comments: [{text}], 반환: [{alert, category, reason, priority}] (입력 순서) 또는 null(폴백).
-// stats(선택): 사용량 계측 누산기. 댓글 내용/키는 절대 기록하지 않고 호출수·토큰수만 누적.
-export async function classifyCommentsLLM(comments, config, fetchImpl = fetch, stats = null) {
-  if (!config.anthropicKey || !comments.length) return null;
-  const model = config.anthropicModel || 'claude-haiku-4-5-20251001';
+const RESULT_SCHEMA = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      i: { type: 'integer' },
+      alert: { type: 'boolean' },
+      category: { type: 'string' },
+      reason: { type: 'string' },
+    },
+    required: ['i', 'alert', 'category', 'reason'],
+    additionalProperties: false,
+  },
+};
+
+function buildPrompt(chunk) {
+  const hasOwnedChannelContext = chunk.some((comment) => comment?.ownedChannelBrandHostilityScope === true);
+  const numbered = chunk.map((comment, index) => {
+    const scope = comment?.ownedChannelBrandHostilityScope === true ? '[소유채널] ' : '';
+    return `${index}. ${scope}${String(comment?.text || '').slice(0, 300)}`;
+  }).join('\n');
+  return PROMPT_HEAD + (hasOwnedChannelContext ? OWNED_CHANNEL_POLICY : '')
+    + '댓글 목록:\n' + numbered + PROMPT_TAIL;
+}
+
+function parseResults(text, chunkLength) {
+  const match = String(text || '').match(/\[[\s\S]*\]/);
+  const array = match ? JSON.parse(match[0]) : [];
+  const byIndex = new Map();
+  for (const row of array) if (row && Number.isInteger(row.i)) byIndex.set(row.i, row);
   const out = [];
-  for (let i = 0; i < comments.length; i += CHUNK) {
-    const chunk = comments.slice(i, i + CHUNK);
-    const hasOwnedChannelContext = chunk.some((comment) => comment?.ownedChannelBrandHostilityScope === true);
-    const numbered = chunk.map((c, j) => {
-      const scope = c?.ownedChannelBrandHostilityScope === true ? '[소유채널] ' : '';
-      return `${j}. ${scope}${String(c.text || '').slice(0, 300)}`;
-    }).join('\n');
-    const prompt = PROMPT_HEAD + (hasOwnedChannelContext ? OWNED_CHANNEL_POLICY : '')
-      + '댓글 목록:\n' + numbered + PROMPT_TAIL;
+  for (let index = 0; index < chunkLength; index += 1) {
+    const row = byIndex.get(index) || {};
+    const alert = row.alert === true;
+    const category = alert ? String(row.category || '부정언급') : '정상댓글';
+    out.push({
+      alert,
+      category,
+      reason: alert ? String(row.reason || category).slice(0, 200) : '',
+      priority: category === '욕설/비속어' ? 'high' : 'normal',
+    });
+  }
+  return out;
+}
+
+function recordSuccess(stats, provider, chunkLength, usage = {}) {
+  if (!stats) return;
+  const input = Number(usage.input || 0);
+  const output = Number(usage.output || 0);
+  const cacheRead = Number(usage.cacheRead || 0);
+  const cacheCreate = Number(usage.cacheCreate || 0);
+  stats.calls = (stats.calls || 0) + 1;
+  stats.reviewed = (stats.reviewed || 0) + chunkLength;
+  stats.inputTokens = (stats.inputTokens || 0) + input;
+  stats.outputTokens = (stats.outputTokens || 0) + output;
+  stats.cacheRead = (stats.cacheRead || 0) + cacheRead;
+  stats.cacheCreate = (stats.cacheCreate || 0) + cacheCreate;
+  const prefix = provider === 'gemini' ? 'gemini' : 'anthropic';
+  stats[`${prefix}Calls`] = (stats[`${prefix}Calls`] || 0) + 1;
+  stats[`${prefix}InputTokens`] = (stats[`${prefix}InputTokens`] || 0) + input;
+  stats[`${prefix}OutputTokens`] = (stats[`${prefix}OutputTokens`] || 0) + output;
+  if (provider === 'anthropic') {
+    stats.anthropicCacheRead = (stats.anthropicCacheRead || 0) + cacheRead;
+    stats.anthropicCacheCreate = (stats.anthropicCacheCreate || 0) + cacheCreate;
+  }
+  stats.lastSuccessfulProvider = provider;
+}
+
+async function classifyWithAnthropic(prompt, chunkLength, config, fetchImpl, stats) {
+  const response = await fetchWithRetry('anthropic', 'https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': config.anthropicKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: config.anthropicModel || DEFAULT_ANTHROPIC_MODEL,
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  }, config, fetchImpl, stats);
+  if (!response?.ok) return null;
+  const data = await response.json();
+  const usage = data.usage || {};
+  const result = parseResults((data.content || []).map((block) => block.text || '').join(''), chunkLength);
+  recordSuccess(stats, 'anthropic', chunkLength, {
+    input: usage.input_tokens,
+    output: usage.output_tokens,
+    cacheRead: usage.cache_read_input_tokens,
+    cacheCreate: usage.cache_creation_input_tokens,
+  });
+  return result;
+}
+
+async function classifyWithGemini(prompt, chunkLength, config, fetchImpl, stats) {
+  await waitForGeminiSlot(config);
+  const model = config.geminiModel || DEFAULT_GEMINI_MODEL;
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const response = await fetchWithRetry('gemini', endpoint, {
+    method: 'POST',
+    headers: { 'x-goog-api-key': config.geminiKey, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseJsonSchema: RESULT_SCHEMA,
+        maxOutputTokens: 2000,
+        temperature: 0,
+      },
+    }),
+  }, config, fetchImpl, stats);
+  if (!response?.ok) return null;
+  const data = await response.json();
+  const usage = data.usageMetadata || {};
+  const text = (data.candidates || [])
+    .flatMap((candidate) => candidate?.content?.parts || [])
+    .map((part) => part?.text || '')
+    .join('');
+  const result = parseResults(text, chunkLength);
+  recordSuccess(stats, 'gemini', chunkLength, {
+    input: usage.promptTokenCount,
+    output: usage.candidatesTokenCount,
+    cacheRead: usage.cachedContentTokenCount,
+  });
+  return result;
+}
+
+async function classifyChunk(prompt, chunkLength, config, fetchImpl, stats) {
+  const providers = configuredLlmProviders(config);
+  for (const provider of providers) {
+    if (stats?.providerCircuit?.[provider]) continue;
     try {
-      const res = await fetchAnthropicWithRetry('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': config.anthropicKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model, max_tokens: 2000, messages: [{ role: 'user', content: prompt }] }),
-      }, config, fetchImpl, stats);
-      if (!res?.ok) return null;
-      const data = await res.json();
-      if (stats) {   // 사용량 누적(내용·키 미기록, 토큰수만)
-        const u = data.usage || {};
-        stats.calls += 1;
-        stats.reviewed += chunk.length;
-        stats.inputTokens += u.input_tokens || 0;
-        stats.outputTokens += u.output_tokens || 0;
-        stats.cacheRead += u.cache_read_input_tokens || 0;
-        stats.cacheCreate += u.cache_creation_input_tokens || 0;
-      }
-      const txt = (data.content || []).map((b) => b.text || '').join('');
-      const m = txt.match(/\[[\s\S]*\]/);
-      const arr = m ? JSON.parse(m[0]) : [];
-      const byI = {};
-      for (const a of arr) if (a && typeof a.i === 'number') byI[a.i] = a;
-      for (let j = 0; j < chunk.length; j++) {
-        const a = byI[j] || {};
-        const alert = a.alert === true;
-        const category = alert ? (a.category || '부정언급') : '정상댓글';
-        out.push({
-          alert,
-          category,
-          reason: alert ? String(a.reason || category).slice(0, 200) : '',
-          priority: category === '욕설/비속어' ? 'high' : 'normal',
-        });
-      }
+      const result = provider === 'gemini'
+        ? await classifyWithGemini(prompt, chunkLength, config, fetchImpl, stats)
+        : await classifyWithAnthropic(prompt, chunkLength, config, fetchImpl, stats);
+      if (result) return result;
     } catch {
-      return null; // 어떤 청크든 실패하면 전체 폴백(부분 판정 혼용 방지)
+      // 공급자 실패는 다음 공급자로 격리한다. 원문·키·응답 본문은 로그에 남기지 않는다.
     }
+  }
+  if (stats) {
+    const remaining = providers.filter((provider) => !stats?.providerCircuit?.[provider]);
+    stats.llmCircuitOpen = providers.length > 0 && remaining.length === 0;
+  }
+  return null;
+}
+
+// comments: [{text}], 반환: [{alert, category, reason, priority}] 또는 null(키워드 폴백).
+// stats에는 댓글 내용/키 없이 공급자별 호출·토큰·실패 집계만 누적한다.
+export async function classifyCommentsLLM(comments, config, fetchImpl = fetch, stats = null) {
+  if (!hasConfiguredLlmProvider(config) || !comments.length) return null;
+  const out = [];
+  for (let index = 0; index < comments.length; index += CHUNK) {
+    const chunk = comments.slice(index, index + CHUNK);
+    const result = await classifyChunk(buildPrompt(chunk), chunk.length, config, fetchImpl, stats);
+    if (!result) return null;
+    out.push(...result);
   }
   return out;
 }

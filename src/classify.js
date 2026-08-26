@@ -1,4 +1,9 @@
-import { DISCOVERY_KEYWORDS, ENTITY_KEYWORDS, PROFANITY_KEYWORDS } from './keywords.js';
+import {
+  DISCOVERY_KEYWORDS,
+  ENTITY_KEYWORDS,
+  OWNED_BRAND_HOSTILITY_KEYWORDS,
+  PROFANITY_KEYWORDS,
+} from './keywords.js';
 
 export function normalizeKoreanText(value) {
   return String(value || '')
@@ -68,7 +73,13 @@ export function classifyNegativeComment(comment, target = {}) {
   const sales = findMatches(text, DISCOVERY_KEYWORDS.salesComplaint);
   const competitor = findMatches(text, DISCOVERY_KEYWORDS.competitorMention || []);
   const authenticity = findMatches(text, DISCOVERY_KEYWORDS.authenticityDoubt || []);
-  const matches = [...new Set([...profanity, ...marketing, ...dissatisfaction, ...sales, ...competitor, ...authenticity])];
+  const ownedBrandHostility = target?.ownedChannelBrandHostilityScope === true
+    ? findMatches(text, OWNED_BRAND_HOSTILITY_KEYWORDS)
+    : [];
+  const matches = [...new Set([
+    ...profanity, ...marketing, ...dissatisfaction, ...sales, ...competitor, ...authenticity,
+    ...ownedBrandHostility,
+  ])];
   if (!matches.length) {
     return { alert: false, category: '정상댓글', priority: 'none', entity, matches: [] };
   }
@@ -89,7 +100,8 @@ export function classifyNegativeComment(comment, target = {}) {
   // (예: '없던데'는 가용성 긍정, '꺼져/닥쳐/새끼' 등 욕설은 제품이 아니라 댓글러끼리 싸움일 수 있음).
   // 명백한 제품 불만(HARD)/판매 문제만 즉시 탐지하고, 나머지는 긍정 문맥이면 정상 처리 + LLM 검토로 넘긴다.
   // Anthropic이 설정된 환경에서는 run.js의 의미 분류(LLM)가 이 규칙보다 우선한다.
-  const immediateNegative = hardDissatisfaction.length || sales.length;
+  // 브랜드 적대 확장은 소유채널에서만 명백 표현을 즉시 잡는 LLM 장애용 안전망이다.
+  const immediateNegative = hardDissatisfaction.length || sales.length || ownedBrandHostility.length;
   if (!immediateNegative && hasPositiveContext(text)) {
     return {
       alert: false,
@@ -102,7 +114,8 @@ export function classifyNegativeComment(comment, target = {}) {
   }
 
   let category = '부정언급';
-  if (profanity.length) category = '욕설/비속어';
+  if (ownedBrandHostility.length) category = '브랜드 적대/조롱';
+  else if (profanity.length) category = '욕설/비속어';
   else if (authenticity.length) category = '성분/진위 의혹';
   else if (sales.length) category = '판매방식 불만';
   else if (dissatisfaction.length) category = '제품 불만';

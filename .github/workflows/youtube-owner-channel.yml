@@ -50,6 +50,10 @@ jobs:
         continue-on-error: true
         run: npm run start:youtube-owner-channels
         env:
+          LLM_PROVIDER: gemini
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-3.1-flash-lite
+          GEMINI_REQUEST_INTERVAL_MS: '1500'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5-20251001
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

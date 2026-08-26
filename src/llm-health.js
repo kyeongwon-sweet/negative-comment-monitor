@@ -20,22 +20,28 @@ export function summarizeLlmHealth(stats = {}, totalComments = 0) {
     keywordFallbackBatches: Number(stats.keywordFallbackBatches || 0),
     keywordFallbackComments: fallbackComments,
     persistent,
+    failureProvider: String(stats.lastFailureProvider || ''),
+    successfulProvider: String(stats.lastSuccessfulProvider || ''),
     failureCode: String(stats.lastFailureCode || (stats.missingKey ? 'missing_key' : '')),
     degraded: fallbackComments > 0,
   };
 }
 
 export function buildLlmDegradedMessage(scope, health, owner = '') {
+  const provider = health.failureProvider === 'gemini' ? 'Gemini'
+    : health.failureProvider === 'anthropic' ? 'Anthropic'
+      : 'Gemini·Anthropic';
   const cause = health.failureCode === 'credit' ? 'Anthropic 크레딧 부족'
-    : health.failureCode === 'auth' || health.failureCode === 'missing_key' ? 'Anthropic 인증/키 설정 오류'
-      : health.persistent ? 'Anthropic 영구 요청 오류'
-        : 'Anthropic 일시 오류 재시도 소진';
+    : health.failureCode === 'auth' || ['missing_key', 'missing_llm_key'].includes(health.failureCode) ? `${provider} 인증/키 설정 오류`
+      : health.failureCode === 'rate_limit' ? `${provider} 무료 한도/호출 제한 초과`
+        : health.persistent ? `${provider} 영구 요청 오류`
+          : `${provider} 일시 오류 재시도 소진`;
   return [
     '⚠️ *LLM 분류 degraded — 키워드 폴백 중*',
     `구간: ${scope}`,
     `원인: ${cause}`,
     `LLM 대상 ${health.candidateComments}건 중 ${health.keywordFallbackComments}건이 키워드 판정으로 대체됐습니다.`,
-    '브랜드 적대·비꼼·문맥형 부정댓글을 놓칠 위험이 있습니다. Anthropic 결제·키·실행 로그를 확인해 주세요.',
+    '브랜드 적대·비꼼·문맥형 부정댓글을 놓칠 위험이 있습니다. Gemini 키·무료 한도와 Anthropic 폴백 상태를 확인해 주세요.',
     owner ? `담당자: <@${owner}>` : '',
   ].filter(Boolean).join('\n');
 }

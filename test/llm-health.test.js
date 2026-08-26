@@ -83,3 +83,12 @@ test('경고 문구는 원문 없이 미탐지 위험과 담당자를 명시한�
   assert.match(text, /브랜드 적대·비꼼·문맥형/);
   assert.match(text, /<@U1>/);
 });
+
+test('Gemini 429 폴백 경고는 무료 한도 원인과 공급자를 구분한다', () => {
+  const text = buildLlmDegradedMessage('소유 YouTube', {
+    failureProvider: 'gemini', failureCode: 'rate_limit', persistent: false,
+    candidateComments: 8, keywordFallbackComments: 8,
+  });
+  assert.match(text, /Gemini 무료 한도\/호출 제한 초과/);
+  assert.match(text, /Anthropic 폴백 상태/);
+});

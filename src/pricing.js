@@ -11,9 +11,12 @@ const DEFAULT_PRICE = { input: 1, output: 5, cacheRead: 0.1, cacheCreate: 1.25 }
 // usage: { inputTokens, outputTokens, cacheRead, cacheCreate } (누락 필드는 0으로 간주).
 export function estimateUsd(usage = {}, model = 'claude-haiku-4-5-20251001') {
   const p = TOKEN_PRICES_USD[model] || DEFAULT_PRICE;
-  const inTok = usage.inputTokens || 0;
-  const outTok = usage.outputTokens || 0;
-  const cacheRead = usage.cacheRead || 0;
-  const cacheCreate = usage.cacheCreate || 0;
+  // Gemini 무료 티어 호출은 비용 0으로 두고, Anthropic 폴백이 실제 성공한 토큰만 계산한다.
+  // 구형 호출부/테스트(stats에 공급자별 필드 없음)는 기존 합계 필드로 호환한다.
+  const providerBreakdown = Object.hasOwn(usage, 'geminiCalls') || Object.hasOwn(usage, 'anthropicCalls');
+  const inTok = providerBreakdown ? (usage.anthropicInputTokens || 0) : (usage.inputTokens || 0);
+  const outTok = providerBreakdown ? (usage.anthropicOutputTokens || 0) : (usage.outputTokens || 0);
+  const cacheRead = providerBreakdown ? (usage.anthropicCacheRead || 0) : (usage.cacheRead || 0);
+  const cacheCreate = providerBreakdown ? (usage.anthropicCacheCreate || 0) : (usage.cacheCreate || 0);
   return (inTok * p.input + outTok * p.output + cacheRead * p.cacheRead + cacheCreate * p.cacheCreate) / 1e6;
 }

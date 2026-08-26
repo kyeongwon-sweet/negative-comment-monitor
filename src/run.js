@@ -300,7 +300,7 @@ export async function runMonitor(config = loadConfig()) {
     summary.llmHealth = { degraded: true, healthCheckFailed: true, error: String(error.message || error).slice(0, 200) };
     console.error(`[llm-health:degraded] 상태 경고 실패 — ${error.message}`);
   }
-  console.error(`[llm] calls=${llmStats.calls} attempts=${llmStats.attempts || 0} failed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} reviewed=${llmStats.reviewed} cacheHit=${llmStats.cacheHits} cacheMiss=${llmStats.cacheMiss} in=${llmStats.inputTokens} out=${llmStats.outputTokens} promptCacheR=${llmStats.cacheRead} promptCacheC=${llmStats.cacheCreate} est=$${estUsd.toFixed(5)} (${config.anthropicModel})`);
+  console.error(`[llm] primary=${config.llmProvider} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} calls=${llmStats.calls} attempts=${llmStats.attempts || 0} failed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} reviewed=${llmStats.reviewed} cacheHit=${llmStats.cacheHits} cacheMiss=${llmStats.cacheMiss} in=${llmStats.inputTokens} out=${llmStats.outputTokens} promptCacheR=${llmStats.cacheRead} promptCacheC=${llmStats.cacheCreate} est=$${estUsd.toFixed(5)}`);
 
   // 90일 초과 분류 캐시 정리(best-effort — 실패해도 무시).
   if (!config.dryRun) await purgeCache(config);

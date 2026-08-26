@@ -24,3 +24,13 @@ test('estimateUsd: 미등록 모델은 기본 단가로 근사(중단 없음)', 
 test('TOKEN_PRICES_USD: Haiku 4.5 단가 고정', () => {
   assert.deepEqual(TOKEN_PRICES_USD['claude-haiku-4-5-20251001'], { input: 1, output: 5, cacheRead: 0.1, cacheCreate: 1.25 });
 });
+
+test('estimateUsd: Gemini 무료 호출은 0, Anthropic 폴백 토큰만 과금 추정한다', () => {
+  assert.equal(estimateUsd({ geminiCalls: 2, inputTokens: 5000, outputTokens: 500 }), 0);
+  assert.equal(estimateUsd({
+    geminiCalls: 1,
+    anthropicCalls: 1,
+    anthropicInputTokens: 1_000_000,
+    anthropicOutputTokens: 100_000,
+  }), 1.5);
+});
