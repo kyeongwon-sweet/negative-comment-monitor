@@ -10,6 +10,7 @@ import {
 } from './youtube-owner-moderation.js';
 
 export const YOUTUBE_RESTORE_CONFIRMATION = 'RESTORE_YOUTUBE_COMMENTS';
+export const YOUTUBE_AUTO_RESTORE_CONFIRMATION = 'AUTO_RESTORE_YOUTUBE_FALSE_POSITIVES';
 const KEEP_DECISIONS = new Set(['false_positive', 'ignore', 'unhide']);
 
 function required(env, name) {
@@ -53,6 +54,24 @@ export function loadYouTubeRestoreConfig(env = process.env) {
     falsePositiveReason: String(env.YOUTUBE_RESTORE_FP_REASON || 'positive_neutral').trim(),
     verificationAttempts: positiveInt(env.YOUTUBE_RESTORE_VERIFY_ATTEMPTS, 30, 60),
     verificationDelayMs: positiveInt(env.YOUTUBE_RESTORE_VERIFY_DELAY_MS, 10_000, 30_000),
+  };
+}
+
+export function loadYouTubeAutoRestoreConfig(env = process.env) {
+  if (String(env.YOUTUBE_FP_AUTO_RESTORE || '').trim() !== YOUTUBE_AUTO_RESTORE_CONFIRMATION) {
+    throw new Error(`YouTube false-positive auto restore requires YOUTUBE_FP_AUTO_RESTORE=${YOUTUBE_AUTO_RESTORE_CONFIRMATION}`);
+  }
+  return {
+    googleAdsClientId: required(env, 'GOOGLE_ADS_CLIENT_ID'),
+    googleAdsClientSecret: required(env, 'GOOGLE_ADS_CLIENT_SECRET'),
+    supabaseUrl: required(env, 'SUPABASE_URL').replace(/\/$/, ''),
+    supabaseKey: required(env, 'SUPABASE_SERVICE_ROLE_KEY'),
+    slackBotToken: String(env.SLACK_BOT_TOKEN || '').trim(),
+    youtubeApiBase: String(env.YOUTUBE_API_BASE || 'https://www.googleapis.com/youtube/v3').trim().replace(/\/$/, ''),
+    lookbackHours: positiveInt(env.YOUTUBE_FP_AUTO_RESTORE_LOOKBACK_HOURS, 48, 168),
+    maxRows: positiveInt(env.YOUTUBE_FP_AUTO_RESTORE_MAX_ROWS, 100, 500),
+    verificationAttempts: positiveInt(env.YOUTUBE_RESTORE_VERIFY_ATTEMPTS, 5, 20),
+    verificationDelayMs: positiveInt(env.YOUTUBE_RESTORE_VERIFY_DELAY_MS, 3_000, 30_000),
   };
 }
 
@@ -107,7 +126,7 @@ async function ensureFalsePositive(config, rows, fetchImpl, now) {
   return updated;
 }
 
-async function setPublished(config, ids, accessToken, fetchImpl) {
+export async function setPublished(config, ids, accessToken, fetchImpl) {
   const url = new URL(`${config.youtubeApiBase}/comments/setModerationStatus`);
   url.searchParams.set('id', ids.join(','));
   url.searchParams.set('moderationStatus', 'published');
@@ -115,14 +134,17 @@ async function setPublished(config, ids, accessToken, fetchImpl) {
   if (response.ok) return;
   const payload = await response.json().catch(() => ({}));
   const reasons = (payload?.error?.errors || []).map((item) => item.reason).filter(Boolean);
-  throw new Error(`YouTube public restore failed (${response.status})${reasons.length ? `: ${reasons.join(',')}` : ''}`);
+  const error = new Error(`YouTube public restore failed (${response.status})${reasons.length ? `: ${reasons.join(',')}` : ''}`);
+  error.status = response.status;
+  error.reasons = reasons;
+  throw error;
 }
 
 function escaped(value) {
   return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-async function syncRestoredCards(config, rows, fetchImpl, now) {
+export async function syncRestoredCards(config, rows, fetchImpl, now) {
   if (!config.slackBotToken) return { updated: 0, failed: rows.length };
   let updated = 0;
   let failed = 0;
@@ -148,6 +170,134 @@ async function syncRestoredCards(config, rows, fetchImpl, now) {
     else failed += 1;
   }
   return { updated, failed };
+}
+
+export async function loadRecentYouTubeFalsePositiveAlerts(config, fetchImpl = fetch, now = Date.now()) {
+  const url = new URL(`${config.supabaseUrl}/rest/v1/negative_comment_alerts`);
+  url.searchParams.set('select', 'id,source,platform,comment_id,comment_text,post_url,review_decision,reviewed_by,reviewed_at,slack_channel_id,slack_ts,fingerprint');
+  url.searchParams.set('platform', 'eq.youtube');
+  url.searchParams.set('review_decision', 'eq.false_positive');
+  url.searchParams.set('reviewed_at', `gte.${new Date(now - config.lookbackHours * 3600_000).toISOString()}`);
+  url.searchParams.set('comment_id', 'not.is.null');
+  url.searchParams.set('order', 'reviewed_at.asc');
+  url.searchParams.set('limit', String(config.maxRows));
+  const response = await fetchImpl(url, { headers: supabaseHeaders(config) });
+  if (!response.ok) throw new Error(`YouTube false-positive lookup failed (${response.status})`);
+  const rows = await response.json();
+  return (Array.isArray(rows) ? rows : []).filter((row) => (
+    String(row.platform || '').toLowerCase() === 'youtube'
+    && (row.source == null || String(row.source) === 'youtube_ads')
+    && row.comment_id
+    && videoIdFromAlert(row)
+  ));
+}
+
+function unavailableRestoreError(error) {
+  return Number(error?.status) === 404
+    || (Array.isArray(error?.reasons) && error.reasons.includes('commentNotFound'));
+}
+
+export async function autoRestoreYouTubeFalsePositives(
+  config = loadYouTubeAutoRestoreConfig(), fetchImpl = fetch, now = Date.now(),
+) {
+  const rows = await loadRecentYouTubeFalsePositiveAlerts(config, fetchImpl, now);
+  const result = {
+    candidates: rows.length,
+    ownerTokens: 0,
+    validOwnerTokens: 0,
+    tokenFailures: 0,
+    unowned: 0,
+    alreadyVisible: 0,
+    restoreAttempted: 0,
+    restored: 0,
+    unavailable: 0,
+    unverified: 0,
+    failed: 0,
+    slackUpdated: 0,
+    slackFailed: 0,
+  };
+  if (!rows.length) return result;
+
+  const owners = await loadYouTubeOwnerTokens(config, fetchImpl);
+  result.ownerTokens = owners.length;
+  const accessTokens = new Map();
+  const validOwners = [];
+  for (const owner of owners) {
+    try {
+      accessTokens.set(owner.channelId, await refreshAndVerifyOwner(config, owner, fetchImpl));
+      validOwners.push(owner);
+    } catch {
+      result.tokenFailures += 1;
+    }
+  }
+  result.validOwnerTokens = validOwners.length;
+  if (!validOwners.length) {
+    result.failed = rows.length;
+    return result;
+  }
+
+  const mapped = await mapVideosToOwners(config, rows, validOwners, accessTokens, fetchImpl);
+  const rowsByOwner = new Map();
+  for (const row of rows) {
+    const ownerId = mapped.ownerByVideo.get(videoIdFromAlert(row));
+    if (!ownerId) {
+      result.unowned += 1;
+      continue;
+    }
+    if (!rowsByOwner.has(ownerId)) rowsByOwner.set(ownerId, []);
+    rowsByOwner.get(ownerId).push(row);
+  }
+
+  const restoredRows = [];
+  for (const [ownerId, ownerRows] of rowsByOwner) {
+    const token = accessTokens.get(ownerId);
+    const rowsByComment = new Map();
+    for (const row of ownerRows) {
+      const id = String(row.comment_id);
+      if (!rowsByComment.has(id)) rowsByComment.set(id, []);
+      rowsByComment.get(id).push(row);
+    }
+    const ids = [...rowsByComment.keys()];
+    const before = await listYouTubeCommentStatesIsolated(config, ids, token, fetchImpl);
+    if (before.channelError) {
+      result.failed += ids.length;
+      continue;
+    }
+    result.failed += before.failed.length;
+    result.alreadyVisible += before.visible.size;
+    const candidates = ids.filter((id) => before.rejected.has(id) || before.missing.has(id));
+    for (const id of candidates) {
+      result.restoreAttempted += 1;
+      try {
+        await setPublished(config, [id], token, fetchImpl);
+      } catch (error) {
+        if (unavailableRestoreError(error)) result.unavailable += 1;
+        else result.failed += 1;
+        continue;
+      }
+      let verified = false;
+      for (let attempt = 1; attempt <= config.verificationAttempts; attempt += 1) {
+        const after = await listYouTubeCommentStatesIsolated(config, [id], token, fetchImpl);
+        if (!after.channelError && !after.failed.length && after.visible.has(id)) {
+          verified = true;
+          break;
+        }
+        if (attempt < config.verificationAttempts) await (config.sleep || wait)(config.verificationDelayMs);
+      }
+      if (verified) {
+        result.restored += 1;
+        restoredRows.push(...(rowsByComment.get(id) || []));
+      } else {
+        result.unverified += 1;
+      }
+    }
+  }
+  if (restoredRows.length) {
+    const slack = await syncRestoredCards(config, restoredRows, fetchImpl, now);
+    result.slackUpdated = slack.updated;
+    result.slackFailed = slack.failed;
+  }
+  return result;
 }
 
 export async function restoreYouTubeComments(config = loadYouTubeRestoreConfig(), fetchImpl = fetch, now = Date.now()) {

@@ -38,6 +38,21 @@ jobs:
           YOUTUBE_OWNER_HIDE_VERIFY_ATTEMPTS: '5'
           YOUTUBE_OWNER_HIDE_VERIFY_DELAY_MS: '3000'
           YOUTUBE_OWNER_BULK_HIDE_ACTOR: youtube-owner-pending-auto-hide
+      - name: Restore recent human false positives to public
+        id: owner_fp_restore
+        continue-on-error: true
+        run: npm run restore:youtube-false-positives
+        env:
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          YOUTUBE_FP_AUTO_RESTORE: AUTO_RESTORE_YOUTUBE_FALSE_POSITIVES
+          YOUTUBE_FP_AUTO_RESTORE_LOOKBACK_HOURS: '48'
+          YOUTUBE_FP_AUTO_RESTORE_MAX_ROWS: '100'
+          YOUTUBE_RESTORE_VERIFY_ATTEMPTS: '5'
+          YOUTUBE_RESTORE_VERIFY_DELAY_MS: '3000'
       - name: Record auxiliary outcome
         if: ${{ always() }}
         continue-on-error: true
@@ -55,9 +70,27 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           FAILURE_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: Record false-positive restore outcome
+        if: ${{ always() }}
+        continue-on-error: true
+        run: node src/record-auxiliary-outcome.js
+        env:
+          AUXILIARY_HEALTH_KEY: youtube_owner_fp_restore
+          AUXILIARY_OUTCOME: ${{ steps.owner_fp_restore.outcome }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          AUXILIARY_COMPONENT: YouTube 오탐 댓글 자동 공개복원
+          AUXILIARY_REASON: owner OAuth public restore failed or could not be verified
+          AUXILIARY_FAILURE_THRESHOLD: '3'
+          AUXILIARY_ALERT_COOLDOWN_HOURS: '24'
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FAILURE_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
       - name: Write run summary
         if: ${{ always() }}
         run: |
           echo "### YouTube owner pending moderation" >> "$GITHUB_STEP_SUMMARY"
           echo "- moderation: ${{ steps.owner_pending_hide.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- false-positive public restore: ${{ steps.owner_fp_restore.outcome }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- core monitor impact: none" >> "$GITHUB_STEP_SUMMARY"

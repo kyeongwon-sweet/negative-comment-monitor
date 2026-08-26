@@ -9,6 +9,7 @@
     "start:tiktok-ads": "node src/tiktok-ads-run.js",
     "restore:tiktok-comment": "node src/tiktok-comment-restore.js",
     "restore:youtube-comments": "node src/youtube-comment-restore.js",
+    "restore:youtube-false-positives": "node src/youtube-fp-auto-restore.js",
     "start:youtube-ads": "node src/youtube-ads-run.js",
     "start:youtube-owner-channels": "node src/youtube-owner-channel-run.js",
     "hide:youtube-owner-pending": "node src/youtube-owner-pending-hide.js",
