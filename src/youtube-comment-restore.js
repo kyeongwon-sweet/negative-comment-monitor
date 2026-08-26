@@ -1,6 +1,7 @@
 import { appendFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { fetchYouTubeVideoComments } from './youtube-ads.js';
 import {
   listYouTubeCommentStatesIsolated,
   loadYouTubeOwnerTokens,
@@ -54,6 +55,8 @@ export function loadYouTubeRestoreConfig(env = process.env) {
     falsePositiveReason: String(env.YOUTUBE_RESTORE_FP_REASON || 'positive_neutral').trim(),
     verificationAttempts: positiveInt(env.YOUTUBE_RESTORE_VERIFY_ATTEMPTS, 30, 60),
     verificationDelayMs: positiveInt(env.YOUTUBE_RESTORE_VERIFY_DELAY_MS, 10_000, 30_000),
+    verificationMaxThreadPages: positiveInt(env.YOUTUBE_RESTORE_VERIFY_MAX_THREAD_PAGES, 100, 200),
+    verificationMaxReplyPages: positiveInt(env.YOUTUBE_RESTORE_VERIFY_MAX_REPLY_PAGES, 100, 200),
   };
 }
 
@@ -72,6 +75,8 @@ export function loadYouTubeAutoRestoreConfig(env = process.env) {
     maxRows: positiveInt(env.YOUTUBE_FP_AUTO_RESTORE_MAX_ROWS, 100, 500),
     verificationAttempts: positiveInt(env.YOUTUBE_RESTORE_VERIFY_ATTEMPTS, 5, 20),
     verificationDelayMs: positiveInt(env.YOUTUBE_RESTORE_VERIFY_DELAY_MS, 3_000, 30_000),
+    verificationMaxThreadPages: positiveInt(env.YOUTUBE_RESTORE_VERIFY_MAX_THREAD_PAGES, 100, 200),
+    verificationMaxReplyPages: positiveInt(env.YOUTUBE_RESTORE_VERIFY_MAX_REPLY_PAGES, 100, 200),
   };
 }
 
@@ -197,6 +202,39 @@ function unavailableRestoreError(error) {
     || (Array.isArray(error?.reasons) && error.reasons.includes('commentNotFound'));
 }
 
+async function listPublishedIdsForRows(config, rows, accessToken, fetchImpl) {
+  const published = new Set();
+  const failedVideos = new Set();
+  const videoIds = [...new Set(rows.map(videoIdFromAlert).filter(Boolean))];
+  const scanConfig = {
+    ...config,
+    youtubeAdsMaxThreadPages: config.verificationMaxThreadPages || 100,
+    youtubeAdsMaxReplyPages: config.verificationMaxReplyPages || 100,
+  };
+  for (const videoId of videoIds) {
+    try {
+      const comments = await fetchYouTubeVideoComments(scanConfig, videoId, accessToken, fetchImpl);
+      for (const comment of comments) if (comment.id) published.add(String(comment.id));
+    } catch {
+      failedVideos.add(videoId);
+    }
+  }
+  return { published, failedVideos };
+}
+
+async function verifyPublishedRows(config, rows, accessToken, fetchImpl) {
+  let latest = { published: new Set(), failedVideos: new Set() };
+  for (let attempt = 1; attempt <= (config.verificationAttempts || 1); attempt += 1) {
+    latest = await listPublishedIdsForRows(config, rows, accessToken, fetchImpl);
+    const allVisible = rows.every((row) => latest.published.has(String(row.comment_id)));
+    if (!latest.failedVideos.size && allVisible) break;
+    if (attempt < (config.verificationAttempts || 1)) {
+      await (config.sleep || wait)(config.verificationDelayMs || 1);
+    }
+  }
+  return latest;
+}
+
 export async function autoRestoreYouTubeFalsePositives(
   config = loadYouTubeAutoRestoreConfig(), fetchImpl = fetch, now = Date.now(),
 ) {
@@ -266,6 +304,7 @@ export async function autoRestoreYouTubeFalsePositives(
     result.failed += before.failed.length;
     result.alreadyVisible += before.visible.size;
     const candidates = ids.filter((id) => before.rejected.has(id) || before.missing.has(id));
+    const acceptedRows = [];
     for (const id of candidates) {
       result.restoreAttempted += 1;
       try {
@@ -275,20 +314,21 @@ export async function autoRestoreYouTubeFalsePositives(
         else result.failed += 1;
         continue;
       }
-      let verified = false;
-      for (let attempt = 1; attempt <= config.verificationAttempts; attempt += 1) {
-        const after = await listYouTubeCommentStatesIsolated(config, [id], token, fetchImpl);
-        if (!after.channelError && !after.failed.length && after.visible.has(id)) {
-          verified = true;
-          break;
+      acceptedRows.push(...(rowsByComment.get(id) || []));
+    }
+    if (acceptedRows.length) {
+      const verified = await verifyPublishedRows(config, acceptedRows, token, fetchImpl);
+      for (const row of acceptedRows) {
+        const id = String(row.comment_id);
+        if (verified.published.has(id)) {
+          if (!(restoredRows.some((restored) => restored.id === row.id))) restoredRows.push(row);
         }
-        if (attempt < config.verificationAttempts) await (config.sleep || wait)(config.verificationDelayMs);
       }
-      if (verified) {
-        result.restored += 1;
-        restoredRows.push(...(rowsByComment.get(id) || []));
-      } else {
-        result.unverified += 1;
+      const restoredIds = new Set(restoredRows.filter((row) => ownerRows.some((owned) => owned.id === row.id)).map((row) => String(row.comment_id)));
+      for (const id of candidates) {
+        if (restoredIds.has(id)) {
+          result.restored += 1;
+        } else result.unverified += 1;
       }
     }
   }
@@ -341,13 +381,8 @@ export async function restoreYouTubeComments(config = loadYouTubeRestoreConfig()
     const hiddenOrMissing = ids.filter((id) => before.rejected.has(id) || before.missing.has(id));
     alreadyVisible += ids.filter((id) => before.visible.has(id)).length;
     if (hiddenOrMissing.length) await setPublished(config, hiddenOrMissing, accessToken, fetchImpl);
-    let after;
-    for (let attempt = 1; attempt <= (config.verificationAttempts || 1); attempt += 1) {
-      after = await listYouTubeCommentStatesIsolated(config, ids, accessToken, fetchImpl);
-      if (!after.channelError && !after.failed.length && !after.rejected.size && !after.missing.size && after.visible.size === ids.length) break;
-      if (attempt < (config.verificationAttempts || 1)) await (config.sleep || wait)(config.verificationDelayMs || 1);
-    }
-    if (!after || after.channelError || after.failed.length || after.rejected.size || after.missing.size || after.visible.size !== ids.length) {
+    const after = await verifyPublishedRows(config, ownerRows, accessToken, fetchImpl);
+    if (after.failedVideos.size || !ids.every((id) => after.published.has(id))) {
       throw new Error('YouTube public restore could not be fully verified');
     }
     restored += hiddenOrMissing.length;

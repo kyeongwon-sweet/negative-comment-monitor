@@ -71,6 +71,11 @@ test('사람 오탐인 선택 댓글만 published 복원하고 공개 상태를 
       published = true;
       return response(204);
     }
+    if (url.includes('/commentThreads?')) {
+      return response(200, { items: published ? ['c1', 'c2'].map((id) => ({
+        snippet: { topLevelComment: { id, snippet: {} }, totalReplyCount: 0 },
+      })) : [] });
+    }
     if (url.includes('/comments?')) {
       const ids = new URL(url).searchParams.get('id').split(',');
       // 실제 API처럼 숨김 댓글은 직접 조회에서 빠질 수 있다. 복원 뒤에만 공개로 보인다.
@@ -137,8 +142,20 @@ test('최근 YouTube false_positive가 실제 숨김이면 published 복원하�
       published = true;
       return response(204);
     }
+    if (url.includes('/commentThreads?')) {
+      return response(200, { items: published ? [{
+        snippet: { topLevelComment: { id: 'parent-comment', snippet: {} }, totalReplyCount: 1 },
+        replies: { comments: [] },
+      }] : [] });
+    }
     if (url.includes('/comments?')) {
-      return response(200, { items: published ? [{ id: 'private-comment', snippet: { moderationStatus: 'published' } }] : [] });
+      const parsed = new URL(url);
+      if (parsed.searchParams.get('parentId') === 'parent-comment') {
+        return response(200, { items: published ? [{ id: 'private-comment', snippet: { parentId: 'parent-comment' } }] : [] });
+      }
+      // id 직접조회는 복원 뒤에도 비어 있을 수 있다. 공개 스레드의 답글 순회가
+      // 실제 노출을 확인해야 한다.
+      return response(200, { items: [] });
     }
     if (url === 'https://slack.com/api/chat.update') return response(200, { ok: true });
     throw new Error(`unexpected ${url}`);

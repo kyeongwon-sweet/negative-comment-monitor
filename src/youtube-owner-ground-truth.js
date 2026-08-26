@@ -2,7 +2,7 @@ import { appendFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { extractPostKey } from './delta.js';
-import { refreshGoogleAccessToken } from './youtube-ads.js';
+import { fetchYouTubeVideoComments, refreshGoogleAccessToken } from './youtube-ads.js';
 
 const OWNER_TOKEN_PREFIX = 'youtube_owner:';
 const DISCOVERABLE_STATUSES = ['published', 'heldForReview', 'likelySpam'];
@@ -122,8 +122,20 @@ async function findReplyStatus(config, commentId, parentId, accessToken, fetchIm
 }
 
 async function findTopLevelStatus(config, commentId, videoId, accessToken, fetchImpl) {
+  try {
+    const published = await fetchYouTubeVideoComments({
+      ...config,
+      youtubeAdsMaxThreadPages: config.maxPagesPerStatus,
+      youtubeAdsMaxReplyPages: config.maxPagesPerStatus,
+    }, videoId, accessToken, fetchImpl);
+    if (published.some((comment) => String(comment.id || '') === commentId)) {
+      return { found: true, status: 'published', complete: true };
+    }
+  } catch {
+    return { found: false, status: '', complete: false };
+  }
   let complete = true;
-  for (const status of DISCOVERABLE_STATUSES) {
+  for (const status of DISCOVERABLE_STATUSES.filter((status) => status !== 'published')) {
     let pageToken = '';
     for (let page = 0; page < config.maxPagesPerStatus; page += 1) {
       const payload = await youtubeJson(config, 'commentThreads', {
