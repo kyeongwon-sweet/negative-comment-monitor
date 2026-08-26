@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { recordPlatformOutcome } from './platform-health.js';
-import { postThreadText } from './slack.js';
+import { postThreadBlocks } from './slack.js';
 
 function safeVideoId(target) {
   return String(target?.youtubeVideoId || '').trim();
@@ -48,6 +48,50 @@ export function buildOwnerOverloadWarning(target, assessment, assignee = '') {
     + `<${watchUrl}|영상 열기> · <${studioVideoUrl}|댓글 설정 바로 열기> · <${studioCommentsUrl}|${channelName} 댓글 관리>`;
 }
 
+export function buildOwnerOverloadBlocks(target, assessment, assignee = '') {
+  const videoId = safeVideoId(target);
+  const channelId = String(target?.ownerChannelId || target?.channelId || '').trim();
+  const studioVideoUrl = videoId
+    ? `https://studio.youtube.com/video/${encodeURIComponent(videoId)}/edit`
+    : 'https://studio.youtube.com/';
+  const watchUrl = videoId
+    ? `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`
+    : 'https://www.youtube.com/';
+  const studioCommentsUrl = channelId
+    ? `https://studio.youtube.com/channel/${encodeURIComponent(channelId)}/comments`
+    : 'https://studio.youtube.com/';
+  return [
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: buildOwnerOverloadWarning(target, assessment, assignee) },
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          action_id: 'youtube_owner_disable_comments_open',
+          style: 'danger',
+          text: { type: 'plain_text', text: 'Studio에서 댓글 끄기' },
+          url: studioVideoUrl,
+        },
+        {
+          type: 'button',
+          action_id: 'youtube_owner_watch_video',
+          text: { type: 'plain_text', text: '영상 확인' },
+          url: watchUrl,
+        },
+        {
+          type: 'button',
+          action_id: 'youtube_owner_manage_comments',
+          text: { type: 'plain_text', text: '채널 댓글 관리' },
+          url: studioCommentsUrl,
+        },
+      ],
+    },
+  ];
+}
+
 export async function maybeWarnOwnerCommentOverload(
   config, target, assessment, threadTs, assignee = '', fetchImpl = fetch, now = Date.now(),
 ) {
@@ -71,10 +115,12 @@ export async function maybeWarnOwnerCommentOverload(
     return { checked: true, alerted: false, health };
   }
   try {
-    await postThreadText(
+    const text = buildOwnerOverloadWarning(target, assessment, assignee);
+    await postThreadBlocks(
       config,
       threadTs,
-      buildOwnerOverloadWarning(target, assessment, assignee),
+      text,
+      buildOwnerOverloadBlocks(target, assessment, assignee),
       fetchImpl,
     );
     return { checked: true, alerted: true, health };

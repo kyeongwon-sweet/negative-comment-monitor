@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   assessOwnerCommentOverload,
+  buildOwnerOverloadBlocks,
   buildOwnerOverloadWarning,
   maybeWarnOwnerCommentOverload,
 } from '../src/youtube-owner-overload.js';
@@ -60,6 +61,15 @@ test('과부하 경고는 Studio 링크·담당자를 포함하고 Slack 성공 
   assert.match(body.text, /studio\.youtube\.com\/video\/Video_ABC-1\/edit/);
   assert.match(body.text, /studio\.youtube\.com\/channel\/UCQKpvEBNiMBrGzI2f2tAFeA\/comments/);
   assert.match(body.text, /테스트 &lt;영상&gt;/);
+  assert.equal(body.blocks.length, 2);
+  const actions = body.blocks.find((block) => block.type === 'actions');
+  assert.deepEqual(
+    actions.elements.map((element) => element.action_id),
+    ['youtube_owner_disable_comments_open', 'youtube_owner_watch_video', 'youtube_owner_manage_comments'],
+  );
+  assert.equal(actions.elements[0].style, 'danger');
+  assert.equal(actions.elements[0].text.text, 'Studio에서 댓글 끄기');
+  assert.equal(actions.elements[0].url, 'https://studio.youtube.com/video/Video_ABC-1/edit');
 });
 
 test('채널 ID가 없으면 잘못된 채널 URL 대신 Studio 홈과 채널 전환 안내를 쓴다', () => {
@@ -71,6 +81,19 @@ test('채널 ID가 없으면 잘못된 채널 URL 대신 Studio 홈과 채널 �
   assert.match(text, /썰푸는앵무새 채널로 전환/);
   assert.match(text, /<https:\/\/studio\.youtube\.com\/video\/Video_ABC-1\/edit\|댓글 설정 바로 열기>/);
   assert.match(text, /<https:\/\/studio\.youtube\.com\/\|썰푸는앵무새 댓글 관리>/);
+});
+
+test('과부하 액션은 소유 영상·채널의 안전한 Studio URL만 사용한다', () => {
+  const blocks = buildOwnerOverloadBlocks(
+    target,
+    { total: 51, negatives: 20, ratioPercent: 39.2 },
+    'U1',
+  );
+  const actions = blocks.find((block) => block.type === 'actions').elements;
+  assert.equal(actions[0].url, 'https://studio.youtube.com/video/Video_ABC-1/edit');
+  assert.equal(actions[1].url, 'https://www.youtube.com/watch?v=Video_ABC-1');
+  assert.equal(actions[2].url, 'https://studio.youtube.com/channel/UCQKpvEBNiMBrGzI2f2tAFeA/comments');
+  assert.equal(actions.some((element) => element.value), false);
 });
 
 test('일반·위성 target에는 과부하 경고 상태조회도 하지 않는다', async () => {

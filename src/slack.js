@@ -257,6 +257,25 @@ export async function postThreadText(config, threadTs, text, fetchImpl = fetch) 
   return payload;
 }
 
+// 스레드에 Block Kit 답글 발송. text는 알림/접근성용 fallback으로 항상 함께 보낸다.
+export async function postThreadBlocks(config, threadTs, text, blocks, fetchImpl = fetch) {
+  const res = await fetchImpl('https://slack.com/api/chat.postMessage', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${config.slackBotToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      channel: config.slackChannelId,
+      text,
+      blocks,
+      thread_ts: threadTs,
+      unfurl_links: false,
+      unfurl_media: false,
+    }),
+  });
+  const payload = await res.json();
+  if (!payload.ok) throw new Error(`Slack API: ${payload.error || 'unknown_error'}`);
+  return payload;
+}
+
 export function verifySlackSignature({ signingSecret, timestamp, signature, rawBody, now = Date.now() }) {
   if (!signingSecret || !timestamp || !signature) return false;
   if (Math.abs(now / 1000 - Number(timestamp)) > 300) return false;
