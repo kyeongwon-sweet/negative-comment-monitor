@@ -4,6 +4,13 @@
 
 const CHUNK = 25;
 
+const OWNED_CHANNEL_POLICY =
+  "\n소유 YouTube 채널 확대 정책(댓글 앞에 [소유채널] 표시가 있는 경우에만 적용):\n" +
+  "- 제품 불만뿐 아니라 라라스윗 브랜드·회사·마케팅을 향한 적대·혐오도 부정입니다(예: '라라스윗 왤케 비호감').\n" +
+  "- 허위광고·조작·사실 왜곡 지적(예: '허위로 만들어 이미지 망침', '언급한 적 없다'), 법적 위협·저격(예: '소속사한테 고소'), 브랜드나 캠페인을 깎아내리는 냉소·조롱(예: '존나 설레는 댓글창 열기', '두쫀쿠가 더 팔리겠다')도 부정입니다.\n" +
+  "- 단순 질문·사실 확인·가격/구매처·재고 언급·제품과 무관한 농담은 기존처럼 정상입니다.\n" +
+  "- [소유채널] 표시가 없는 일반 협찬·제3자 채널에는 이 확대 정책을 절대 적용하지 마세요.\n";
+
 const PROMPT_HEAD =
   "당신은 '라라스윗'(저당 아이스크림·디저트 브랜드, 대표 제품 '쫀득바') 협찬 게시물의 댓글 검토 담당입니다.\n" +
   "아래 댓글 중 **제품·음식·브랜드에 대한 부정적 언급**만 골라내세요(관리·삭제 대상).\n\n" +
@@ -24,7 +31,7 @@ const PROMPT_HEAD =
 
 const PROMPT_TAIL =
   '\n\nJSON 배열로만 답하세요: [{"i":번호,"alert":true|false,' +
-  '"category":"제품 불만|광고/바이럴 의심|성분/진위 의혹|경쟁품 비교|판매방식 불만|욕설/비속어|정상",' +
+  '"category":"제품 불만|광고/바이럴 의심|성분/진위 의혹|경쟁품 비교|판매방식 불만|욕설/비속어|브랜드 적대/조롱|정상",' +
   '"reason":"한줄 근거, 한자 쓰지 말고 순우리말로(예: 貶下→깎아내림, 是非→시비) (정상이면 빈 문자열)"}]';
 
 // comments: [{text}], 반환: [{alert, category, reason, priority}] (입력 순서) 또는 null(폴백).
@@ -35,8 +42,13 @@ export async function classifyCommentsLLM(comments, config, fetchImpl = fetch, s
   const out = [];
   for (let i = 0; i < comments.length; i += CHUNK) {
     const chunk = comments.slice(i, i + CHUNK);
-    const numbered = chunk.map((c, j) => `${j}. ${String(c.text || '').slice(0, 300)}`).join('\n');
-    const prompt = PROMPT_HEAD + '댓글 목록:\n' + numbered + PROMPT_TAIL;
+    const hasOwnedChannelContext = chunk.some((comment) => comment?.ownedChannelBrandHostilityScope === true);
+    const numbered = chunk.map((c, j) => {
+      const scope = c?.ownedChannelBrandHostilityScope === true ? '[소유채널] ' : '';
+      return `${j}. ${scope}${String(c.text || '').slice(0, 300)}`;
+    }).join('\n');
+    const prompt = PROMPT_HEAD + (hasOwnedChannelContext ? OWNED_CHANNEL_POLICY : '')
+      + '댓글 목록:\n' + numbered + PROMPT_TAIL;
     try {
       const res = await fetchImpl('https://api.anthropic.com/v1/messages', {
         method: 'POST',

@@ -65,3 +65,16 @@ test('classifyCommentsLLM does not touch stats when it falls back (non-ok respon
   assert.equal(out, null);
   assert.equal(stats.calls, 0);
 });
+
+test('소유채널 확대 정책은 표시된 댓글이 있을 때만 프롬프트에 추가된다', async () => {
+  const prompts = [];
+  const fetchImpl = async (url, init) => {
+    prompts.push(JSON.parse(init.body).messages[0].content);
+    return { ok: true, json: async () => ({ content: [{ text: '[]' }] }) };
+  };
+  await classifyCommentsLLM([{ text: '라라스윗 왤케 비호감', ownedChannelBrandHostilityScope: true }], { anthropicKey: 'k' }, fetchImpl);
+  await classifyCommentsLLM([{ text: '인플루언서 왤케 비호감' }], { anthropicKey: 'k' }, fetchImpl);
+  assert.match(prompts[0], /소유 YouTube 채널 확대 정책/);
+  assert.match(prompts[0], /\[소유채널\] 라라스윗 왤케 비호감/);
+  assert.doesNotMatch(prompts[1], /소유 YouTube 채널 확대 정책/);
+});

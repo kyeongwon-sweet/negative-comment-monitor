@@ -69,6 +69,10 @@ jobs:
           YOUTUBE_OWNER_DEEP_MAX_THREAD_PAGES: '100'
           YOUTUBE_OWNER_HIGH_COMMENT_THRESHOLD: '200'
           YOUTUBE_OWNER_HIGH_COMMENT_RESCAN_HOURS: '24'
+          YOUTUBE_OWNER_OVERLOAD_NEGATIVE_COUNT: '20'
+          YOUTUBE_OWNER_OVERLOAD_RATIO_PERCENT: '40'
+          YOUTUBE_OWNER_OVERLOAD_MIN_COMMENTS: '10'
+          YOUTUBE_OWNER_OVERLOAD_COOLDOWN_HOURS: '24'
           YOUTUBE_OWNER_FORCE_VIDEO_IDS: ${{ github.event_name == 'workflow_dispatch' && inputs.force_video_ids || '' }}
           YOUTUBE_OWNER_FORCE_RECLASSIFY: ${{ github.event_name == 'workflow_dispatch' && inputs.force_reclassify && 'true' || 'false' }}
           YOUTUBE_OWNER_ALERT_DELAY_MS: '1100'

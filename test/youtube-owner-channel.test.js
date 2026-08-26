@@ -5,6 +5,7 @@ import {
   inferOwnerVideoProduct,
   loadYouTubeOwnerChannelConfig,
   shouldScanOwnerVideo,
+  YOUTUBE_BRAND_HOSTILITY_CHANNEL_IDS,
 } from '../src/youtube-owner-channel.js';
 
 function json(payload, status = 200) {
@@ -25,6 +26,10 @@ test('owner channel config includes the two existing owners and eight satellites
   assert.equal(config.slackAssignees.jd.satellite, 'U_JD_SAT');
   assert.equal(config.youtubeOwnerAlertDelayMs, 1100);
   assert.deepEqual(config.managedChannelCategories, ['위성채널', '소유 YouTube']);
+  assert.equal(YOUTUBE_BRAND_HOSTILITY_CHANNEL_IDS.has('UCxfjcCvRPOPzo6PeAttO4Dg'), true);
+  assert.equal(YOUTUBE_BRAND_HOSTILITY_CHANNEL_IDS.has('UCQKpvEBNiMBrGzI2f2tAFeA'), true);
+  assert.equal(config.youtubeOwnerOverloadNegativeCount, 20);
+  assert.equal(config.youtubeOwnerOverloadRatioPercent, 40);
 });
 
 test('comment-count gate baselines zero and scans first-positive or changed videos only', () => {
@@ -34,6 +39,11 @@ test('comment-count gate baselines zero and scans first-positive or changed vide
   assert.deepEqual(shouldScanOwnerVideo({ statistics: { commentCount: '3' } }, { last_scanned_count: 2 }), { due: true, reason: 'changed', current: 3 });
   assert.deepEqual(shouldScanOwnerVideo({ statistics: { commentCount: '0' } }, { last_scanned_count: null }), { due: true, reason: 'changed', current: 0 });
   assert.equal(shouldScanOwnerVideo({ statistics: {} }, null).reason, 'no-signal');
+  assert.deepEqual(shouldScanOwnerVideo(
+    { statistics: { commentCount: '27' } },
+    { last_scanned_count: 26, last_scanned_at: '2026-06-01T00:00:00Z' },
+    { highCommentThreshold: 200 },
+  ), { due: true, reason: 'changed', current: 27 });
 });
 
 test('고댓글 영상은 댓글수 불변이어도 일일 심층검사하고 강제검사는 캐시를 우회한다', () => {

@@ -19,7 +19,9 @@ async function prepareLocal(comments, target, config, stats, fetchImpl) {
   const reviewIndexes = [];
   // 광고 지면(메타·틱톡·유튜브)은 '모든 댓글이 그 제품 얘기'다. 브랜드명 미언급·신종 표현(예: "수돗물 향")도
   // 놓치지 않게 키워드 게이트를 건너뛰고 전 댓글을 LLM 문맥 판정으로 보낸다(볼륨 적음, 리콜 우선).
-  const reviewAll = isAdCommentSource(target) || target?.fullContextReview === true;
+  const reviewAll = isAdCommentSource(target)
+    || target?.fullContextReview === true
+    || target?.ownedChannelBrandHostilityScope === true;
   for (let index = 0; index < comments.length; index += 1) {
     if (reviewAll || needsContextualReview(comments[index], target)) reviewIndexes.push(index);
   }
@@ -105,7 +107,11 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
     const slice = flat.slice(start, start + LLM_BATCH);
     let reviewed = null;
     try {
-      reviewed = await llmClassifier(slice.map((s) => s.comment), config, undefined, stats);
+      reviewed = await llmClassifier(slice.map((s) => ({
+        ...s.comment,
+        ownedChannelBrandHostilityScope:
+          entries[s.entry]?.target?.ownedChannelBrandHostilityScope === true,
+      })), config, undefined, stats);
     } catch {
       reviewed = null; // 호출 실패 → 이 배치는 키워드 유지
     }

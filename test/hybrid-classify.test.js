@@ -62,6 +62,30 @@ test('고댓글 소유채널 심층검사는 전 댓글을 검토하고 강제 �
   assert.equal(result.alert, true);
 });
 
+test('B 정책 소유채널만 정상 키워드 댓글도 LLM에 보내고 컨텍스트 플래그를 보존한다', async () => {
+  let ownedInput = null;
+  await classifyCommentsHybrid(
+    [{ text: '라라스윗 왤케 비호감' }],
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true },
+    { anthropicKey: 'key' },
+    async (items) => {
+      ownedInput = items;
+      return [{ alert: true, category: '광고/바이럴 의심', reason: '브랜드를 향한 적대', priority: 'normal' }];
+    },
+  );
+  assert.equal(ownedInput.length, 1);
+  assert.equal(ownedInput[0].ownedChannelBrandHostilityScope, true);
+
+  let thirdPartyCalled = false;
+  await classifyCommentsHybrid(
+    [{ text: '인플루언서 왤케 비호감' }],
+    { brandName: '라라스윗' },
+    { anthropicKey: 'key' },
+    async () => { thirdPartyCalled = true; return []; },
+  );
+  assert.equal(thirdPartyCalled, false);
+});
+
 test('threads the usage stats accumulator through to the LLM classifier', async () => {
   let receivedStats;
   const stats = { calls: 0 };

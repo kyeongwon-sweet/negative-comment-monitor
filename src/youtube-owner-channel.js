@@ -16,6 +16,11 @@ export const YOUTUBE_OWNER_CHANNELS = Object.freeze([
   })),
 ]);
 
+export const YOUTUBE_BRAND_HOSTILITY_CHANNEL_IDS = new Set([
+  'UCxfjcCvRPOPzo6PeAttO4Dg', // 먹짱언니
+  'UCQKpvEBNiMBrGzI2f2tAFeA', // 썰푸는앵무새
+]);
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function required(env, name) {
@@ -34,6 +39,12 @@ function nonnegativeInt(value, fallback, max = Number.MAX_SAFE_INTEGER) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return Math.min(max, Math.floor(parsed));
+}
+
+function positiveNumber(value, fallback, max = Number.MAX_SAFE_INTEGER) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(max, parsed);
 }
 
 function csvSet(value) {
@@ -82,6 +93,10 @@ export function loadYouTubeOwnerChannelConfig(env = process.env, now = Date.now(
     youtubeOwnerDefaultProductName: String(env.YOUTUBE_OWNER_DEFAULT_PRODUCT_NAME || 'JD').trim(),
     youtubeOwnerAlertDelayMs: nonnegativeInt(env.YOUTUBE_OWNER_ALERT_DELAY_MS, 1100, 10_000),
     youtubeOwnerAutoHide: String(env.YOUTUBE_OWNER_CHANNEL_AUTO_HIDE || 'true').toLowerCase() !== 'false',
+    youtubeOwnerOverloadNegativeCount: positiveInt(env.YOUTUBE_OWNER_OVERLOAD_NEGATIVE_COUNT, 20, 10_000),
+    youtubeOwnerOverloadRatioPercent: positiveNumber(env.YOUTUBE_OWNER_OVERLOAD_RATIO_PERCENT, 40, 100),
+    youtubeOwnerOverloadMinComments: positiveInt(env.YOUTUBE_OWNER_OVERLOAD_MIN_COMMENTS, 10, 10_000),
+    youtubeOwnerOverloadCooldownHours: positiveNumber(env.YOUTUBE_OWNER_OVERLOAD_COOLDOWN_HOURS, 24, 168),
     youtubeOwnerChannels: uniqueChannels([
       ...YOUTUBE_OWNER_CHANNELS,
       ...parseExtraChannels(env.YOUTUBE_OWNER_CHANNELS_JSON),
@@ -310,6 +325,7 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
         ));
         if (!comments.length) continue;
         const productName = inferOwnerVideoProduct(video, config.youtubeOwnerDefaultProductName);
+        const ownedChannelBrandHostilityScope = YOUTUBE_BRAND_HOSTILITY_CHANNEL_IDS.has(channel.channelId);
         entries.push({
           target: {
             platform: 'youtube',
@@ -323,7 +339,12 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
             youtubeVideoId: videoId,
             ownerChannelId: channel.channelId,
             isManagedAccount: true,
-            fullContextReview: decision.highComment === true || decision.deepScan === true,
+            // 대표님 승인 B 정책은 먹짱언니·썰푸는앵무새에만 적용한다. 위성·협찬·제3자
+            // 채널에는 이 플래그를 절대 전달하지 않는다.
+            ownedChannelBrandHostilityScope,
+            fullContextReview: ownedChannelBrandHostilityScope
+              || decision.highComment === true
+              || decision.deepScan === true,
             bypassClassificationCache: decision.forceReclassify === true,
           },
           comments,

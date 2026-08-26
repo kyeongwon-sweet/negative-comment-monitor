@@ -15,6 +15,10 @@ import {
   loadYouTubeOwnerChannelConfig,
   saveOwnerVideoStates,
 } from './youtube-owner-channel.js';
+import {
+  assessOwnerCommentOverload,
+  maybeWarnOwnerCommentOverload,
+} from './youtube-owner-overload.js';
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -68,6 +72,8 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
     comments: collected.comments,
     entries: collected.entries.length,
     sentAlerts: 0,
+    overloadWarnings: 0,
+    overloadWarningFailures: 0,
     channelFailures: collected.channelFailures,
     degraded: [],
   };
@@ -111,6 +117,27 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
         await recordAlert(config, target, alerts[index], fingerprints[index], slack.ts, classifierHash, fetchImpl);
       }
       summary.sentAlerts += 1;
+    }
+
+    if (!config.dryRun && target.ownedChannelBrandHostilityScope === true) {
+      try {
+        const assessment = assessOwnerCommentOverload(comments, risks, config);
+        const route = threadRouteForOwnerTarget(target);
+        const overload = await maybeWarnOwnerCommentOverload(
+          config,
+          target,
+          assessment,
+          assessment.overloaded ? await threadFor(target) : '',
+          assigneeForTarget(route.target, config.slackAssignees),
+          fetchImpl,
+          now,
+        );
+        if (overload.alerted) summary.overloadWarnings += 1;
+        if (overload.error) throw new Error(overload.error);
+      } catch (error) {
+        summary.overloadWarningFailures += 1;
+        console.error(`[youtube-owner-overload:degraded] ${error.message}`);
+      }
     }
   }
 
