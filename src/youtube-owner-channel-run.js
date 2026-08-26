@@ -91,6 +91,8 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
     videos: collected.videos,
     due: collected.due,
     deepDue: collected.deepDue,
+    riskDue: collected.riskDue,
+    riskSignals: collected.riskSignals,
     unchanged: collected.unchanged,
     zeroBaseline: collected.zeroBaseline,
     noSignal: collected.noSignal,
@@ -103,6 +105,11 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
     degraded: [],
     softDegraded: [],
   };
+  if (collected.riskSignalFailure) {
+    // 위험도 재스캔 신호가 사라지면 commentCount 상쇄 구멍이 다시 열린다. 수집 자체는
+    // 끝까지 진행하되 보조 모니터를 degraded로 표시해 무음 퇴행을 막는다.
+    summary.degraded.push({ stage: 'risk-signal', error: collected.riskSignalFailure });
+  }
   const llmStats = { calls: 0, attempts: 0, failedAttempts: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
   const risksPerEntry = await classifyTargetsBatched(collected.entries, config, undefined, llmStats, fetchImpl);
   let classifierHash = null;
@@ -219,7 +226,7 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
       kstDate: kstDateKey(now), apifyUsd: 0, anthropicUsd: estimatedUsd,
     }, fetchImpl);
   }
-  console.error(`[youtube-owner-channel] channels=${summary.channels}/${summary.configuredOwners} videos=${summary.videos} due=${summary.due} deepDue=${summary.deepDue} unchanged=${summary.unchanged} noSignal=${summary.noSignal} comments=${summary.comments} alerts=${summary.sentAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} fallback=${llmStats.keywordFallbackComments || 0} failures=${summary.channelFailures.length} softDegraded=${summary.softDegraded.length} est=$${estimatedUsd.toFixed(5)}`);
+  console.error(`[youtube-owner-channel] channels=${summary.channels}/${summary.configuredOwners} videos=${summary.videos} due=${summary.due} deepDue=${summary.deepDue} riskDue=${summary.riskDue} riskSignals=${summary.riskSignals} unchanged=${summary.unchanged} noSignal=${summary.noSignal} comments=${summary.comments} alerts=${summary.sentAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} fallback=${llmStats.keywordFallbackComments || 0} failures=${summary.channelFailures.length} softDegraded=${summary.softDegraded.length} est=$${estimatedUsd.toFixed(5)}`);
   if (summary.channelFailures.length) {
     summary.degraded.push({
       stage: 'collection',

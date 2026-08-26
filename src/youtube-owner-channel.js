@@ -2,6 +2,7 @@ import { loadMetaAdsConfig } from './meta-ads.js';
 import { fetchYouTubeVideoComments } from './youtube-ads.js';
 import { loadYouTubeOwnerTokens, refreshAndVerifyOwner } from './youtube-owner-moderation.js';
 import { YOUTUBE_SATELLITE_CHANNELS } from './youtube-satellite-oauth.js';
+import { extractPostKey } from './delta.js';
 
 export const YOUTUBE_OWNER_CHANNELS = Object.freeze([
   // 실사례 Xj9usm-lkxw(2026-07-02)를 포함하도록 기존 소유 채널은 최초 60일 창으로 본다.
@@ -22,6 +23,7 @@ export const YOUTUBE_BRAND_HOSTILITY_CHANNEL_IDS = new Set([
 ]);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const RISK_EXCLUDED_DECISIONS = new Set(['false_positive', 'ignore', 'unhide', 'approve']);
 
 function required(env, name) {
   const value = String(env[name] || '').trim();
@@ -86,6 +88,14 @@ export function loadYouTubeOwnerChannelConfig(env = process.env, now = Date.now(
     youtubeOwnerDeepMaxThreadPages: positiveInt(env.YOUTUBE_OWNER_DEEP_MAX_THREAD_PAGES, 100, 100),
     youtubeOwnerHighCommentThreshold: positiveInt(env.YOUTUBE_OWNER_HIGH_COMMENT_THRESHOLD, 200, 100_000),
     youtubeOwnerHighCommentRescanHours: positiveInt(env.YOUTUBE_OWNER_HIGH_COMMENT_RESCAN_HOURS, 24, 168),
+    // 숨김으로 공개 commentCount가 내려가면 신규 댓글 유입과 상쇄돼 델타가 0이 될 수 있다.
+    // 최근 악플 영상은 3시간, 과거 악플 누적 영상은 하루 주기로만 재확인해 이 구멍을
+    // 막되 전체 소유 영상을 매번 읽는 비용은 피한다.
+    youtubeOwnerRiskLookbackDays: positiveInt(env.YOUTUBE_OWNER_RISK_LOOKBACK_DAYS, 60, 90),
+    youtubeOwnerRecentNegativeDays: positiveInt(env.YOUTUBE_OWNER_RECENT_NEGATIVE_DAYS, 7, 30),
+    youtubeOwnerRecentNegativeRescanHours: positiveNumber(env.YOUTUBE_OWNER_RECENT_NEGATIVE_RESCAN_HOURS, 3, 24),
+    youtubeOwnerHistoricalNegativeThreshold: positiveInt(env.YOUTUBE_OWNER_HISTORICAL_NEGATIVE_THRESHOLD, 5, 10_000),
+    youtubeOwnerHistoricalNegativeRescanHours: positiveNumber(env.YOUTUBE_OWNER_HISTORICAL_NEGATIVE_RESCAN_HOURS, 24, 168),
     youtubeOwnerForceVideoIds: csvSet(env.YOUTUBE_OWNER_FORCE_VIDEO_IDS),
     youtubeOwnerForceReclassify: String(env.YOUTUBE_OWNER_FORCE_RECLASSIFY || 'false').toLowerCase() === 'true',
     youtubeOwnerLookbackDays: positiveInt(env.YOUTUBE_OWNER_LOOKBACK_DAYS, 14, 90),
@@ -167,6 +177,39 @@ export async function saveOwnerVideoStates(config, rows, fetchImpl = fetch) {
   return rows.length;
 }
 
+export async function loadOwnerVideoRiskSignals(config, fetchImpl = fetch, now = Date.now()) {
+  const cutoff = new Date(now - config.youtubeOwnerRiskLookbackDays * DAY_MS).toISOString();
+  const signals = new Map();
+  for (let offset = 0; ; offset += 1000) {
+    const url = new URL(`${config.supabaseUrl}/rest/v1/negative_comment_alerts`);
+    url.searchParams.set('select', 'post_url,alerted_at,review_decision');
+    url.searchParams.set('platform', 'eq.youtube');
+    url.searchParams.set('alerted_at', `gte.${cutoff}`);
+    url.searchParams.set('order', 'alerted_at.asc');
+    url.searchParams.set('offset', String(offset));
+    url.searchParams.set('limit', '1000');
+    const response = await fetchImpl(url, { headers: headers(config) });
+    if (!response.ok) throw new Error(`YouTube owner risk GET failed (${response.status})`);
+    const rows = await response.json();
+    for (const row of rows) {
+      if (RISK_EXCLUDED_DECISIONS.has(String(row.review_decision || '').trim().toLowerCase())) continue;
+      const key = extractPostKey(row.post_url);
+      if (!key?.startsWith('yt:')) continue;
+      const videoId = key.slice(3);
+      const previous = signals.get(videoId) || { alertCount: 0, lastAlertAt: null };
+      const alertedAt = Date.parse(row.alerted_at || '');
+      signals.set(videoId, {
+        alertCount: previous.alertCount + 1,
+        lastAlertAt: Number.isFinite(alertedAt)
+          ? new Date(Math.max(alertedAt, Date.parse(previous.lastAlertAt || '') || 0)).toISOString()
+          : previous.lastAlertAt,
+      });
+    }
+    if (rows.length < 1000) break;
+  }
+  return signals;
+}
+
 export function inferOwnerVideoProduct(video, fallback = 'JD') {
   const text = `${video?.snippet?.title || ''} ${video?.snippet?.description || ''}`.toLowerCase();
   if (/파인트|p(?:혼|망|딸|애)/i.test(text)) return 'P';
@@ -205,6 +248,28 @@ export function shouldScanOwnerVideo(video, previous, options = {}) {
   };
   if (highComment) {
     if (deepDue) return { due: true, reason: 'high-comment-cadence', current, highComment: true, deepScan: true };
+  }
+  const riskSignals = options.riskSignals instanceof Map ? options.riskSignals : new Map();
+  const risk = riskSignals.get(videoId);
+  if (risk) {
+    const lastAlertAt = Date.parse(risk.lastAlertAt || '');
+    const recentWindowMs = Number(options.recentNegativeDays || 7) * DAY_MS;
+    const isRecent = Number.isFinite(lastAlertAt) && now - lastAlertAt <= recentWindowMs;
+    const isHistoricallyHighRisk = Number(risk.alertCount || 0) >= Number(options.historicalNegativeThreshold || 5);
+    const riskCadenceHours = isRecent
+      ? Number(options.recentNegativeRescanHours || 3)
+      : isHistoricallyHighRisk
+        ? Number(options.historicalNegativeRescanHours || 24)
+        : 0;
+    if (riskCadenceHours > 0) {
+      const riskDue = !Number.isFinite(lastScanned) || now - lastScanned >= riskCadenceHours * 60 * 60 * 1000;
+      if (riskDue) return {
+        due: true,
+        reason: isRecent ? 'recent-negative-cadence' : 'historical-negative-cadence',
+        current,
+        riskScan: true,
+      };
+    }
   }
   return { due: false, reason: 'unchanged', current };
 }
@@ -270,6 +335,14 @@ function stateRow(channel, video, current, now, scanned, previous = null, preser
 
 export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now = Date.now()) {
   const states = await loadOwnerVideoStates(config, fetchImpl);
+  let riskSignals = new Map();
+  let riskSignalFailure = '';
+  try {
+    riskSignals = await loadOwnerVideoRiskSignals(config, fetchImpl, now);
+  } catch (error) {
+    riskSignalFailure = String(error?.message || error);
+    console.error(`[youtube-owner-channel:risk-degraded] ${riskSignalFailure}`);
+  }
   const storedOwners = await loadYouTubeOwnerTokens(config, fetchImpl);
   const configured = new Map(config.youtubeOwnerChannels.map((channel) => [channel.channelId, channel]));
   const owners = storedOwners.filter((owner) => configured.has(owner.channelId));
@@ -278,7 +351,7 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
   const stateUpdates = [];
   const allowedVideoIds = new Set();
   const channelFailures = [];
-  const counts = { ownerTokens: storedOwners.length, configuredOwners: owners.length, channels: 0, videos: 0, due: 0, deepDue: 0, unchanged: 0, zeroBaseline: 0, noSignal: 0, comments: 0 };
+  const counts = { ownerTokens: storedOwners.length, configuredOwners: owners.length, channels: 0, videos: 0, due: 0, deepDue: 0, riskDue: 0, unchanged: 0, zeroBaseline: 0, noSignal: 0, comments: 0 };
 
   for (const owner of owners) {
     const channel = configured.get(owner.channelId);
@@ -298,6 +371,11 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
           forceReclassify: config.youtubeOwnerForceReclassify,
           highCommentThreshold: config.youtubeOwnerHighCommentThreshold,
           highCommentRescanHours: config.youtubeOwnerHighCommentRescanHours,
+          riskSignals,
+          recentNegativeDays: config.youtubeOwnerRecentNegativeDays,
+          recentNegativeRescanHours: config.youtubeOwnerRecentNegativeRescanHours,
+          historicalNegativeThreshold: config.youtubeOwnerHistoricalNegativeThreshold,
+          historicalNegativeRescanHours: config.youtubeOwnerHistoricalNegativeRescanHours,
         });
         if (decision.reason === 'no-signal') { counts.noSignal += 1; continue; }
         if (decision.reason === 'zero-baseline') {
@@ -312,6 +390,7 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
         }
         counts.due += 1;
         if (decision.deepScan) counts.deepDue += 1;
+        if (decision.riskScan) counts.riskDue += 1;
         const scanConfig = decision.deepScan
           ? { ...config, youtubeAdsMaxThreadPages: config.youtubeOwnerDeepMaxThreadPages }
           : decision.highComment
@@ -354,5 +433,13 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
       channelFailures.push({ channelId: owner.channelId, error: String(error?.message || error) });
     }
   }
-  return { ...counts, entries, stateUpdates, allowedVideoIds, channelFailures };
+  return {
+    ...counts,
+    entries,
+    stateUpdates,
+    allowedVideoIds,
+    channelFailures,
+    riskSignals: riskSignals.size,
+    riskSignalFailure,
+  };
 }

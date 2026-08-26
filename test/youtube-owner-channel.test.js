@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   collectYouTubeOwnerChannels,
   inferOwnerVideoProduct,
+  loadOwnerVideoRiskSignals,
   loadYouTubeOwnerChannelConfig,
   shouldScanOwnerVideo,
   YOUTUBE_BRAND_HOSTILITY_CHANNEL_IDS,
@@ -30,6 +31,10 @@ test('owner channel config includes the two existing owners and eight satellites
   assert.equal(YOUTUBE_BRAND_HOSTILITY_CHANNEL_IDS.has('UCQKpvEBNiMBrGzI2f2tAFeA'), true);
   assert.equal(config.youtubeOwnerOverloadNegativeCount, 20);
   assert.equal(config.youtubeOwnerOverloadRatioPercent, 40);
+  assert.equal(config.youtubeOwnerRecentNegativeDays, 7);
+  assert.equal(config.youtubeOwnerRecentNegativeRescanHours, 3);
+  assert.equal(config.youtubeOwnerHistoricalNegativeThreshold, 5);
+  assert.equal(config.youtubeOwnerHistoricalNegativeRescanHours, 24);
 });
 
 test('comment-count gate baselines zero and scans first-positive or changed videos only', () => {
@@ -66,6 +71,57 @@ test('고댓글 영상은 댓글수 불변이어도 일일 심층검사하고 �
   });
 });
 
+test('악플 이력이 있는 소유 영상은 공개 댓글수 불변이어도 위험도별 주기로 재스캔한다', () => {
+  const now = Date.parse('2026-08-26T03:00:00Z');
+  const video = { id: 'owned-risk', statistics: { commentCount: '13' } };
+  const recentRisk = new Map([['owned-risk', { alertCount: 2, lastAlertAt: '2026-08-25T03:00:00Z' }]]);
+  assert.deepEqual(shouldScanOwnerVideo(video, {
+    last_scanned_count: 13, last_scanned_at: '2026-08-25T23:00:00Z',
+  }, {
+    now, riskSignals: recentRisk, recentNegativeDays: 7, recentNegativeRescanHours: 3,
+  }), {
+    due: true, reason: 'recent-negative-cadence', current: 13, riskScan: true,
+  });
+  assert.equal(shouldScanOwnerVideo(video, {
+    last_scanned_count: 13, last_scanned_at: '2026-08-26T02:00:00Z',
+  }, {
+    now, riskSignals: recentRisk, recentNegativeDays: 7, recentNegativeRescanHours: 3,
+  }).due, false);
+
+  const historicalRisk = new Map([['owned-risk', { alertCount: 5, lastAlertAt: '2026-08-01T03:00:00Z' }]]);
+  assert.deepEqual(shouldScanOwnerVideo(video, {
+    last_scanned_count: 13, last_scanned_at: '2026-08-24T03:00:00Z',
+  }, {
+    now,
+    riskSignals: historicalRisk,
+    recentNegativeDays: 7,
+    historicalNegativeThreshold: 5,
+    historicalNegativeRescanHours: 24,
+  }), {
+    due: true, reason: 'historical-negative-cadence', current: 13, riskScan: true,
+  });
+});
+
+test('소유 영상 위험 신호는 YouTube 알림만 집계하고 사람 유지 결정은 제외한다', async () => {
+  const now = Date.parse('2026-08-26T03:00:00Z');
+  const seen = [];
+  const signals = await loadOwnerVideoRiskSignals({
+    supabaseUrl: 'https://db.test', supabaseKey: 'db', youtubeOwnerRiskLookbackDays: 60,
+  }, async (input) => {
+    const url = new URL(String(input));
+    seen.push(url);
+    return json([
+      { post_url: 'https://youtube.com/watch?v=owned1', alerted_at: '2026-08-24T00:00:00Z', review_decision: 'hidden' },
+      { post_url: 'https://youtube.com/shorts/owned1', alerted_at: '2026-08-25T00:00:00Z', review_decision: null },
+      { post_url: 'https://youtube.com/watch?v=owned1', alerted_at: '2026-08-26T00:00:00Z', review_decision: 'false_positive' },
+      { post_url: 'https://instagram.com/p/not-youtube', alerted_at: '2026-08-26T00:00:00Z', review_decision: null },
+    ]);
+  }, now);
+  assert.deepEqual(signals.get('owned1'), { alertCount: 2, lastAlertAt: '2026-08-25T00:00:00.000Z' });
+  assert.equal(seen[0].searchParams.get('platform'), 'eq.youtube');
+  assert.match(seen[0].searchParams.get('alerted_at'), /^gte\.2026-06-/);
+});
+
 test('product inference keeps organic routing useful without changing posted_at', () => {
   assert.equal(inferOwnerVideoProduct({ snippet: { title: '부모님도 홀딱 빠진 멜론바' } }), 'JD');
   assert.equal(inferOwnerVideoProduct({ snippet: { title: '라라스윗 파인트 신상' } }), 'P');
@@ -81,6 +137,7 @@ test('collector lists recent uploads and calls commentThreads only for changed c
     if (url.hostname === 'db.test' && url.pathname.endsWith('/youtube_owner_video_state')) {
       return json([{ channel_id: 'owner-1', video_id: 'same', comment_count: 2, last_scanned_count: 2, last_scanned_at: '2026-08-19T00:00:00Z' }]);
     }
+    if (url.hostname === 'db.test' && url.pathname.endsWith('/negative_comment_alerts')) return json([]);
     if (url.hostname === 'db.test' && url.pathname.endsWith('/meta_tokens')) {
       return json([{ kind: 'youtube_owner:owner-1', token: 'refresh', expires_at: '2099-01-01T00:00:00Z' }]);
     }
@@ -129,6 +186,7 @@ test('collector isolates one owner OAuth failure and continues another owner', a
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(String(input));
     if (url.hostname === 'db.test' && url.pathname.endsWith('/youtube_owner_video_state')) return json([]);
+    if (url.hostname === 'db.test' && url.pathname.endsWith('/negative_comment_alerts')) return json([]);
     if (url.hostname === 'db.test' && url.pathname.endsWith('/meta_tokens')) return json([
       { kind: 'youtube_owner:bad', token: 'bad-refresh' },
       { kind: 'youtube_owner:good', token: 'good-refresh' },
