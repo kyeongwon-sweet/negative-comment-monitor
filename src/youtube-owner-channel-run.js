@@ -77,7 +77,7 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
     channelFailures: collected.channelFailures,
     degraded: [],
   };
-  const llmStats = { calls: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
+  const llmStats = { calls: 0, attempts: 0, failedAttempts: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
   const risksPerEntry = await classifyTargetsBatched(collected.entries, config, undefined, llmStats, fetchImpl);
   let classifierHash = null;
   try { classifierHash = computeClassifierHash(config); } catch { classifierHash = null; }
@@ -170,6 +170,12 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
 
   const estimatedUsd = estimateUsd(llmStats, config.anthropicModel);
   summary.llm = { ...llmStats, estUsd: Number(estimatedUsd.toFixed(5)) };
+  if (llmStats.failedAttempts > 0 && llmStats.reviewed < llmStats.cacheMiss) {
+    summary.degraded.push({
+      stage: 'classification',
+      error: `LLM reviewed ${llmStats.reviewed}/${llmStats.cacheMiss} cache misses after ${llmStats.failedAttempts} failed attempt(s)`,
+    });
+  }
   if (!config.dryRun) {
     await recordRunCost(config, {
       runKey: `youtube-owner-channel:${process.env.GITHUB_RUN_ID || now}:${process.env.GITHUB_RUN_ATTEMPT || '1'}`,

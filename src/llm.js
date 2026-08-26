@@ -3,6 +3,44 @@
 // ANTHROPIC_API_KEY가 있을 때만 동작하고, 실패/미설정 시 null을 반환해 호출부가 키워드 분류로 폴백한다.
 
 const CHUNK = 25;
+const TRANSIENT_HTTP_STATUSES = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryDelayMs(response, attempt, config) {
+  const retryAfter = Number(response?.headers?.get?.('retry-after'));
+  if (Number.isFinite(retryAfter) && retryAfter > 0) return Math.min(15_000, retryAfter * 1000);
+  const base = Math.max(0, Number(config?.anthropicRetryBaseMs ?? 1_000));
+  return Math.min(15_000, base * (2 ** attempt));
+}
+
+async function fetchAnthropicWithRetry(url, init, config, fetchImpl, stats) {
+  const maxAttempts = Math.max(1, Math.min(5, Number(config?.anthropicMaxAttempts || 4)));
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (stats) stats.attempts = (stats.attempts || 0) + 1;
+    try {
+      const response = await fetchImpl(url, init);
+      if (response.ok) return response;
+      if (stats) {
+        stats.failedAttempts = (stats.failedAttempts || 0) + 1;
+        stats.lastFailureStatus = Number(response.status || 0) || 'http';
+      }
+      if (!TRANSIENT_HTTP_STATUSES.has(Number(response.status)) || attempt + 1 >= maxAttempts) return response;
+      await wait(retryDelayMs(response, attempt, config));
+    } catch (error) {
+      if (stats) {
+        stats.failedAttempts = (stats.failedAttempts || 0) + 1;
+        stats.lastFailureStatus = 'network';
+      }
+      // 네트워크 예외는 fetch 내부 재시도 여부를 알 수 없고 장시간 워크플로를 붙잡을 수 있어
+      // 기존 fail-soft 경로로 즉시 넘긴다. 429/5xx처럼 명시적인 일시 HTTP 응답만 재시도한다.
+      throw error;
+    }
+  }
+  return null;
+}
 
 const OWNED_CHANNEL_POLICY =
   "\n소유 YouTube 채널 확대 정책(댓글 앞에 [소유채널] 표시가 있는 경우에만 적용):\n" +
@@ -50,12 +88,12 @@ export async function classifyCommentsLLM(comments, config, fetchImpl = fetch, s
     const prompt = PROMPT_HEAD + (hasOwnedChannelContext ? OWNED_CHANNEL_POLICY : '')
       + '댓글 목록:\n' + numbered + PROMPT_TAIL;
     try {
-      const res = await fetchImpl('https://api.anthropic.com/v1/messages', {
+      const res = await fetchAnthropicWithRetry('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': config.anthropicKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
         body: JSON.stringify({ model, max_tokens: 2000, messages: [{ role: 'user', content: prompt }] }),
-      });
-      if (!res.ok) return null;
+      }, config, fetchImpl, stats);
+      if (!res?.ok) return null;
       const data = await res.json();
       if (stats) {   // 사용량 누적(내용·키 미기록, 토큰수만)
         const u = data.usage || {};

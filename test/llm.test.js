@@ -66,6 +66,34 @@ test('classifyCommentsLLM does not touch stats when it falls back (non-ok respon
   assert.equal(stats.calls, 0);
 });
 
+test('classifyCommentsLLM retries transient Anthropic overload without leaking content', async () => {
+  let attempts = 0;
+  const stats = { calls: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0 };
+  const fetchImpl = async () => {
+    attempts += 1;
+    if (attempts < 3) return { ok: false, status: 529, headers: { get: () => null } };
+    return {
+      ok: true,
+      json: async () => ({
+        content: [{ text: '[{"i":0,"alert":false}]' }],
+        usage: { input_tokens: 10, output_tokens: 2 },
+      }),
+    };
+  };
+  const out = await classifyCommentsLLM(
+    [{ text: '질문입니다' }],
+    { anthropicKey: 'k', anthropicRetryBaseMs: 0 },
+    fetchImpl,
+    stats,
+  );
+  assert.equal(out[0].alert, false);
+  assert.equal(attempts, 3);
+  assert.equal(stats.attempts, 3);
+  assert.equal(stats.failedAttempts, 2);
+  assert.equal(stats.lastFailureStatus, 529);
+  assert.equal(stats.calls, 1);
+});
+
 test('소유채널 확대 정책은 표시된 댓글이 있을 때만 프롬프트에 추가된다', async () => {
   const prompts = [];
   const fetchImpl = async (url, init) => {
