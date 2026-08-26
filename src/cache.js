@@ -4,7 +4,9 @@
 // 원칙: 조회·저장·정리 어느 단계가 실패하든 예외를 삼키고 '캐시 없음'처럼 동작해
 //       실시간 분류가 그대로 진행된다(비용 절감보다 댓글 누락 방지 우선).
 // negative_comment_alerts fingerprint 중복방지와는 별개 테이블·별개 키다.
+import { createHash } from 'node:crypto';
 import { computeClassifierHash } from './classifier-hash.js';
+import { commentFingerprint } from './dedup.js';
 
 const RETENTION_DAYS = 90;
 const READ_CHUNK = 50; // IN 목록 URL 길이 방어
@@ -15,6 +17,15 @@ function headers(config, extra = {}) {
 
 export function cacheEnabled(config) {
   return Boolean(config && config.supabaseUrl && config.supabaseKey);
+}
+
+// 알림 dedup 지문은 comment_id 기준으로 고정해야 댓글당 알림이 하나만 나간다.
+// 반면 분류 캐시는 댓글 본문이 편집되면 반드시 무효화돼야 하므로 텍스트 해시를 더한다.
+// cache-v2 접두어는 기존 텍스트 비민감 캐시와 완전히 분리하는 버전 경계다.
+export function classificationCacheFingerprint(target, comment) {
+  const alertFingerprint = commentFingerprint(target, comment);
+  const textHash = createHash('sha256').update(String(comment?.text || '')).digest('hex');
+  return createHash('sha256').update(`cache-v2|${alertFingerprint}|text:${textHash}`).digest('hex');
 }
 
 // reviewItems: [{ index, fingerprint }]. 반환: Map<index, {alert,category,reason,priority}>(히트만).

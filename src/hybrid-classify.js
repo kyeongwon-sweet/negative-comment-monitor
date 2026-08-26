@@ -1,7 +1,13 @@
 import { classifyNegativeComment, needsContextualReview } from './classify.js';
 import { classifyCommentsLLM, hasConfiguredLlmProvider } from './llm.js';
 import { commentFingerprint } from './dedup.js';
-import { cacheEnabled, computeClassifierHash, lookupCache, storeCache } from './cache.js';
+import {
+  cacheEnabled,
+  classificationCacheFingerprint,
+  computeClassifierHash,
+  lookupCache,
+  storeCache,
+} from './cache.js';
 import { loadFalsePositives } from './review.js';
 import { isAdCommentSource } from './routing.js';
 
@@ -41,13 +47,15 @@ async function prepareLocal(comments, target, config, stats, fetchImpl) {
 
   let classifierHash = null;
   let cacheHits = new Map();
-  const fingerprintByIndex = new Map();
+  const cacheFingerprintByIndex = new Map();
+  const alertFingerprintByIndex = new Map();
   if (cacheEnabled(config)) {
     try {
       classifierHash = computeClassifierHash(config);
       const reviewItems = reviewIndexes.map((index) => {
-        const fingerprint = commentFingerprint(target, comments[index]);
-        fingerprintByIndex.set(index, fingerprint);
+        const fingerprint = classificationCacheFingerprint(target, comments[index]);
+        cacheFingerprintByIndex.set(index, fingerprint);
+        alertFingerprintByIndex.set(index, commentFingerprint(target, comments[index]));
         return { index, fingerprint };
       });
       cacheHits = target?.bypassClassificationCache === true
@@ -66,7 +74,12 @@ async function prepareLocal(comments, target, config, stats, fetchImpl) {
     stats.cacheHits = (stats.cacheHits || 0) + cacheHits.size;
     stats.cacheMiss = (stats.cacheMiss || 0) + missIndexes.length;
   }
-  const pending = missIndexes.map((index) => ({ index, comment: comments[index], fingerprint: fingerprintByIndex.get(index) || null }));
+  const pending = missIndexes.map((index) => ({
+    index,
+    comment: comments[index],
+    cacheFingerprint: cacheFingerprintByIndex.get(index) || null,
+    alertFingerprint: alertFingerprintByIndex.get(index) || commentFingerprint(target, comments[index]),
+  }));
   return { out, pending, classifierHash };
 }
 
@@ -90,26 +103,36 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
   const kwAlertRefs = [];   // 키워드 단계 알림 위치
   const pendingRefs = [];   // LLM 후보(캐시 미스)
   for (let e = 0; e < prepared.length; e += 1) {
-    for (const p of prepared[e].pending) pendingRefs.push({ entry: e, index: p.index, comment: p.comment, fingerprint: p.fingerprint });
+    for (const p of prepared[e].pending) pendingRefs.push({
+      entry: e,
+      index: p.index,
+      comment: p.comment,
+      cacheFingerprint: p.cacheFingerprint,
+      alertFingerprint: p.alertFingerprint,
+    });
     prepared[e].out.forEach((risk, index) => {
-      if (risk.alert) kwAlertRefs.push({ entry: e, index, fingerprint: commentFingerprint(entries[e].target, entries[e].comments[index]) });
+      if (risk.alert) kwAlertRefs.push({
+        entry: e,
+        index,
+        alertFingerprint: commentFingerprint(entries[e].target, entries[e].comments[index]),
+      });
     });
   }
   let fpSet = new Set();
   if (cacheEnabled(config)) {
-    const fps = [...kwAlertRefs, ...pendingRefs].map((r) => r.fingerprint).filter(Boolean);
+    const fps = [...kwAlertRefs, ...pendingRefs].map((r) => r.alertFingerprint).filter(Boolean);
     if (fps.length) {
       try { fpSet = await loadFalsePositives(config, fps, fetchImpl); } catch { fpSet = new Set(); }
     }
   }
   for (const ref of kwAlertRefs) {
-    if (ref.fingerprint && fpSet.has(ref.fingerprint)) prepared[ref.entry].out[ref.index] = humanFalsePositiveResult();
+    if (ref.alertFingerprint && fpSet.has(ref.alertFingerprint)) prepared[ref.entry].out[ref.index] = humanFalsePositiveResult();
   }
 
   // 실행 전체 pending 평탄화 — 원 게시물(entry)·댓글 인덱스 귀속 보존. FP 지문은 LLM 제외(정상 강제).
   const flat = [];
   for (const ref of pendingRefs) {
-    if (ref.fingerprint && fpSet.has(ref.fingerprint)) { prepared[ref.entry].out[ref.index] = humanFalsePositiveResult(); continue; }
+    if (ref.alertFingerprint && fpSet.has(ref.alertFingerprint)) { prepared[ref.entry].out[ref.index] = humanFalsePositiveResult(); continue; }
     flat.push(ref);
   }
   const classifierHash = prepared.find((p) => p.classifierHash)?.classifierHash || null;
@@ -147,9 +170,9 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
     for (let k = 0; k < slice.length; k += 1) {
       const result = reviewed[k];
       if (!result) continue; // 일부 응답 누락/부족 → 해당 항목만 키워드 유지
-      const { entry, index, fingerprint } = slice[k];
+      const { entry, index, cacheFingerprint } = slice[k];
       prepared[entry].out[index] = { ...result, entity: { matched: true }, engine: 'llm' };
-      if (classifierHash && fingerprint) toStore.push({ fingerprint, result });
+      if (classifierHash && cacheFingerprint) toStore.push({ fingerprint: cacheFingerprint, result });
     }
   }
   if (classifierHash && toStore.length) await storeCache(config, toStore, classifierHash, fetchImpl);

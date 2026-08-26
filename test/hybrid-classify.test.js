@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyCommentsHybrid, classifyTargetsBatched } from '../src/hybrid-classify.js';
 import { commentFingerprint } from '../src/dedup.js';
+import { classificationCacheFingerprint } from '../src/cache.js';
 
 const CACHE_CFG = { anthropicKey: 'key', supabaseUrl: 'https://db.example', supabaseKey: 'svc' };
 
@@ -106,7 +107,7 @@ test('threads the usage stats accumulator through to the LLM classifier', async 
 test('cache hit skips the LLM for that comment (engine=llm-cache)', async () => {
   const target = { brandName: '라라스윗' };
   const comment = { text: '이거 광고인가요?' };
-  const fp = commentFingerprint(target, comment);
+  const fp = classificationCacheFingerprint(target, comment);
   const realFetch = globalThis.fetch;
   let stored = false;
   globalThis.fetch = async (url, opts) => {
@@ -159,6 +160,52 @@ test('cache miss calls the LLM and stores the fresh verdict', async () => {
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test('같은 comment_id의 본문이 수정되면 정상 캐시를 재사용하지 않고 다시 분류한다', async () => {
+  const target = {
+    platform: 'youtube', postKey: 'yt:rbRplW02tbU', brandName: '라라스윗',
+    ownedChannelBrandHostilityScope: true,
+  };
+  const before = { id: 'edited-comment', platform: 'youtube', text: '그냥 그래요' };
+  const edited = { ...before, text: '라라스윗 쥐도 먹기 싫어짐 전량 폐기 거북' };
+  const staleFingerprint = classificationCacheFingerprint(target, before);
+  const editedFingerprint = classificationCacheFingerprint(target, edited);
+  assert.notEqual(staleFingerprint, editedFingerprint);
+  assert.equal(commentFingerprint(target, before), commentFingerprint(target, edited));
+
+  let lookupFingerprint = '';
+  let storedFingerprint = '';
+  let llmCalled = false;
+  const fetchImpl = async (url, options = {}) => {
+    const requestUrl = String(url);
+    if (requestUrl.includes('comment_classification_cache') && (options.method || 'GET') === 'GET') {
+      lookupFingerprint = requestUrl;
+      // DB에는 편집 전 정상 판정만 남아 있다. 새 텍스트 지문 조회는 미스여야 한다.
+      return { ok: true, json: async () => (requestUrl.includes(staleFingerprint) ? [{ fingerprint: staleFingerprint, alert: false }] : []) };
+    }
+    if (requestUrl.includes('negative_comment_alerts')) return { ok: true, json: async () => [] };
+    if (requestUrl.includes('comment_classification_cache') && options.method === 'POST') {
+      storedFingerprint = JSON.parse(options.body)[0].fingerprint;
+      return { ok: true, json: async () => [] };
+    }
+    throw new Error(`unexpected request: ${requestUrl}`);
+  };
+
+  const [[result]] = await classifyTargetsBatched(
+    [{ target, comments: [edited] }],
+    CACHE_CFG,
+    async () => {
+      llmCalled = true;
+      return [{ alert: true, category: '제품 불만', reason: '브랜드와 제품을 강하게 혐오함', priority: 'high' }];
+    },
+    {},
+    fetchImpl,
+  );
+  assert.equal(llmCalled, true);
+  assert.equal(result.alert, true);
+  assert.match(lookupFingerprint, new RegExp(editedFingerprint));
+  assert.equal(storedFingerprint, editedFingerprint);
 });
 
 test('cache lookup failure falls back to live LLM (no drop)', async () => {

@@ -1,9 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cacheEnabled, lookupCache, storeCache, purgeCache } from '../src/cache.js';
+import {
+  cacheEnabled,
+  classificationCacheFingerprint,
+  lookupCache,
+  storeCache,
+  purgeCache,
+} from '../src/cache.js';
+import { commentFingerprint } from '../src/dedup.js';
 
 const CFG = { supabaseUrl: 'https://db.example', supabaseKey: 'svc-key' };
 const HASH = 'a'.repeat(64);
+
+test('분류 캐시 지문만 본문 편집에 민감하고 알림 dedup 지문은 comment_id 기준으로 유지된다', () => {
+  const target = { platform: 'youtube', postKey: 'yt:video1' };
+  const before = { id: 'comment1', platform: 'youtube', text: '맛있어요' };
+  const edited = { ...before, text: '라라스윗 쥐도 먹기 싫어짐 전량 폐기' };
+  assert.equal(commentFingerprint(target, before), commentFingerprint(target, edited));
+  assert.notEqual(classificationCacheFingerprint(target, before), classificationCacheFingerprint(target, edited));
+  assert.equal(classificationCacheFingerprint(target, before).length, 64);
+});
 
 test('cacheEnabled: url+key 있어야 true', () => {
   assert.equal(cacheEnabled(CFG), true);
