@@ -2,10 +2,56 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyNegativeComment, needsContextualReview } from '../src/classify.js';
 
-test('detects requested discovery keywords in relevant product context', () => {
+test('문맥 의존 광고 신호는 폴백에서 보수적으로 통과하고 명백 불만만 알림', () => {
   const target = { productName: '라라스윗 쫀득바' };
-  for (const text of ['광고 같아요', '바이럴 아닌가', '맛이 별로', '다른 상품 끼워 팔기']) {
+  for (const text of ['광고 같아요', '바이럴 아닌가']) {
+    assert.equal(classifyNegativeComment({ text }, target).alert, false, text);
+    assert.equal(needsContextualReview({ text }, target), true, text);
+  }
+  for (const text of ['맛이 별로', '다른 상품 끼워 팔기']) {
     assert.equal(classifyNegativeComment({ text }, target).alert, true, text);
+  }
+});
+
+test('긍정 광고언급·팬응원은 광고 키워드가 있어도 정상', () => {
+  const target = { productName: '라라스윗 쫀득바' };
+  for (const text of [
+    '후님이 광고하니까 꼭 먹어볼게요🥰 잘생겼어용',
+    '헐 후님이 광고를 하시다니!!',
+    '터후님 광고 너무 잘찍으세요 아자스',
+  ]) {
+    assert.equal(classifyNegativeComment({ text }, target).alert, false, text);
+  }
+});
+
+test('제품을 직접 깎아내리지 않는 잡담·가용성 관찰은 정상', () => {
+  const target = { productName: '라라스윗 쫀득바' };
+  for (const text of [
+    '도존쿠 끝나고 심심했구나',
+    '작은년이 사달라고 또 징징되것네',
+    '지금 베라 갈려고 했는데 이게 왜 나오는데',
+    'gs네 cu면 갈만했는데 까비',
+    '먹는 애를 본 적이 없는데',
+    '단 하나도 본 적 없는데',
+  ]) {
+    assert.equal(classifyNegativeComment({ text }, target).alert, false, text);
+  }
+});
+
+test('폴백 보수화 후에도 명백한 부정 recall은 유지', () => {
+  const target = { brandName: '라라스윗', productName: '쫀득바' };
+  for (const text of [
+    '라라스윗 맛없음',
+    '이거 완전 사기다',
+    '허위광고하지마라',
+    '쫀득바보다 메로나가 더 낫다',
+    '이거 살 바엔 메로나 먹지',
+    '라라스윗 왤케 비호감',
+  ]) {
+    const scopedTarget = text.includes('비호감')
+      ? { ...target, ownedChannelBrandHostilityScope: true }
+      : target;
+    assert.equal(classifyNegativeComment({ text }, scopedTarget).alert, true, text);
   }
 });
 

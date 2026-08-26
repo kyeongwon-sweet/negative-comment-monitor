@@ -145,6 +145,18 @@ test('소유채널 확대 정책은 표시된 댓글이 있을 때만 프롬프�
   assert.doesNotMatch(prompts[1], /소유 YouTube 채널 확대 정책/);
 });
 
+test('LLM 프롬프트가 긍정 광고언급·잡담·가용성을 정상 예시로 명시한다', async () => {
+  let prompt = '';
+  const fetchImpl = async (url, init) => {
+    prompt = JSON.parse(init.body).messages[0].content;
+    return { ok: true, json: async () => ({ content: [{ text: '[]' }] }) };
+  };
+  await classifyCommentsLLM([{ text: '광고 언급' }], { anthropicKey: 'k' }, fetchImpl);
+  assert.match(prompt, /팬이 호감·기대·구매의향을 표현하면 정상/);
+  assert.match(prompt, /터후님 광고 너무 잘찍으세요 아자스/);
+  assert.match(prompt, /제품\/브랜드를 직접 깎아내리지 않는 잡담·가용성 관찰은 정상/);
+});
+
 test('Gemini 구조화 JSON 응답을 분류하고 공급자별 무료 사용량을 기록한다', async () => {
   const requests = [];
   const stats = {};

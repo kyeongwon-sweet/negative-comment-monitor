@@ -59,6 +59,30 @@ test('Anthropic 실패 폴백은 회차 통계에 댓글수·배치수를 남긴
   } finally { restore(); }
 });
 
+test('LLM 장애 폴백은 긍정 광고언급을 알리지 않고 명백 부정 recall은 유지한다', async () => {
+  const restore = stubFetch({
+    anthropic: async () => ({
+      ok: false, status: 400,
+      json: async () => ({ error: { type: 'invalid_request_error', message: 'credit balance is too low' } }),
+    }),
+    supabase: async () => { throw new Error('n/a'); },
+  });
+  const target = { brandName: '라라스윗', productName: '쫀득바' };
+  try {
+    const [out] = await classifyTargetsBatched([{
+      target,
+      comments: [
+        { text: '후님이 광고하니까 꼭 먹어볼게요🥰 잘생겼어용' },
+        { text: '헐 후님이 광고를 하시다니!!' },
+        { text: '허위광고하지마라' },
+        { text: '쫀득바 맛없어 사지 마세요' },
+      ],
+    }], { anthropicKey: 'k' }, classifyCommentsLLM, {});
+    assert.deepEqual(out.map((row) => row.alert), [false, false, true, true]);
+    assert.ok(out.every((row) => row.engine === 'keyword'));
+  } finally { restore(); }
+});
+
 test('영구 오류는 첫 배치 뒤 회로차단해 남은 배치를 재호출하지 않는다', async () => {
   let calls = 0;
   const restore = stubFetch({
