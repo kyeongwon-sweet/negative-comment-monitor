@@ -40,13 +40,17 @@ async function readJson(response, label) {
 
 export async function loadAuditAlert(config, fetchImpl = fetch) {
   const url = new URL(`${config.supabaseUrl}/rest/v1/negative_comment_alerts`);
-  url.searchParams.set('select', 'id,comment_id,post_url,review_decision,reviewed_by,reviewed_at,source');
+  url.searchParams.set('select', 'id,comment_id,post_url,review_decision,reviewed_by,reviewed_at,source,platform');
   url.searchParams.set('id', `eq.${config.alertId}`);
-  url.searchParams.set('source', 'eq.youtube_ads');
+  url.searchParams.set('platform', 'eq.youtube');
   url.searchParams.set('limit', '1');
   const rows = await readJson(await fetchImpl(url, { headers: supabaseHeaders(config) }), 'Supabase alert lookup');
   if (!rows.length) throw new Error('YouTube alert row not found');
   const alert = rows[0];
+  if (String(alert.platform || '').toLowerCase() !== 'youtube'
+    || !(alert.source == null || String(alert.source) === 'youtube_ads')) {
+    throw new Error('YouTube owner audit accepts only owned organic or YouTube ad alerts');
+  }
   if (!String(alert.comment_id || '').trim()) throw new Error('YouTube alert has no comment ID');
   const postKey = extractPostKey(alert.post_url);
   if (!postKey?.startsWith('yt:')) throw new Error('YouTube alert has no valid video URL');
