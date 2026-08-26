@@ -124,6 +124,7 @@ export async function auditHiddenYouTubeOwnerAlerts(
     malformedRows,
     unmatchedRows,
     rejected: 0,
+    heldForReview: 0,
     missing: 0,
     visible: 0,
     lookupFailed: 0,
@@ -142,6 +143,7 @@ export async function auditHiddenYouTubeOwnerAlerts(
     const ownerResult = {
       target: ids.length,
       rejected: 0,
+      heldForReview: 0,
       missing: 0,
       visible: 0,
       lookupFailed: 0,
@@ -163,10 +165,12 @@ export async function auditHiddenYouTubeOwnerAlerts(
       continue;
     }
     ownerResult.rejected = states.rejected.size;
+    ownerResult.heldForReview = states.heldForReview.size;
     ownerResult.missing = states.missing.size;
     ownerResult.visible = states.visible.size;
     ownerResult.lookupFailed = states.failed.length;
     result.rejected += states.rejected.size;
+    result.heldForReview += states.heldForReview.size;
     result.missing += states.missing.size;
     result.visible += states.visible.size;
     result.lookupFailed += states.failed.length;
@@ -210,6 +214,7 @@ async function writeSummary(result) {
     `- 모드: ${result.dryRun ? 'DRY RUN(읽기전용)' : result.repairVisible ? '공개 잔여 자동 재숨김' : '읽기전용'}`,
     `- 숨김 기대 행: ${result.expectedHiddenRows} (고유 댓글 ${result.uniqueComments})`,
     `- 실제 rejected: ${result.rejected}`,
+    `- 검토 대기(비공개·가역): ${result.heldForReview}`,
     `- 목록 미발견(숨김 또는 삭제): ${result.missing}`,
     `- 실제 공개: ${result.visible}`,
     `- 재숨김 시도/확정: ${result.repairAttempted}/${result.repaired}`,

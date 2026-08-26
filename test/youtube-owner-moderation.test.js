@@ -42,6 +42,15 @@ test('실제 숨김은 명시적 확인 문구 없이는 시작하지 않는다'
     YOUTUBE_OWNER_BULK_HIDE_DRY_RUN: 'false',
     YOUTUBE_OWNER_BULK_HIDE_CONFIRM: YOUTUBE_OWNER_HIDE_CONFIRMATION,
   }).dryRun, false);
+  assert.equal(loadYouTubeOwnerModerationConfig({
+    GOOGLE_ADS_CLIENT_ID: 'client', GOOGLE_ADS_CLIENT_SECRET: 'secret',
+    SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'service',
+  }).moderationStatus, 'heldForReview');
+  assert.throws(() => loadYouTubeOwnerModerationConfig({
+    GOOGLE_ADS_CLIENT_ID: 'client', GOOGLE_ADS_CLIENT_SECRET: 'secret',
+    SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'service',
+    YOUTUBE_OWNER_MODERATION_STATUS: 'invalid',
+  }), /Unsupported YOUTUBE_OWNER_MODERATION_STATUS/);
 });
 
 test('단일 Slack 카드 숨김은 별도 확인 문구와 channel+ts 쌍을 요구한다', () => {
@@ -145,7 +154,7 @@ test('오가닉 위성 자동숨김은 keep 결정을 제외하고 source IS NUL
   assert.match(patch.url, /platform=eq\.youtube/);
 });
 
-test('현재 노출 댓글만 소유자 토큰으로 rejected 처리하고 성공 행만 DB 갱신한다', async () => {
+test('현재 노출 댓글만 소유자 토큰으로 heldForReview 처리하고 성공 행만 DB 갱신한다', async () => {
   const calls = [];
   const rejected = new Set();
   const alerts = [
@@ -193,13 +202,42 @@ test('현재 노출 댓글만 소유자 토큰으로 rejected 처리하고 성�
   assert.equal(result.dbUpdated, 2);
   const moderation = calls.filter((call) => call.url.includes('/comments/setModerationStatus'));
   assert.equal(moderation.length, 2);
-  assert.ok(moderation.every((call) => new URL(call.url).searchParams.get('moderationStatus') === 'rejected'));
+  assert.ok(moderation.every((call) => new URL(call.url).searchParams.get('moderationStatus') === 'heldForReview'));
   assert.ok(moderation.every((call) => call.init.method === 'POST'));
   const commentReads = calls.filter((call) => call.url.includes('/comments?'));
   assert.ok(commentReads.every((call) => !new URL(call.url).searchParams.has('maxResults')));
   const patches = calls.filter((call) => call.init.method === 'PATCH');
   assert.ok(patches.every((call) => JSON.parse(call.init.body).review_decision === 'hidden'));
   assert.equal(calls.filter((call) => call.url.includes('/videos')).length, 1);
+});
+
+test('heldForReview 상태는 공개가 아닌 숨김 성공으로 확정한다', async () => {
+  let held = false;
+  const alert = {
+    id: 31, comment_id: 'commentHeld', post_url: 'https://youtube.com/watch?v=videoA1',
+    review_decision: null, reviewed_by: null, reviewed_at: null,
+  };
+  const result = await moderateYouTubeOwnerAlerts(config(), async (input, init = {}) => {
+    const url = String(input);
+    if (url.includes('/rest/v1/meta_tokens')) return response(200, [{ kind: 'youtube_owner:ownerA', token: 'refreshA' }]);
+    if (url.includes('/rest/v1/negative_comment_alerts') && (!init.method || init.method === 'GET')) return response(200, [alert]);
+    if (url.includes('oauth2.googleapis.com')) return response(200, { access_token: 'accessA' });
+    if (url.includes('/channels')) return response(200, { items: [{ id: 'ownerA' }] });
+    if (url.includes('/videos')) return response(200, { items: [{ id: 'videoA1', snippet: { channelId: 'ownerA' } }] });
+    if (url.includes('/comments?')) return response(200, {
+      items: [{ id: 'commentHeld', snippet: { moderationStatus: held ? 'heldForReview' : 'published' } }],
+    });
+    if (url.includes('/comments/setModerationStatus')) {
+      assert.equal(new URL(url).searchParams.get('moderationStatus'), 'heldForReview');
+      held = true;
+      return response(204);
+    }
+    if (url.includes('/rest/v1/negative_comment_alerts') && init.method === 'PATCH') return response(200, [{ id: 31 }]);
+    throw new Error(`unexpected ${url}`);
+  });
+  assert.equal(result.hidden, 1);
+  assert.equal(result.dbUpdated, 1);
+  assert.equal(result.acceptedUnverified, 0);
 });
 
 test('직전 숨김 전파가 늦어 다음 실행에서 조회불가가 된 미처리 행은 DB·Slack을 완료로 수렴한다', async () => {

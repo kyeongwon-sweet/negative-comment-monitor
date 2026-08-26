@@ -7,6 +7,7 @@ import { syncHiddenYouTubeSlackCards } from './youtube-hidden-slack.js';
 
 export const YOUTUBE_OWNER_HIDE_CONFIRMATION = 'HIDE_ALL_YOUTUBE_AD_ALERTS';
 export const YOUTUBE_OWNER_SINGLE_HIDE_CONFIRMATION = 'HIDE_ONE_YOUTUBE_AD_ALERT';
+export const YOUTUBE_OWNER_DEFAULT_MODERATION_STATUS = 'heldForReview';
 export const YOUTUBE_OWNER_ALERT_SCOPES = Object.freeze({
   ADS: 'youtube_ads',
   ORGANIC_SATELLITE: 'organic_satellite',
@@ -48,6 +49,12 @@ export function loadYouTubeOwnerModerationConfig(env = process.env) {
   if (!dryRun && confirmation !== expectedConfirmation) {
     throw new Error(`Destructive YouTube moderation requires YOUTUBE_OWNER_BULK_HIDE_CONFIRM=${expectedConfirmation}`);
   }
+  const moderationStatus = String(
+    env.YOUTUBE_OWNER_MODERATION_STATUS || YOUTUBE_OWNER_DEFAULT_MODERATION_STATUS,
+  ).trim();
+  if (!['heldForReview', 'rejected'].includes(moderationStatus)) {
+    throw new Error(`Unsupported YOUTUBE_OWNER_MODERATION_STATUS: ${moderationStatus}`);
+  }
   return {
     googleAdsClientId: required(env, 'GOOGLE_ADS_CLIENT_ID'),
     googleAdsClientSecret: required(env, 'GOOGLE_ADS_CLIENT_SECRET'),
@@ -59,6 +66,7 @@ export function loadYouTubeOwnerModerationConfig(env = process.env) {
     alertChannelId,
     alertMessageTs,
     alertScope,
+    moderationStatus,
     batchSize: positiveInt(env.YOUTUBE_OWNER_BULK_HIDE_BATCH_SIZE, 50, 50),
     hideVerificationAttempts: positiveInt(env.YOUTUBE_OWNER_HIDE_VERIFY_ATTEMPTS, 5, 10),
     hideVerificationDelayMs: positiveInt(env.YOUTUBE_OWNER_HIDE_VERIFY_DELAY_MS, 3_000, 30_000),
@@ -277,7 +285,9 @@ async function listVisibleCommentIds(config, ids, accessToken, fetchImpl) {
     const payload = await googleJson(url, accessToken, fetchImpl);
     for (const item of payload.items || []) {
       const status = String(item.snippet?.moderationStatus || '').trim().toLowerCase();
-      if (item.id && status !== 'rejected') visible.add(String(item.id));
+      // comments.list 테스트 스텁/일부 응답은 moderationStatus를 생략한다. 이 경우와
+      // published만 공개로 취급하고, heldForReview/likelySpam/rejected는 비공개다.
+      if (item.id && (!status || status === 'published')) visible.add(String(item.id));
     }
   }
   return visible;
@@ -290,6 +300,8 @@ export async function listYouTubeCommentStatesIsolated(config, ids, accessToken,
   const result = {
     visible: new Set(),
     rejected: new Set(),
+    heldForReview: new Set(),
+    likelySpam: new Set(),
     missing: new Set(),
     failed: [],
     channelError: null,
@@ -308,6 +320,8 @@ export async function listYouTubeCommentStatesIsolated(config, ids, accessToken,
         returned.add(id);
         const status = String(item.snippet?.moderationStatus || '').trim().toLowerCase();
         if (status === 'rejected') result.rejected.add(id);
+        else if (status === 'heldforreview') result.heldForReview.add(id);
+        else if (status === 'likelyspam') result.likelySpam.add(id);
         else result.visible.add(id);
       }
       for (const id of batch) if (!returned.has(id)) result.missing.add(id);
@@ -370,10 +384,13 @@ async function listVisibleCommentIdsIsolated(config, ids, accessToken, fetchImpl
   return result;
 }
 
-async function rejectComments(config, ids, accessToken, fetchImpl) {
+async function hideComments(config, ids, accessToken, fetchImpl) {
   const url = new URL(`${config.youtubeApiBase}/comments/setModerationStatus`);
   url.searchParams.set('id', ids.join(','));
-  url.searchParams.set('moderationStatus', 'rejected');
+  url.searchParams.set(
+    'moderationStatus',
+    config.moderationStatus || YOUTUBE_OWNER_DEFAULT_MODERATION_STATUS,
+  );
   const response = await fetchImpl(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -399,7 +416,7 @@ export async function rejectCommentsIsolated(config, ids, accessToken, fetchImpl
   async function visit(batch) {
     if (!batch.length || result.channelError) return;
     try {
-      await rejectComments(config, batch, accessToken, fetchImpl);
+      await hideComments(config, batch, accessToken, fetchImpl);
     } catch (error) {
       if (Number(error?.status) === 403) {
         result.channelError = errorInfo(error);

@@ -12,6 +12,7 @@ import {
 
 export const YOUTUBE_RESTORE_CONFIRMATION = 'RESTORE_YOUTUBE_COMMENTS';
 export const YOUTUBE_AUTO_RESTORE_CONFIRMATION = 'AUTO_RESTORE_YOUTUBE_FALSE_POSITIVES';
+export const YOUTUBE_RESTORE_UNVERIFIED_MARKER = 'youtube_restore_unverified';
 const KEEP_DECISIONS = new Set(['false_positive', 'ignore', 'unhide']);
 
 function required(env, name) {
@@ -179,7 +180,7 @@ export async function syncRestoredCards(config, rows, fetchImpl, now) {
 
 export async function loadRecentYouTubeFalsePositiveAlerts(config, fetchImpl = fetch, now = Date.now()) {
   const url = new URL(`${config.supabaseUrl}/rest/v1/negative_comment_alerts`);
-  url.searchParams.set('select', 'id,source,platform,comment_id,comment_text,post_url,review_decision,reviewed_by,reviewed_at,slack_channel_id,slack_ts,fingerprint');
+  url.searchParams.set('select', 'id,source,platform,comment_id,comment_text,post_url,review_decision,reviewed_by,reviewed_at,false_positive_reason,slack_channel_id,slack_ts,fingerprint');
   url.searchParams.set('platform', 'eq.youtube');
   url.searchParams.set('review_decision', 'eq.false_positive');
   url.searchParams.set('reviewed_at', `gte.${new Date(now - config.lookbackHours * 3600_000).toISOString()}`);
@@ -194,7 +195,42 @@ export async function loadRecentYouTubeFalsePositiveAlerts(config, fetchImpl = f
     && (row.source == null || String(row.source) === 'youtube_ads')
     && row.comment_id
     && videoIdFromAlert(row)
+    && !String(row.false_positive_reason || '').startsWith(YOUTUBE_RESTORE_UNVERIFIED_MARKER)
   ));
+}
+
+async function markUnverifiedRestoreRows(config, rows, fetchImpl) {
+  let updated = 0;
+  let failed = 0;
+  for (const row of rows) {
+    const original = String(row.false_positive_reason || '').trim();
+    const marker = original && !original.startsWith(YOUTUBE_RESTORE_UNVERIFIED_MARKER)
+      ? `${YOUTUBE_RESTORE_UNVERIFIED_MARKER}:${original}`
+      : YOUTUBE_RESTORE_UNVERIFIED_MARKER;
+    try {
+      const response = await fetchImpl(
+        `${config.supabaseUrl}/rest/v1/negative_comment_alerts?id=eq.${encodeURIComponent(row.id)}`,
+        {
+          method: 'PATCH',
+          headers: supabaseHeaders(config, {
+            'Content-Type': 'application/json',
+            Prefer: 'return=representation',
+          }),
+          body: JSON.stringify({ false_positive_reason: marker }),
+        },
+      );
+      if (!response.ok) {
+        failed += 1;
+        continue;
+      }
+      const changed = await response.json().catch(() => []);
+      if (Array.isArray(changed) && changed.length) updated += changed.length;
+      else failed += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  return { updated, failed };
 }
 
 function unavailableRestoreError(error) {
@@ -250,6 +286,9 @@ export async function autoRestoreYouTubeFalsePositives(
     restored: 0,
     unavailable: 0,
     unverified: 0,
+    manualRequired: 0,
+    manualMarked: 0,
+    manualMarkFailed: 0,
     failed: 0,
     slackUpdated: 0,
     slackFailed: 0,
@@ -287,6 +326,7 @@ export async function autoRestoreYouTubeFalsePositives(
   }
 
   const restoredRows = [];
+  const unverifiedRows = [];
   for (const [ownerId, ownerRows] of rowsByOwner) {
     const token = accessTokens.get(ownerId);
     const rowsByComment = new Map();
@@ -305,7 +345,12 @@ export async function autoRestoreYouTubeFalsePositives(
     const visibleBefore = new Set([...before.visible, ...publishedBefore.published]);
     result.failed += before.failed.length;
     result.alreadyVisible += ids.filter((id) => visibleBefore.has(id)).length;
-    const candidates = ids.filter((id) => !visibleBefore.has(id) && (before.rejected.has(id) || before.missing.has(id)));
+    const candidates = ids.filter((id) => !visibleBefore.has(id) && (
+      before.rejected.has(id)
+      || before.heldForReview.has(id)
+      || before.likelySpam.has(id)
+      || before.missing.has(id)
+    ));
     const acceptedRows = [];
     for (const id of candidates) {
       result.restoreAttempted += 1;
@@ -330,9 +375,21 @@ export async function autoRestoreYouTubeFalsePositives(
       for (const id of candidates) {
         if (restoredIds.has(id)) {
           result.restored += 1;
-        } else result.unverified += 1;
+        } else {
+          result.unverified += 1;
+          result.manualRequired += 1;
+          unverifiedRows.push(...(rowsByComment.get(id) || []));
+        }
       }
     }
+  }
+  if (unverifiedRows.length) {
+    // YouTube가 204를 반환했지만 실제 공개 목록에서 끝내 확인되지 않은 과거 rejected
+    // 댓글은 사람의 FP 결정은 보존한 채 1회 격리한다. 다음 15분 회차마다 50-unit
+    // 복원 API를 무한 호출하거나 같은 degraded 경고를 반복하지 않는다.
+    const marked = await markUnverifiedRestoreRows(config, unverifiedRows, fetchImpl);
+    result.manualMarked = marked.updated;
+    result.manualMarkFailed = marked.failed;
   }
   if (restoredRows.length) {
     const slack = await syncRestoredCards(config, restoredRows, fetchImpl, now);

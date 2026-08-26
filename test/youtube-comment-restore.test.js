@@ -205,3 +205,55 @@ test('이미 공개인 FP와 비소유 YouTube는 자동복원에서 변경하�
   // OAuth refresh POST만 존재하며 댓글 모더레이션·DB 쓰기는 없다.
   assert.equal(writes, 1);
 });
+
+test('204 뒤에도 공개 확인이 안 된 과거 FP는 사람 결정을 보존하고 1회 격리한다', async () => {
+  const row = {
+    id: 9, source: null, platform: 'youtube', comment_id: 'legacy-rejected', comment_text: '정상',
+    post_url: 'https://youtube.com/watch?v=videoAAAA01', review_decision: 'false_positive',
+    reviewed_by: 'U_HUMAN', reviewed_at: '2026-08-26T00:00:00Z', false_positive_reason: 'positive_neutral',
+    slack_channel_id: 'C1', slack_ts: '1.9', fingerprint: 'fp9',
+  };
+  let markerBody = null;
+  const fetchImpl = async (input, init = {}) => {
+    const url = String(input);
+    if (url.includes('/negative_comment_alerts?') && (!init.method || init.method === 'GET')) return response(200, [row]);
+    if (url.includes('/rest/v1/meta_tokens')) return response(200, [{ kind: 'youtube_owner:owner1', token: 'refresh' }]);
+    if (url === 'https://oauth2.googleapis.com/token') return response(200, { access_token: 'access' });
+    if (url.includes('/channels?')) return response(200, { items: [{ id: 'owner1' }] });
+    if (url.includes('/videos?')) return response(200, { items: [{ id: 'videoAAAA01', snippet: { channelId: 'owner1' } }] });
+    if (url.includes('/comments/setModerationStatus')) return response(204);
+    if (url.includes('/comments?')) return response(200, {
+      items: [{ id: 'legacy-rejected', snippet: { moderationStatus: 'rejected' } }],
+    });
+    if (url.includes('/commentThreads?')) return response(200, { items: [] });
+    if (url.includes('/negative_comment_alerts?id=eq.') && init.method === 'PATCH') {
+      markerBody = JSON.parse(init.body);
+      return response(200, [{ id: 9 }]);
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+  const config = {
+    googleAdsClientId: 'client', googleAdsClientSecret: 'secret', supabaseUrl: 'https://db.test', supabaseKey: 'service',
+    slackBotToken: '', youtubeApiBase: 'https://youtube.test', lookbackHours: 48, maxRows: 100,
+    verificationAttempts: 1, verificationDelayMs: 1,
+  };
+  const result = await autoRestoreYouTubeFalsePositives(config, fetchImpl, Date.parse('2026-08-26T01:00:00Z'));
+  assert.equal(result.restoreAttempted, 1);
+  assert.equal(result.restored, 0);
+  assert.equal(result.unverified, 1);
+  assert.equal(result.manualRequired, 1);
+  assert.equal(result.manualMarked, 1);
+  assert.equal(result.manualMarkFailed, 0);
+  assert.deepEqual(markerBody, { false_positive_reason: 'youtube_restore_unverified:positive_neutral' });
+  assert.equal('review_decision' in markerBody, false);
+  assert.equal('reviewed_by' in markerBody, false);
+
+  const skipped = await autoRestoreYouTubeFalsePositives(config, async (input) => {
+    const url = String(input);
+    if (url.includes('/negative_comment_alerts?')) return response(200, [{
+      ...row, false_positive_reason: 'youtube_restore_unverified:positive_neutral',
+    }]);
+    throw new Error('platform must not be called for a quarantined restore');
+  }, Date.parse('2026-08-26T01:15:00Z'));
+  assert.equal(skipped.candidates, 0);
+});
