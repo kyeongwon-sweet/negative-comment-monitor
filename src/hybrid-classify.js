@@ -16,6 +16,32 @@ function humanFalsePositiveResult() {
   return { alert: false, category: '정상댓글', priority: 'none', entity: { matched: true }, engine: 'human-fp', reason: '사람 오탐 판정(false_positive)' };
 }
 
+function llmDeferredResult(previous = {}) {
+  return {
+    ...previous,
+    alert: false,
+    deferred: true,
+    category: 'llm_deferred',
+    priority: 'none',
+    engine: 'llm-deferred',
+    reason: 'LLM 문맥 판정 보류',
+  };
+}
+
+export function isLlmDeferred(result) {
+  return result?.deferred === true || result?.category === 'llm_deferred';
+}
+
+export function deferredEntryKeys(entries, risksPerEntry, keyOf = (target) => target?.url) {
+  const keys = new Set();
+  for (let index = 0; index < entries.length; index += 1) {
+    if (!(risksPerEntry[index] || []).some(isLlmDeferred)) continue;
+    const key = String(keyOf(entries[index]?.target) || '').trim();
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
 const LLM_BATCH = 25; // 실행 전체 문맥 후보를 25개 단위로 통합해 LLM 호출 수를 줄인다.
 
 // 한 게시물: 키워드 분류 + 문맥 후보 판별 + 캐시 조회. LLM이 필요한 캐시 미스만 pending으로 돌려준다.
@@ -33,16 +59,18 @@ async function prepareLocal(comments, target, config, stats, fetchImpl) {
   }
   if (!reviewIndexes.length) return { out, pending: [], classifierHash: null };
   if (!hasConfiguredLlmProvider(config)) {
-    if (stats) {
-      stats.keywordFallback = true;
-      stats.keywordFallbackBatches = (stats.keywordFallbackBatches || 0) + 1;
-      stats.keywordFallbackComments = (stats.keywordFallbackComments || 0) + reviewIndexes.length;
-      stats.missingKey = true;
-      stats.lastFailureCode = 'missing_llm_key';
-      stats.lastFailureKind = 'persistent';
-      stats.persistentFailures = (stats.persistentFailures || 0) + 1;
-    }
-    return { out, pending: [], classifierHash: null };
+    // 사람 false_positive를 먼저 적용할 수 있도록 pending 형태를 유지한다. 아래 공용 폴백에서
+    // 명백 부정만 키워드로 확정하고 나머지는 llm_deferred로 바꾼다.
+    return {
+      out,
+      pending: reviewIndexes.map((index) => ({
+        index,
+        comment: comments[index],
+        cacheFingerprint: null,
+        alertFingerprint: commentFingerprint(target, comments[index]),
+      })),
+      classifierHash: null,
+    };
   }
 
   let classifierHash = null;
@@ -137,20 +165,46 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
   }
   const classifierHash = prepared.find((p) => p.classifierHash)?.classifierHash || null;
 
-  function recordKeywordFallback(count) {
-    if (!stats || !count) return;
+  function deferUnresolved(refs) {
+    if (!refs.length) return;
+    let deferred = 0;
+    let immediate = 0;
+    for (const ref of refs) {
+      const current = prepared[ref.entry].out[ref.index];
+      if (current?.alert === true) {
+        immediate += 1;
+        continue;
+      }
+      prepared[ref.entry].out[ref.index] = llmDeferredResult(current);
+      deferred += 1;
+    }
+    if (!stats) return;
     stats.keywordFallback = true;
     stats.keywordFallbackBatches = (stats.keywordFallbackBatches || 0) + 1;
-    stats.keywordFallbackComments = (stats.keywordFallbackComments || 0) + count;
+    stats.keywordFallbackComments = (stats.keywordFallbackComments || 0) + refs.length;
+    stats.keywordImmediateComments = (stats.keywordImmediateComments || 0) + immediate;
+    stats.llmDeferredComments = (stats.llmDeferredComments || 0) + deferred;
+    if (deferred) stats.llmDeferredBatches = (stats.llmDeferredBatches || 0) + 1;
   }
 
   const toStore = [];
+  const llmConfigured = hasConfiguredLlmProvider(config);
+  if (!llmConfigured && flat.length) {
+    if (stats) {
+      stats.missingKey = true;
+      stats.lastFailureCode = 'missing_llm_key';
+      stats.lastFailureKind = 'persistent';
+      stats.persistentFailures = (stats.persistentFailures || 0) + 1;
+    }
+    deferUnresolved(flat);
+    return prepared.map((p) => p.out);
+  }
   for (let start = 0; start < flat.length; start += LLM_BATCH) {
     const slice = flat.slice(start, start + LLM_BATCH);
     // 크레딧·키·권한·잘못된 요청 같은 영구 오류는 같은 회차에서 다시 시도해도 회복되지 않는다.
     // 첫 실패 뒤 남은 배치는 호출하지 않고 폴백 수만 정확히 기록한다(400×N 요청 폭주 방지).
     if (stats?.llmCircuitOpen === true) {
-      recordKeywordFallback(slice.length);
+      deferUnresolved(slice);
       continue;
     }
     let reviewed = null;
@@ -164,16 +218,19 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
       reviewed = null; // 호출 실패 → 이 배치는 키워드 유지
     }
     if (!reviewed) {
-      recordKeywordFallback(slice.length);
-      continue; // JSON 파싱 실패 등으로 null → 키워드 폴백
+      deferUnresolved(slice);
+      continue; // JSON 파싱 실패 등으로 null → 명백 부정만 키워드 확정, 문맥형은 보류
     }
+    const missing = [];
     for (let k = 0; k < slice.length; k += 1) {
       const result = reviewed[k];
-      if (!result) continue; // 일부 응답 누락/부족 → 해당 항목만 키워드 유지
+      if (!result) { missing.push(slice[k]); continue; }
       const { entry, index, cacheFingerprint } = slice[k];
       prepared[entry].out[index] = { ...result, entity: { matched: true }, engine: 'llm' };
       if (classifierHash && cacheFingerprint) toStore.push({ fingerprint: cacheFingerprint, result });
     }
+    // 일부 응답 누락도 정상으로 추측하지 않는다. 누락 슬롯만 보류하고 성공 슬롯은 그대로 보존한다.
+    deferUnresolved(missing);
   }
   if (classifierHash && toStore.length) await storeCache(config, toStore, classifierHash, fetchImpl);
 

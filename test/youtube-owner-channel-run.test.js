@@ -40,7 +40,7 @@ test('LLM 전면 실패는 키워드 폴백 soft-degraded로 기록하고 실행
 
   assert.deepEqual(summary.softDegraded, [{
     stage: 'llm-classification',
-    error: 'credit; fallback=12/12',
+    error: 'credit; deferred=12/12',
   }]);
   assert.equal(ownerRunFailure(summary), null);
 });

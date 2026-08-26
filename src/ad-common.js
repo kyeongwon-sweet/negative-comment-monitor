@@ -18,6 +18,13 @@ export function dailyAdRunKey(scope, id, now = Date.now()) {
   return `daily:${scope}:${id}:${kstDateKey(now)}`;
 }
 
+// 문맥판정 보류가 있으면 일일 성공키를 쓰지 않는다. 비용 원장은 실행별 키로 남고,
+// hasAdRunToday는 false를 유지하므로 같은 아침 창의 다음 웨이크가 자동 재분류한다.
+export function adClassificationLedgerKey(scope, dailyKey, stats = {}, now = Date.now(), env = process.env) {
+  if (Number(stats.llmDeferredComments || 0) <= 0) return dailyKey;
+  return `${scope}-deferred:${env.GITHUB_RUN_ID || now}:${env.GITHUB_RUN_ATTEMPT || '1'}`;
+}
+
 // 오늘 이미 성공 실행했는지: cost_usage_ledger에 runKey 존재 여부.
 // ⚠️ 조회 실패는 false(fail-open) — 원장 장애로 감시가 안 도는 것보다 재실행이 낫다.
 export async function hasAdRunToday(config, runKey, fetchImpl = fetch) {

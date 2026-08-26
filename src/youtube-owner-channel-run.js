@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { classifyTargetsBatched } from './hybrid-classify.js';
+import { classifyTargetsBatched, deferredEntryKeys } from './hybrid-classify.js';
 import { commentFingerprint, loadSeenFingerprints, recordAlert } from './dedup.js';
 import { computeClassifierHash } from './cache.js';
 import { estimateUsd } from './pricing.js';
@@ -76,9 +76,12 @@ export function recordOwnerLlmSoftDegraded(summary, health = null, error = null)
     return;
   }
   if (!health?.degraded) return;
+  const deferred = health.llmDeferredComments == null
+    ? Number(health.keywordFallbackComments || 0)
+    : Number(health.llmDeferredComments || 0);
   summary.softDegraded.push({
     stage: 'llm-classification',
-    error: `${health.failureCode || 'unknown'}; fallback=${health.keywordFallbackComments || 0}/${health.candidateComments || 0}`,
+    error: `${health.failureCode || 'unknown'}; deferred=${deferred}/${health.candidateComments || 0}`,
   });
 }
 
@@ -112,6 +115,13 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
   }
   const llmStats = { calls: 0, attempts: 0, failedAttempts: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
   const risksPerEntry = await classifyTargetsBatched(collected.entries, config, undefined, llmStats, fetchImpl);
+  const deferredVideoIds = deferredEntryKeys(
+    collected.entries,
+    risksPerEntry,
+    (target) => target?.youtubeVideoId,
+  );
+  summary.llmDeferredComments = Number(llmStats.llmDeferredComments || 0);
+  summary.llmDeferredVideos = deferredVideoIds.size;
   let classifierHash = null;
   try { classifierHash = computeClassifierHash(config); } catch { classifierHash = null; }
   const threads = new Map();
@@ -177,7 +187,13 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
   if (!config.dryRun) {
     // Slack/DB 기록까지 성공한 뒤에만 델타 기준을 전진시킨다. 중간 실패 시 다음 회차가 재수집하고 dedup이 보호한다.
     try {
-      summary.stateRowsSaved = await saveOwnerVideoStates(config, collected.stateUpdates, fetchImpl);
+      const resolvedStateUpdates = collected.stateUpdates.filter(
+        (row) => !deferredVideoIds.has(String(row.video_id || '').trim()),
+      );
+      summary.stateRowsSaved = await saveOwnerVideoStates(config, resolvedStateUpdates, fetchImpl);
+      if (deferredVideoIds.size) {
+        console.error(`[youtube-owner-channel:llm-deferred] ${llmStats.llmDeferredComments || 0}건 / 영상 ${deferredVideoIds.size}개 — scan checkpoint 미갱신, 다음 회차 재분류`);
+      }
     } catch (error) {
       summary.stateRowsSaved = 0;
       summary.degraded.push({ stage: 'state-write', error: String(error?.message || error) });
@@ -215,6 +231,7 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
       degraded: true,
       keywordFallback: Number(llmStats.keywordFallbackComments || 0) > 0,
       keywordFallbackComments: Number(llmStats.keywordFallbackComments || 0),
+      llmDeferredComments: Number(llmStats.llmDeferredComments || 0),
       healthMonitorError: String(error?.message || error),
     };
     recordOwnerLlmSoftDegraded(summary, null, error);
@@ -226,7 +243,7 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
       kstDate: kstDateKey(now), apifyUsd: 0, anthropicUsd: estimatedUsd,
     }, fetchImpl);
   }
-  console.error(`[youtube-owner-channel] channels=${summary.channels}/${summary.configuredOwners} videos=${summary.videos} due=${summary.due} deepDue=${summary.deepDue} riskDue=${summary.riskDue} riskSignals=${summary.riskSignals} unchanged=${summary.unchanged} noSignal=${summary.noSignal} comments=${summary.comments} alerts=${summary.sentAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} fallback=${llmStats.keywordFallbackComments || 0} failures=${summary.channelFailures.length} softDegraded=${summary.softDegraded.length} est=$${estimatedUsd.toFixed(5)}`);
+  console.error(`[youtube-owner-channel] channels=${summary.channels}/${summary.configuredOwners} videos=${summary.videos} due=${summary.due} deepDue=${summary.deepDue} riskDue=${summary.riskDue} riskSignals=${summary.riskSignals} unchanged=${summary.unchanged} noSignal=${summary.noSignal} comments=${summary.comments} alerts=${summary.sentAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} fallback=${llmStats.keywordFallbackComments || 0} deferred=${llmStats.llmDeferredComments || 0} failures=${summary.channelFailures.length} softDegraded=${summary.softDegraded.length} est=$${estimatedUsd.toFixed(5)}`);
   if (summary.channelFailures.length) {
     summary.degraded.push({
       stage: 'collection',

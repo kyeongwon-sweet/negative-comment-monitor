@@ -45,7 +45,7 @@ test('후보 25개 초과 시 25개 단위로 여러 번 호출하고 전부 매
   assert.ok(out[0].every((r) => r.engine === 'llm' && r.alert));
 });
 
-test('일부 응답 누락(짧은 배열)이면 그 항목만 키워드 유지, 나머지는 정상 매핑', async () => {
+test('일부 응답 누락(짧은 배열)이면 그 항목만 보류, 나머지는 정상 매핑', async () => {
   const entries = [{ target: T, comments: [ambiguous(0), ambiguous(1), ambiguous(2)] }];
   const llm = async (items) => [
     { alert: true, category: '광고/바이럴 의심', reason: 'r0', priority: 'normal' },
@@ -55,7 +55,8 @@ test('일부 응답 누락(짧은 배열)이면 그 항목만 키워드 유지, 
   ].slice(0, items.length);
   const out = await classifyTargetsBatched(entries, CFG, llm);
   assert.equal(out[0][0].engine, 'llm');
-  assert.equal(out[0][1].engine, 'keyword'); // 누락분은 안전경로(키워드)로
+  assert.equal(out[0][1].engine, 'llm-deferred');
+  assert.equal(out[0][1].deferred, true);
   assert.equal(out[0][2].engine, 'llm');
 });
 
@@ -72,16 +73,16 @@ test('범위 밖/여분 인덱스가 와도 슬롯 개수만큼만 매핑(초과
   assert.equal(out[0][1].alert, false);
 });
 
-test('LLM이 null(JSON 파싱 실패 신호) 반환 시 배치 전체 키워드 폴백(누락 방지)', async () => {
+test('LLM이 null(JSON 파싱 실패 신호)이면 문맥 후보를 전부 보류', async () => {
   const entries = [{ target: T, comments: [ambiguous(0), ambiguous(1)] }];
   const out = await classifyTargetsBatched(entries, CFG, async () => null);
-  assert.ok(out[0].every((r) => r.engine === 'keyword'));
+  assert.ok(out[0].every((r) => r.engine === 'llm-deferred' && r.deferred && !r.alert));
 });
 
-test('LLM 호출이 throw해도 크래시 없이 키워드 폴백', async () => {
+test('LLM 호출이 throw해도 크래시 없이 문맥 후보 보류', async () => {
   const entries = [{ target: T, comments: [ambiguous(0)] }];
   const out = await classifyTargetsBatched(entries, CFG, async () => { throw new Error('anthropic 500'); });
-  assert.equal(out[0][0].engine, 'keyword');
+  assert.equal(out[0][0].engine, 'llm-deferred');
 });
 
 test('한 게시물 준비가 실패해도 다른 게시물 분류는 계속된다', async () => {
@@ -97,7 +98,7 @@ test('한 게시물 준비가 실패해도 다른 게시물 분류는 계속된�
   assert.equal(out[1][0].alert, true);
 });
 
-test('anthropicKey 없으면 LLM 미호출, 전부 키워드', async () => {
+test('LLM 키가 없으면 호출 없이 문맥 후보 보류', async () => {
   let called = false;
   const out = await classifyTargetsBatched(
     [{ target: T, comments: [ambiguous(0)] }],
@@ -105,5 +106,6 @@ test('anthropicKey 없으면 LLM 미호출, 전부 키워드', async () => {
     async () => { called = true; return []; },
   );
   assert.equal(called, false);
-  assert.equal(out[0][0].engine, 'keyword');
+  assert.equal(out[0][0].engine, 'llm-deferred');
+  assert.equal(out[0][0].alert, false);
 });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { inAdMorningWindow, dailyAdRunKey, hasAdRunToday } from '../src/ad-common.js';
+import { adClassificationLedgerKey, inAdMorningWindow, dailyAdRunKey, hasAdRunToday } from '../src/ad-common.js';
 
 test('inAdMorningWindow: prefix별 FORCE·KST 창 판정', () => {
   const kst9 = Date.parse('2026-08-14T00:10:00Z'); // KST 09
@@ -18,6 +18,15 @@ test('inAdMorningWindow: prefix별 FORCE·KST 창 판정', () => {
 test('dailyAdRunKey: scope·id·KST 날짜 조합(자정 경계)', () => {
   assert.equal(dailyAdRunKey('tiktok-ads', 'adv1', Date.parse('2026-08-13T23:10:00Z')), 'daily:tiktok-ads:adv1:2026-08-14');
   assert.equal(dailyAdRunKey('youtube-ads', '123', Date.parse('2026-08-14T01:00:00Z')), 'daily:youtube-ads:123:2026-08-14');
+});
+
+test('문맥판정 보류가 있으면 일일 성공키 대신 재시도 가능한 실행별 원장키를 쓴다', () => {
+  const daily = 'daily:tiktok-ads:adv1:2026-08-26';
+  assert.equal(adClassificationLedgerKey('tiktok-ads', daily, {}, 1, {}), daily);
+  assert.equal(
+    adClassificationLedgerKey('tiktok-ads', daily, { llmDeferredComments: 3 }, 1, { GITHUB_RUN_ID: '99', GITHUB_RUN_ATTEMPT: '2' }),
+    'tiktok-ads-deferred:99:2',
+  );
 });
 
 test('hasAdRunToday: 원장 행 있으면 true, 조회 실패·미설정은 false(fail-open)', async () => {

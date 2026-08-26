@@ -3,7 +3,7 @@ import { runActorBatches } from './apify.js';
 import { fetchTargets, submitResult } from './gas.js';
 import { normalizeDataset } from './normalize.js';
 import { detectPlatform, filterEligibleSponsorships, groupApifyTargets } from './routing.js';
-import { classifyTargetsBatched } from './hybrid-classify.js';
+import { classifyTargetsBatched, deferredEntryKeys } from './hybrid-classify.js';
 import { sendAlert, buildViralCopyMessage, postThreadText } from './slack.js';
 import { filterDueTargets, isEvergreenCategory, kstDateKey } from './schedule.js';
 import { loadCommentCounts, filterChangedTargets, filterBaselineTargets, filterNoSignalRescueTargets, filterDeepScanTargets, filterArchivedOrDeadTargets, recordChecks, summarizeDelta, extractPostKey } from './delta.js';
@@ -214,6 +214,11 @@ export async function runMonitor(config = loadConfig()) {
 
   // Phase 2: 실행 전체 문맥 후보를 25개 단위로 통합 분류(캐시 미스만 LLM). 결과는 entries와 동일 순서·귀속.
   const risksPerEntry = await classifyTargetsBatched(entries, config, undefined, llmStats);
+  // 문맥 판정 보류가 하나라도 있는 게시물은 last_count를 전진시키지 않는다. 다음 회차에 다시
+  // 수집·분류되며, 보류 결과 자체는 alert/cache/seen 어디에도 기록되지 않는다.
+  const deferredTargetUrls = deferredEntryKeys(entries, risksPerEntry);
+  summary.llmDeferredComments = Number(llmStats.llmDeferredComments || 0);
+  summary.llmDeferredTargets = deferredTargetUrls.size;
 
   // 알림 당시 classifier_hash 기록용(오탐률 집계·오탐 우선적용 감사). 계산 실패는 무해(null 저장).
   let classifierHash = null;
@@ -300,7 +305,7 @@ export async function runMonitor(config = loadConfig()) {
     summary.llmHealth = { degraded: true, healthCheckFailed: true, error: String(error.message || error).slice(0, 200) };
     console.error(`[llm-health:degraded] 상태 경고 실패 — ${error.message}`);
   }
-  console.error(`[llm] primary=${config.llmProvider} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} calls=${llmStats.calls} attempts=${llmStats.attempts || 0} failed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} reviewed=${llmStats.reviewed} cacheHit=${llmStats.cacheHits} cacheMiss=${llmStats.cacheMiss} in=${llmStats.inputTokens} out=${llmStats.outputTokens} promptCacheR=${llmStats.cacheRead} promptCacheC=${llmStats.cacheCreate} est=$${estUsd.toFixed(5)}`);
+  console.error(`[llm] primary=${config.llmProvider} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} calls=${llmStats.calls} attempts=${llmStats.attempts || 0} failed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} deferred=${llmStats.llmDeferredComments || 0} immediate=${llmStats.keywordImmediateComments || 0} reviewed=${llmStats.reviewed} cacheHit=${llmStats.cacheHits} cacheMiss=${llmStats.cacheMiss} in=${llmStats.inputTokens} out=${llmStats.outputTokens} promptCacheR=${llmStats.cacheRead} promptCacheC=${llmStats.cacheCreate} est=$${estUsd.toFixed(5)}`);
 
   // 90일 초과 분류 캐시 정리(best-effort — 실패해도 무시).
   if (!config.dryRun) await purgeCache(config);
@@ -364,7 +369,13 @@ export async function runMonitor(config = loadConfig()) {
   if (summary_deltaBreakdown) summary.deltaBreakdown = summary_deltaBreakdown;
   // 스크레이프분 + baseline(current=0 신규, 무스크레이프)의 last_count 기준선 갱신(다음 실행부터 증가분만).
   // baseline은 recordChecks가 counts.current(=0)를 그대로 기록 → 재firstScan 없이 0 기준선만 남긴다.
-  const toRecord = [...scrapedTargets, ...baselineTargets];
+  const toRecord = [
+    ...scrapedTargets.filter((target) => !deferredTargetUrls.has(String(target.url || '').trim())),
+    ...baselineTargets,
+  ];
+  if (deferredTargetUrls.size) {
+    console.error(`[llm-deferred] 문맥판정 보류 ${llmStats.llmDeferredComments || 0}건 / 대상 ${deferredTargetUrls.size}개 — delta checkpoint 미갱신, 다음 회차 재분류`);
+  }
   if (config.deltaEnabled && config.supabaseUrl && config.supabaseKey && toRecord.length && !config.dryRun) {
     try {
       summary.checksUpdated = await recordChecks(config, toRecord, counts);

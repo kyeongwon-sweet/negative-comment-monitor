@@ -6,6 +6,11 @@ function safeScope(value) {
 
 export function summarizeLlmHealth(stats = {}, totalComments = 0) {
   const fallbackComments = Number(stats.keywordFallbackComments || 0);
+  const immediateComments = Number(stats.keywordImmediateComments || 0);
+  // 구형 호출부/테스트가 새 카운트를 아직 넘기지 않아도 기존 fallback 전량을 보류로 해석한다.
+  const deferredComments = stats.llmDeferredComments == null
+    ? Math.max(0, fallbackComments - immediateComments)
+    : Number(stats.llmDeferredComments || 0);
   const candidateComments = Number(stats.cacheHits || 0) + Number(stats.cacheMiss || 0) + Number(stats.missingKey ? fallbackComments : 0);
   const persistent = Boolean(stats.missingKey || Number(stats.persistentFailures || 0) > 0);
   return {
@@ -19,6 +24,9 @@ export function summarizeLlmHealth(stats = {}, totalComments = 0) {
     keywordFallback: fallbackComments > 0,
     keywordFallbackBatches: Number(stats.keywordFallbackBatches || 0),
     keywordFallbackComments: fallbackComments,
+    keywordImmediateComments: immediateComments,
+    llmDeferredComments: deferredComments,
+    llmDeferredBatches: Number(stats.llmDeferredBatches || 0),
     persistent,
     failureProvider: String(stats.lastFailureProvider || ''),
     successfulProvider: String(stats.lastSuccessfulProvider || ''),
@@ -28,6 +36,10 @@ export function summarizeLlmHealth(stats = {}, totalComments = 0) {
 }
 
 export function buildLlmDegradedMessage(scope, health, owner = '') {
+  const immediateComments = Number(health.keywordImmediateComments || 0);
+  const deferredComments = health.llmDeferredComments == null
+    ? Math.max(0, Number(health.keywordFallbackComments || 0) - immediateComments)
+    : Number(health.llmDeferredComments || 0);
   const provider = health.failureProvider === 'gemini' ? 'Gemini'
     : health.failureProvider === 'anthropic' ? 'Anthropic'
       : 'Gemini·Anthropic';
@@ -37,11 +49,12 @@ export function buildLlmDegradedMessage(scope, health, owner = '') {
         : health.persistent ? `${provider} 영구 요청 오류`
           : `${provider} 일시 오류 재시도 소진`;
   return [
-    '⚠️ *LLM 분류 degraded — 키워드 폴백 중*',
+    '⚠️ *LLM 분류 degraded — 문맥 판정 보류 중*',
     `구간: ${scope}`,
     `원인: ${cause}`,
-    `LLM 대상 ${health.candidateComments}건 중 ${health.keywordFallbackComments}건이 키워드 판정으로 대체됐습니다.`,
-    '브랜드 적대·비꼼·문맥형 부정댓글을 놓칠 위험이 있습니다. Gemini 키·무료 한도와 Anthropic 폴백 상태를 확인해 주세요.',
+    `LLM 대상 ${health.candidateComments}건 중 ${deferredComments}건은 문맥 판정을 보류했고, 명백 부정 ${immediateComments}건만 키워드로 즉시 처리했습니다.`,
+    `LLM 장애로 ${deferredComments}건 문맥판정 보류 중 — 알림·숨김·정상 캐시·seen 기록 없이 복구 후 자동 재분류합니다.`,
+    'Gemini 키·무료 한도와 Anthropic 폴백 상태를 확인해 주세요.',
     owner ? `담당자: <@${owner}>` : '',
   ].filter(Boolean).join('\n');
 }
@@ -73,14 +86,14 @@ export async function monitorLlmHealth(config, stats, options = {}, fetchImpl = 
   };
   if (health.degraded) {
     console.error(
-      `::warning title=LLM classification degraded::${scope} fallback=${health.keywordFallbackComments}/${health.candidateComments} code=${health.failureCode || 'unknown'}`,
+      `::warning title=LLM classification degraded::${scope} deferred=${health.llmDeferredComments}/${health.candidateComments} immediate=${health.keywordImmediateComments} code=${health.failureCode || 'unknown'}`,
     );
   }
   const outcome = await recordPlatformOutcome(healthConfig, {
     platform,
     ok: !health.degraded,
     error: health.degraded
-      ? `${health.failureCode || 'unknown'}; fallback=${health.keywordFallbackComments}/${health.candidateComments}`
+      ? `${health.failureCode || 'unknown'}; deferred=${health.llmDeferredComments}/${health.candidateComments}; immediate=${health.keywordImmediateComments}`
       : '',
   }, fetchImpl, now);
   let alerted = false;

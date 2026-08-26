@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyCommentsHybrid, classifyTargetsBatched } from '../src/hybrid-classify.js';
+import { classifyCommentsHybrid, classifyTargetsBatched, deferredEntryKeys } from '../src/hybrid-classify.js';
 import { commentFingerprint } from '../src/dedup.js';
 import { classificationCacheFingerprint } from '../src/cache.js';
 
@@ -224,7 +224,7 @@ test('cache lookup failure falls back to live LLM (no drop)', async () => {
   }
 });
 
-test('uses only free keyword rules when no Anthropic key is configured', async () => {
+test('LLM 키가 없으면 문맥형 댓글은 보류하고 LLM을 호출하지 않는다', async () => {
   let called = false;
   const results = await classifyCommentsHybrid(
     [{ text: '라라스윗 광고인가요?' }],
@@ -233,5 +233,39 @@ test('uses only free keyword rules when no Anthropic key is configured', async (
     async () => { called = true; return []; },
   );
   assert.equal(called, false);
-  assert.equal(results[0].engine, 'keyword');
+  assert.equal(results[0].engine, 'llm-deferred');
+  assert.equal(results[0].deferred, true);
+  assert.equal(results[0].alert, false);
+});
+
+test('보류는 캐시를 오염시키지 않고 복구 회차에서 실분류되며 checkpoint 키를 남긴다', async () => {
+  const config = { anthropicKey: 'k', supabaseUrl: 'https://db.example', supabaseKey: 'svc' };
+  const entries = [{
+    target: { platform: 'instagram', url: 'https://instagram.com/p/retry', brandName: '라라스윗' },
+    comments: [{ id: 'c-defer', platform: 'instagram', text: '후님이 광고하니까 꼭 먹어볼게요🥰' }],
+  }];
+  let cacheWrites = 0;
+  const fetchImpl = async (url, options = {}) => {
+    if (String(url).includes('comment_classification_cache') && options.method === 'POST') {
+      cacheWrites += 1;
+      return { ok: true, json: async () => [] };
+    }
+    return { ok: true, json: async () => [] };
+  };
+
+  const deferred = await classifyTargetsBatched(entries, config, async () => null, {}, fetchImpl);
+  assert.equal(deferred[0][0].engine, 'llm-deferred');
+  assert.equal(cacheWrites, 0, '보류 결과는 정상 캐시로 저장하면 안 됨');
+  assert.deepEqual([...deferredEntryKeys(entries, deferred)], ['https://instagram.com/p/retry']);
+
+  const recovered = await classifyTargetsBatched(
+    entries,
+    config,
+    async () => [{ alert: false, category: '정상댓글', reason: '', priority: 'normal' }],
+    {},
+    fetchImpl,
+  );
+  assert.equal(recovered[0][0].engine, 'llm');
+  assert.equal(recovered[0][0].deferred, undefined);
+  assert.equal(cacheWrites, 1, '복구 후 실분류 결과만 캐시');
 });

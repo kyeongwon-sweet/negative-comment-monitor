@@ -178,7 +178,10 @@ function parseResults(text, chunkLength) {
   for (const row of array) if (row && Number.isInteger(row.i)) byIndex.set(row.i, row);
   const out = [];
   for (let index = 0; index < chunkLength; index += 1) {
-    const row = byIndex.get(index) || {};
+    const row = byIndex.get(index);
+    // 누락/불완전 응답을 정상(false)으로 대리판정하면 캐시·seen이 오염된다. 호출부가 해당 슬롯을
+    // llm_deferred로 보류하도록 null을 유지한다.
+    if (!row || typeof row.alert !== 'boolean') { out.push(null); continue; }
     const alert = row.alert === true;
     const category = alert ? String(row.category || '부정언급') : '정상댓글';
     out.push({

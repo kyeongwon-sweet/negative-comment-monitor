@@ -27,15 +27,15 @@ const anthropicOk = (verdicts) => async () => ({
   }),
 });
 
-test('Anthropic 500이어도 크래시 없이 키워드 폴백(캐시 미사용)', async () => {
+test('Anthropic 500이어도 크래시 없이 문맥 후보 보류(캐시 미사용)', async () => {
   const restore = stubFetch({ anthropic: async () => ({ ok: false, json: async () => ({}) }), supabase: async () => { throw new Error('n/a'); } });
   try {
     const out = await classifyTargetsBatched([{ target: T, comments: [ambiguous(0)] }], { anthropicKey: 'k' }, classifyCommentsLLM);
-    assert.equal(out[0][0].engine, 'keyword');
+    assert.equal(out[0][0].engine, 'llm-deferred');
   } finally { restore(); }
 });
 
-test('Anthropic 실패 폴백은 회차 통계에 댓글수·배치수를 남긴다', async () => {
+test('Anthropic 실패 보류는 회차 통계에 댓글수·배치수를 남긴다', async () => {
   const restore = stubFetch({
     anthropic: async () => ({
       ok: false, status: 400,
@@ -51,15 +51,16 @@ test('Anthropic 실패 폴백은 회차 통계에 댓글수·배치수를 남긴
       classifyCommentsLLM,
       stats,
     );
-    assert.equal(out[0][0].engine, 'keyword');
+    assert.equal(out[0][0].engine, 'llm-deferred');
     assert.equal(stats.keywordFallback, true);
     assert.equal(stats.keywordFallbackBatches, 1);
     assert.equal(stats.keywordFallbackComments, 2);
+    assert.equal(stats.llmDeferredComments, 2);
     assert.equal(stats.lastFailureCode, 'credit');
   } finally { restore(); }
 });
 
-test('LLM 장애 폴백은 긍정 광고언급을 알리지 않고 명백 부정 recall은 유지한다', async () => {
+test('LLM 장애는 긍정 광고언급을 보류하고 명백 부정 recall은 유지한다', async () => {
   const restore = stubFetch({
     anthropic: async () => ({
       ok: false, status: 400,
@@ -79,7 +80,8 @@ test('LLM 장애 폴백은 긍정 광고언급을 알리지 않고 명백 부정
       ],
     }], { anthropicKey: 'k' }, classifyCommentsLLM, {});
     assert.deepEqual(out.map((row) => row.alert), [false, false, true, true]);
-    assert.ok(out.every((row) => row.engine === 'keyword'));
+    assert.deepEqual(out.map((row) => row.engine), ['llm-deferred', 'llm-deferred', 'keyword', 'keyword']);
+    assert.ok(out.slice(0, 2).every((row) => row.deferred === true));
   } finally { restore(); }
 });
 
@@ -106,11 +108,11 @@ test('영구 오류는 첫 배치 뒤 회로차단해 남은 배치를 재호출
   } finally { restore(); }
 });
 
-test('Anthropic 네트워크 예외여도 키워드 폴백(classifyCommentsLLM이 null 반환)', async () => {
+test('Anthropic 네트워크 예외여도 문맥 후보 보류(classifyCommentsLLM이 null 반환)', async () => {
   const restore = stubFetch({ anthropic: async () => { throw new Error('ECONNRESET'); }, supabase: async () => { throw new Error('n/a'); } });
   try {
     const out = await classifyTargetsBatched([{ target: T, comments: [ambiguous(0)] }], { anthropicKey: 'k' }, classifyCommentsLLM);
-    assert.equal(out[0][0].engine, 'keyword');
+    assert.equal(out[0][0].engine, 'llm-deferred');
   } finally { restore(); }
 });
 

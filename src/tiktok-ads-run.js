@@ -9,7 +9,7 @@ import { computeClassifierHash } from './cache.js';
 import { estimateUsd } from './pricing.js';
 import { maybeAlertCosts, postCostWarning, recordRunCost, sumDailyCost } from './cost.js';
 import { buildTikTokAdEntries, loadTikTokAdsConfig } from './tiktok-ads.js';
-import { inAdMorningWindow, dailyAdRunKey, hasAdRunToday } from './ad-common.js';
+import { adClassificationLedgerKey, inAdMorningWindow, dailyAdRunKey, hasAdRunToday } from './ad-common.js';
 import { autoHideTikTokAwareness } from './awareness-auto-hide.js';
 import { monitorLlmHealth } from './llm-health.js';
 
@@ -93,10 +93,12 @@ export async function runTikTokAds(config = loadTikTokAdsConfig(), fetchImpl = f
 
   const estimatedUsd = estimateUsd(llmStats, config.anthropicModel);
   summary.llm = { ...llmStats, estUsd: Number(estimatedUsd.toFixed(5)) };
+  summary.llmDeferredComments = Number(llmStats.llmDeferredComments || 0);
+  summary.retryDeferred = summary.llmDeferredComments > 0;
   summary.llmHealth = await monitorLlmHealth(config, llmStats, {
     scope: 'tiktok-ads', label: 'TikTok 인지 광고', totalComments: summary.comments, notify: !config.dryRun,
   }, fetchImpl, now);
-  console.error(`[tiktok-ads] campaigns=${summary.campaigns} ads=${summary.ads} adgroups=${summary.adgroups} comments=${summary.comments} alerts=${summary.sentAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} llmFailed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} est=$${estimatedUsd.toFixed(5)}`);
+  console.error(`[tiktok-ads] campaigns=${summary.campaigns} ads=${summary.ads} adgroups=${summary.adgroups} comments=${summary.comments} alerts=${summary.sentAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} llmFailed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} deferred=${summary.llmDeferredComments} est=$${estimatedUsd.toFixed(5)}`);
 
   if (!config.dryRun) {
     if (config.tiktokAdsAutoHide) {
@@ -105,8 +107,13 @@ export async function runTikTokAds(config = loadTikTokAdsConfig(), fetchImpl = f
     }
     try {
       const kstDate = kstDateKey(now);
+      // 보류가 있으면 일일 성공키를 기록하지 않아 창 안의 다음 웨이크가 다시 분류한다.
+      // 비용은 실행별 별도키로 남겨 누락·중복 집계를 모두 피한다.
+      const ledgerKey = adClassificationLedgerKey(
+        'tiktok-ads', tiktokDailyRunKey(config, now), llmStats, now,
+      );
       await recordRunCost(config, {
-        runKey: tiktokDailyRunKey(config, now), kstDate, apifyUsd: 0, anthropicUsd: estimatedUsd,
+        runKey: ledgerKey, kstDate, apifyUsd: 0, anthropicUsd: estimatedUsd,
       }, fetchImpl);
       const daily = await sumDailyCost(config, kstDate, fetchImpl);
       summary.cost = { kstDate, daily };

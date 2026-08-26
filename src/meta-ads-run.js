@@ -90,19 +90,20 @@ export async function runMetaAds(config = loadMetaAdsConfig(), fetchImpl = fetch
 
     const estimatedUsd = estimateUsd(llmStats, config.anthropicModel);
     summary.llm = { ...llmStats, estUsd: Number(estimatedUsd.toFixed(5)) };
+    summary.llmDeferredComments = Number(llmStats.llmDeferredComments || 0);
     summary.llmHealth = await monitorLlmHealth(config, llmStats, {
       scope: 'meta-ads', label: 'Meta 인지 광고', totalComments: events.length, notify: !config.dryRun,
     }, fetchImpl, now);
-    console.error(`[meta-ads] events=${events.length} alerts=${summary.sentAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} llmFailed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} est=$${estimatedUsd.toFixed(5)}`);
+    console.error(`[meta-ads] events=${events.length} alerts=${summary.sentAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} llmFailed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} deferred=${llmStats.llmDeferredComments || 0} est=$${estimatedUsd.toFixed(5)}`);
 
     if (!config.dryRun) {
       if (config.metaAdsAutoHide) {
         summary.moderation = await autoHideMetaAwareness(config, fetchImpl, now);
         if (summary.moderation.failed || summary.moderation.slack.failed) throw new Error('Meta awareness auto-hide failed');
       }
-      if (summary.llmHealth.degraded) {
+      if (summary.llmDeferredComments > 0) {
         // 큐를 완료 처리하면 크레딧/인증 복구 뒤 LLM 재분류 기회가 영구 소실된다.
-        // 키워드 알림은 dedup이 보호하므로 이벤트는 pending으로 남겨 다음 아침 회차에 재시도한다.
+        // 명백 부정 키워드 알림은 dedup이 보호하고, 문맥형 이벤트는 pending으로 남겨 재시도한다.
         summary.processedEvents = 0;
         summary.retryPendingEvents = eventIds.length;
       } else {

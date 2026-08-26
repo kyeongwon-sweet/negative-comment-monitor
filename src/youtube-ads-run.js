@@ -9,7 +9,7 @@ import { computeClassifierHash } from './cache.js';
 import { estimateUsd } from './pricing.js';
 import { maybeAlertCosts, postCostWarning, recordRunCost, sumDailyCost } from './cost.js';
 import { buildYouTubeAdEntries, loadYouTubeAdsConfig } from './youtube-ads.js';
-import { inAdMorningWindow, dailyAdRunKey, hasAdRunToday } from './ad-common.js';
+import { adClassificationLedgerKey, inAdMorningWindow, dailyAdRunKey, hasAdRunToday } from './ad-common.js';
 import { moderateYouTubeOwnerAlerts } from './youtube-owner-moderation.js';
 import { monitorLlmHealth } from './llm-health.js';
 
@@ -152,17 +152,22 @@ export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl =
 
   const estimatedUsd = estimateUsd(llmStats, config.anthropicModel);
   summary.llm = { ...llmStats, estUsd: Number(estimatedUsd.toFixed(5)) };
+  summary.llmDeferredComments = Number(llmStats.llmDeferredComments || 0);
+  summary.retryDeferred = summary.llmDeferredComments > 0;
   summary.llmHealth = await monitorLlmHealth(config, llmStats, {
     scope: 'youtube-ads', label: 'YouTube 인지 광고', totalComments: summary.comments, notify: !config.dryRun,
   }, fetchImpl, now);
-  console.error(`[youtube-ads] customers=${summary.customers} campaigns=${summary.campaigns} assets=${summary.assets} videos=${summary.videos} owned=${summary.ownedVideos || 0} external=${summary.externalVideos || 0} namedAds=${summary.namedAdVideos || 0} creatorAssigned=${summary.creatorAssignedVideos || 0} comments=${summary.comments} alerts=${summary.sentAlerts} managedAlerts=${summary.managedAlerts} externalAlerts=${summary.externalAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} llmFailed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} est=$${estimatedUsd.toFixed(5)}`);
+  console.error(`[youtube-ads] customers=${summary.customers} campaigns=${summary.campaigns} assets=${summary.assets} videos=${summary.videos} owned=${summary.ownedVideos || 0} external=${summary.externalVideos || 0} namedAds=${summary.namedAdVideos || 0} creatorAssigned=${summary.creatorAssignedVideos || 0} comments=${summary.comments} alerts=${summary.sentAlerts} managedAlerts=${summary.managedAlerts} externalAlerts=${summary.externalAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} llmFailed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} deferred=${summary.llmDeferredComments} est=$${estimatedUsd.toFixed(5)}`);
 
   if (!config.dryRun) {
     await autoHideYouTubeAlerts(config, summary, fetchImpl, now);
     try {
       const kstDate = kstDateKey(now);
+      const ledgerKey = adClassificationLedgerKey(
+        'youtube-ads', youtubeDailyRunKey(config, now), llmStats, now,
+      );
       await recordRunCost(config, {
-        runKey: youtubeDailyRunKey(config, now), kstDate, apifyUsd: 0, anthropicUsd: estimatedUsd,
+        runKey: ledgerKey, kstDate, apifyUsd: 0, anthropicUsd: estimatedUsd,
       }, fetchImpl);
       const daily = await sumDailyCost(config, kstDate, fetchImpl);
       summary.cost = { kstDate, daily };

@@ -44,7 +44,7 @@ test('크레딧·인증형 영구 오류는 첫 회차 즉시 degraded 경고한
   assert.equal(out.alerted, true);
   assert.equal(db.messages.length, 1);
   assert.match(db.messages[0], /크레딧 부족/);
-  assert.match(db.messages[0], /키워드 판정으로 대체/);
+  assert.match(db.messages[0], /25건 문맥판정 보류 중/);
 });
 
 test('429·5xx 최종 폴백은 3회 연속에서만 알리고 쿨다운한다', async () => {
@@ -76,11 +76,12 @@ test('LLM 대상 자체가 없는 회차는 헬스 저장·경고를 생략한�
   assert.equal(calls, 0);
 });
 
-test('경고 문구는 원문 없이 미탐지 위험과 담당자를 명시한다', () => {
+test('경고 문구는 원문 없이 보류·자동재분류와 담당자를 명시한다', () => {
   const text = buildLlmDegradedMessage('소유 YouTube', {
     failureCode: 'auth', persistent: true, candidateComments: 12, keywordFallbackComments: 12,
   }, 'U1');
-  assert.match(text, /브랜드 적대·비꼼·문맥형/);
+  assert.match(text, /12건 문맥판정 보류 중/);
+  assert.match(text, /복구 후 자동 재분류/);
   assert.match(text, /<@U1>/);
 });
 
@@ -90,5 +91,5 @@ test('Gemini 429 폴백 경고는 무료 한도 원인과 공급자를 구분한
     candidateComments: 8, keywordFallbackComments: 8,
   });
   assert.match(text, /Gemini 무료 한도\/호출 제한 초과/);
-  assert.match(text, /Anthropic 폴백 상태/);
+  assert.match(text, /Gemini 키·무료 한도와 Anthropic 폴백 상태/);
 });
