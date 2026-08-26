@@ -96,6 +96,16 @@ test('과부하 액션은 소유 영상·채널의 안전한 Studio URL만 사�
   assert.equal(actions.some((element) => element.value), false);
 });
 
+test('누적 후보 일괄 알림은 이번 확인 비율로 오표기하지 않고 누적 부정 수를 표시한다', () => {
+  const text = buildOwnerOverloadWarning(
+    target,
+    { total: 796, negatives: 796, ratioPercent: 100, cumulative: true },
+    'U1',
+  );
+  assert.match(text, /최근 감시 기간 누적 부정댓글 796개/);
+  assert.doesNotMatch(text, /이번 확인 댓글/);
+});
+
 test('일반·위성 target에는 과부하 경고 상태조회도 하지 않는다', async () => {
   let called = false;
   const result = await maybeWarnOwnerCommentOverload(

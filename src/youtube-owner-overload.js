@@ -40,9 +40,12 @@ export function buildOwnerOverloadWarning(target, assessment, assignee = '') {
     ? `https://studio.youtube.com/video/${encodeURIComponent(videoId)}/edit`
     : 'https://studio.youtube.com/';
   const channelLabel = channelId ? `${channelName} (${escapeMrkdwn(channelId)})` : channelName;
+  const volumeLine = assessment.cumulative === true
+    ? `최근 감시 기간 누적 부정댓글 ${assessment.negatives}개가 탐지됐습니다.\n`
+    : `이번 확인 댓글 ${assessment.total}개 중 부정 ${assessment.negatives}개 (${assessment.ratioPercent.toFixed(1)}%)입니다.\n`;
   return `🚨 *소유 YouTube 댓글 과부하 — 댓글창 사용 중지 권고*\n`
     + `${mention}${title}\n`
-    + `이번 확인 댓글 ${assessment.total}개 중 부정 ${assessment.negatives}개 (${assessment.ratioPercent.toFixed(1)}%)입니다.\n`
+    + volumeLine
     + `과부하 임계치에 도달했습니다. 하나씩 숨기기보다 이 영상의 댓글을 사용 중지해 주세요.\n`
     + `${channelLabel} 채널로 전환한 뒤 영상 설정에서 '댓글 → 꺼짐'으로 저장하세요.\n`
     + `<${watchUrl}|영상 열기> · <${studioVideoUrl}|댓글 설정 바로 열기> · <${studioCommentsUrl}|${channelName} 댓글 관리>`;
