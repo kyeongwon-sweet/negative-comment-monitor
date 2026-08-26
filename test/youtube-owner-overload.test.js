@@ -21,6 +21,7 @@ const config = {
 
 const target = {
   youtubeVideoId: 'Video_ABC-1', channelName: '썰푸는앵무새', caption: '테스트 <영상>',
+  ownerChannelId: 'UCQKpvEBNiMBrGzI2f2tAFeA',
   ownedChannelBrandHostilityScope: true,
 };
 
@@ -53,8 +54,20 @@ test('과부하 경고는 Studio 링크·담당자를 포함하고 Slack 성공 
   const body = JSON.parse(slack.init.body);
   assert.equal(body.thread_ts, '123.45');
   assert.match(body.text, /<@U1>/);
-  assert.match(body.text, /studio\.youtube\.com\/video\/Video_ABC-1\/edit/);
+  assert.match(body.text, /썰푸는앵무새 \(UCQKpvEBNiMBrGzI2f2tAFeA\) 채널로 전환/);
+  assert.match(body.text, /studio\.youtube\.com\/channel\/UCQKpvEBNiMBrGzI2f2tAFeA\/comments/);
+  assert.doesNotMatch(body.text, /studio\.youtube\.com\/video\/Video_ABC-1\/edit/);
   assert.match(body.text, /테스트 &lt;영상&gt;/);
+});
+
+test('채널 ID가 없으면 잘못된 채널 URL 대신 Studio 홈과 채널 전환 안내를 쓴다', () => {
+  const text = buildOwnerOverloadWarning(
+    { ...target, ownerChannelId: '', channelId: '' },
+    { total: 30, negatives: 20, ratioPercent: 66.7 },
+    '',
+  );
+  assert.match(text, /썰푸는앵무새 채널로 전환/);
+  assert.match(text, /<https:\/\/studio\.youtube\.com\/\|썰푸는앵무새 댓글 관리 열기>/);
 });
 
 test('일반·위성 target에는 과부하 경고 상태조회도 하지 않는다', async () => {
