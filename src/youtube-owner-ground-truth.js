@@ -107,6 +107,23 @@ async function directCommentLookup(config, commentId, accessToken, fetchImpl) {
   }
 }
 
+async function directThreadLookup(config, commentId, accessToken, fetchImpl) {
+  try {
+    const payload = await youtubeJson(config, 'commentThreads', {
+      part: 'id,snippet,replies', id: commentId,
+    }, accessToken, fetchImpl);
+    const item = (payload.items || []).find((thread) => String(thread.id || '') === commentId);
+    return {
+      found: Boolean(item),
+      isPublic: item ? Boolean(item.snippet?.isPublic) : false,
+      topLevelMatches: String(item?.snippet?.topLevelComment?.id || '') === commentId,
+      error: '',
+    };
+  } catch (error) {
+    return { found: false, isPublic: false, topLevelMatches: false, error: String(error.message || '').slice(0, 160) };
+  }
+}
+
 async function findReplyStatus(config, commentId, parentId, accessToken, fetchImpl) {
   let pageToken = '';
   for (let page = 0; page < config.maxPagesPerStatus; page += 1) {
@@ -167,6 +184,7 @@ export async function auditYouTubeOwnerComment(config = loadGroundTruthConfig(),
   const owner = await findOwner(config, alert.videoId, owners, fetchImpl);
   if (!owner.accessToken) throw new Error(`No valid owner token matched the alert video (${owner.failures.length} owner checks failed)`);
   const direct = await directCommentLookup(config, alert.comment_id, owner.accessToken, fetchImpl);
+  const thread = await directThreadLookup(config, alert.comment_id, owner.accessToken, fetchImpl);
   const discoverable = direct.parentId
     ? await findReplyStatus(config, alert.comment_id, direct.parentId, owner.accessToken, fetchImpl)
     : await findTopLevelStatus(config, alert.comment_id, alert.videoId, owner.accessToken, fetchImpl);
@@ -177,6 +195,9 @@ export async function auditYouTubeOwnerComment(config = loadGroundTruthConfig(),
     ownerTokensChecked: owners.length,
     ownerLookupFound: direct.found,
     ownerModerationStatus: direct.moderationStatus || 'not_returned_for_id_filter',
+    threadLookupFound: thread.found,
+    threadIsPublic: thread.isPublic,
+    threadTopLevelMatches: thread.topLevelMatches,
     discoverableFound: discoverable.found,
     discoverableStatus: discoverable.status || 'none',
     scanComplete: discoverable.complete,
@@ -193,6 +214,8 @@ async function writeSummary(result) {
     `- 소유 채널 매칭: ${result.ownerMatched ? '예' : '아니오'}`,
     `- comments.list(id) 응답: ${result.ownerLookupFound ? '발견' : '미발견'}`,
     `- id 직접조회 moderationStatus: ${result.ownerModerationStatus}`,
+    `- commentThreads.list(id) 응답: ${result.threadLookupFound ? '발견' : '미발견'}`,
+    `- 스레드 공개 상태: ${result.threadLookupFound ? (result.threadIsPublic ? '공개' : '비공개') : '확인 불가'}`,
     `- 발견 가능한 상태 목록: ${result.discoverableStatus}`,
     `- 목록 전수조회 완료: ${result.scanComplete ? '예' : '아니오'}`,
     `- 최종 판정: **${result.verdict}**`, '',
