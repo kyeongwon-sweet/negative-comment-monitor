@@ -46,6 +46,7 @@ export function loadMetaAdsConfig(env = process.env, now = Date.now()) {
     slackAssignees: {
       // other = 비용경고 등 운영 알림 기본 담당자(황경원). 인지 광고 부정댓글 담당자는 awareness로 분리.
       other: String(env.SLACK_ASSIGNEE_OTHER || 'U0B2Y0ZC8QZ').trim(),
+      jdBok: String(env.SLACK_ASSIGNEE_JDBOK || '').trim(),
       awareness,
     },
     managedChannelCategories: [],

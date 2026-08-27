@@ -35,6 +35,10 @@ test('loadMetaAdsConfig only requires Supabase and Slack secrets', () => {
   assert.equal(config.geminiModel, 'gemini-3.1-flash-lite');
   assert.equal(loadMetaAdsConfig({
     SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc',
+    SLACK_BOT_TOKEN: 'xoxb-test', SLACK_ASSIGNEE_JDBOK: 'U_JDBOK',
+  }).slackAssignees.jdBok, 'U_JDBOK');
+  assert.equal(loadMetaAdsConfig({
+    SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc',
     SLACK_BOT_TOKEN: 'xoxb-test', META_ADS_AUTO_HIDE: 'true',
   }).metaAdsAutoHide, true);
 });

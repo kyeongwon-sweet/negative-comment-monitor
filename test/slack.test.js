@@ -128,6 +128,9 @@ test('alert card: 소재명에 JD복 포함 시 카테고리·제작자 무관 �
   // 광고 카드는 adTitle 소재명 기준
   const c = buildAlertBlocks({ url: 'https://x', channelCategory: '인지 광고', source: 'meta_ads', adTitle: 'TT_JD복_인지_main_빙과_정요한', extraAssignees: ['U_VIDEO'] }, comment, undefined, assignees);
   assert.ok(c.some((x) => x.text?.text === '*담당자*\n<@U_JDBOK>'));
+  // 협찬은 소재명이 비어도 product_name=JD복이면 최우선 override
+  const sponsorship = buildAlertBlocks({ url: 'https://x', channelCategory: '협찬 (파워채널/매거진)', productName: 'JD복', assetName: null }, comment, undefined, assignees);
+  assert.ok(sponsorship.some((x) => x.text?.text === '*담당자*\n<@U_JDBOK>'));
   // JD복 없으면 override 안 됨(제작자 유지)
   const d = buildAlertBlocks({ url: 'https://x', channelCategory: '바이럴 (영상)', productName: 'JD멜', assetName: 'F_V_JD멜_빙과_정요한', extraAssignees: ['U_VIDEO'] }, comment, undefined, assignees);
   assert.ok(d.some((x) => x.text?.text === '*담당자*\n<@U_VIDEO>'));

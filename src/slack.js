@@ -170,9 +170,12 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   // 인지 광고 + 모든 바이럴(배너·영상) 개별 카드는 소재명의 영상 제작자만 태그한다.
   //   - 제작자(extras)가 있으면 그 사람만, 없으면 baseAssignee로 폴백(담당자 공란 방지).
   //   - 그 외 채널(협찬·위성·온드 등)은 기존대로 기본 담당자 + 추가 태그.
-  // 최우선 override: 소재명(asset_name/광고명)에 'JD복'이 들어가면 카테고리·제작자 무관하게 지정 담당자(이재원).
+  // 최우선 override: 상품명 또는 소재명(asset_name/광고명)에 'JD복'이 들어가면
+  // 카테고리·제작자 무관하게 지정 담당자(이재원). 협찬은 asset_name이 비는 경우가 있어
+  // product_name도 반드시 함께 확인한다.
   const soje = String(target.assetName || target.adTitle || '');
-  const jdBok = /JD복/i.test(soje) ? (assignees.jdBok || '') : '';
+  const productName = String(target.productName || '');
+  const jdBok = (/JD복/i.test(soje) || /JD복/i.test(productName)) ? (assignees.jdBok || '') : '';
   const isCreatorCard = isAdCommentSource(target) || isViral;
   const assigneeIds = jdBok
     ? [jdBok]
