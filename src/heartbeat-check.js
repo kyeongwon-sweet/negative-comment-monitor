@@ -1,17 +1,20 @@
 // 모니터 헬스체크(watchdog) — 별도 워크플로에서 하루 몇 번 실행.
-// "오늘(KST) 09:10 이후 성공한 monitor 실행이 있었나"를 GitHub Actions API로 확인해,
+// "현재 운영일의 09:10 KST 이후 성공한 monitor 실행이 있었나"를 GitHub Actions API로 확인해,
 // 없으면 Slack 운영채널에 경고한다. DB 불필요. 우리가 겪은 '창 놓쳐 조용히 누락'을 잡는다.
 // 정상이면 조용히 종료(성공 시 알림 없음).
 
 const HOUR = 3600 * 1000;
+const DAY = 24 * HOUR;
 
 function kstDate(now) {
   return new Date(now + 9 * HOUR).toISOString().slice(0, 10);
 }
 
-// 오늘 09:10 KST에 해당하는 UTC 순간(ms).
+// 09:10 KST 전에는 아직 오늘 점검 마감이 오지 않았으므로 전날 09:10을 기준으로 삼는다.
+// 09:10 KST부터는 오늘 09:10을 기준으로 삼아 기존 감시 강도를 유지한다.
 export function dailyStartInstant(now) {
-  return Date.parse(`${kstDate(now)}T09:10:00+09:00`);
+  const todayStart = Date.parse(`${kstDate(now)}T09:10:00+09:00`);
+  return now < todayStart ? todayStart - DAY : todayStart;
 }
 
 function fmtKst(ms) {
@@ -30,11 +33,17 @@ export function evaluateHealth(runs, now = Date.now()) {
   return { healthy: lastSuccessAt != null && lastSuccessAt >= threshold, lastSuccessAt, threshold };
 }
 
-export function buildStaleMessage(now, lastSuccessAt, assigneeOther = '', recoveryDispatched = false) {
+export function buildStaleMessage(
+  now,
+  lastSuccessAt,
+  assigneeOther = '',
+  recoveryDispatched = false,
+  threshold = dailyStartInstant(now),
+) {
   const owner = String(assigneeOther || '').trim();
   return [
-    '⚠️ *부정댓글 모니터링 — 오늘 점검 미확인*',
-    `오늘(${kstDate(now)}) 09:10 KST 이후 성공한 monitor 실행이 없습니다.`,
+    '⚠️ *부정댓글 모니터링 — 운영 기준 점검 미확인*',
+    `기준일(${kstDate(threshold)}) 09:10 KST 이후 성공한 monitor 실행이 없습니다.`,
     `마지막 성공 실행: ${fmtKst(lastSuccessAt)}`,
     recoveryDispatched
       ? '자가치유: monitor.yml 수동 실행을 자동 요청했습니다.'
@@ -98,8 +107,12 @@ export async function runHeartbeatCheck(env = process.env, now = Date.now(), fet
     return { warned: false, dispatched: false };
   }
   await dispatchMonitor(env, fetchImpl);
-  await postSlack(env, buildStaleMessage(now, health.lastSuccessAt, env.SLACK_ASSIGNEE_OTHER, true), fetchImpl);
-  console.error(`[heartbeat] STALE — 오늘 09:10 KST 이후 성공 실행 없음(마지막 ${fmtKst(health.lastSuccessAt)}) → monitor.yml 자동 실행 요청 + 경고 발송`);
+  await postSlack(
+    env,
+    buildStaleMessage(now, health.lastSuccessAt, env.SLACK_ASSIGNEE_OTHER, true, health.threshold),
+    fetchImpl,
+  );
+  console.error(`[heartbeat] STALE — ${fmtKst(health.threshold)} 이후 성공 실행 없음(마지막 ${fmtKst(health.lastSuccessAt)}) → monitor.yml 자동 실행 요청 + 경고 발송`);
   return { warned: true, dispatched: true };
 }
 
