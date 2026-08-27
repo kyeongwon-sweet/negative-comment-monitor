@@ -48,6 +48,10 @@ export function loadMetaAdsConfig(env = process.env, now = Date.now()) {
       other: String(env.SLACK_ASSIGNEE_OTHER || 'U0B2Y0ZC8QZ').trim(),
       jdBok: String(env.SLACK_ASSIGNEE_JDBOK || '').trim(),
       awareness,
+      p: {
+        sponsorship: String(env.SLACK_ASSIGNEE_P_SPONSORSHIP || '').trim(),
+        viralVideo: String(env.SLACK_ASSIGNEE_P_VIRAL_VIDEO || '').trim(),
+      },
     },
     managedChannelCategories: [],
     brandContext: String(env.BRAND_CONTEXT || '라라스윗 쫀득바').trim(),
@@ -143,6 +147,7 @@ export async function buildMetaAdEntries(config, events, fetchImpl = fetch) {
           metaMediaId: mediaId === 'unknown' ? '' : mediaId,
           metaAdId: String(event.ad_id || ''),
           adTitle: String(event.ad_title || ''),
+          campaignName: String(event.campaign_name || ''),
           extraAssignees: videoAssigneeId ? [videoAssigneeId] : [],
         },
         comments: [],

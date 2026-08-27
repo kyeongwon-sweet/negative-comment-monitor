@@ -176,12 +176,22 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   const soje = String(target.assetName || target.adTitle || '');
   const productName = String(target.productName || '');
   const jdBok = (/JD복/i.test(soje) || /JD복/i.test(productName)) ? (assignees.jdBok || '') : '';
+  // 인지광고의 고정 productName(JD)보다 실제 캠페인명이 우선한다. 캠페인명에 '파인트'가
+  // 포함되면 손유곤(P 협찬)·박지원(P 바이럴 영상)을 함께 태그한다. Meta webhook은
+  // campaign_name을 주지 않으므로 adTitle을 안전한 보조 신호로 쓴다.
+  const awarenessIdentity = String(target.campaignName || target.adTitle || '');
+  const isPintAwareness = /인지/.test(String(target.channelCategory || '')) && /파인트/i.test(awarenessIdentity);
+  const pintAwarenessAssignees = isPintAwareness
+    ? [...new Set([assignees.p?.sponsorship, assignees.p?.viralVideo].filter(Boolean))]
+    : [];
   const isCreatorCard = isAdCommentSource(target) || isViral;
   const assigneeIds = jdBok
     ? [jdBok]
-    : isCreatorCard
-      ? [...new Set((extras.length ? extras : (baseAssignee ? [baseAssignee] : [])))]
-      : [...new Set([baseAssignee, ...extras].filter(Boolean))];
+    : pintAwarenessAssignees.length
+      ? pintAwarenessAssignees
+      : isCreatorCard
+        ? [...new Set((extras.length ? extras : (baseAssignee ? [baseAssignee] : [])))]
+        : [...new Set([baseAssignee, ...extras].filter(Boolean))];
   return [
     { type: 'header', text: { type: 'plain_text', text: `🚨 부정댓글 감지 — ${comment.platform}` } },
     { type: 'section', text: { type: 'mrkdwn', text: `*[${esc(productLabel(productGroup(target.productName)))}] ${esc(target.channelCategory || '-')}*` } },

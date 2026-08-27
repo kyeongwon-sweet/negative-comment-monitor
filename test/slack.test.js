@@ -135,6 +135,33 @@ test('alert card: 소재명에 JD복 포함 시 카테고리·제작자 무관 �
   const d = buildAlertBlocks({ url: 'https://x', channelCategory: '바이럴 (영상)', productName: 'JD멜', assetName: 'F_V_JD멜_빙과_정요한', extraAssignees: ['U_VIDEO'] }, comment, undefined, assignees);
   assert.ok(d.some((x) => x.text?.text === '*담당자*\n<@U_VIDEO>'));
 });
+test('alert card: 파인트 인지광고는 손유곤+박지원 동시 태그, JD복이 최우선', () => {
+  const comment = { id: 'c1', platform: 'youtube', text: '별로', risk: {} };
+  const pint = buildAlertBlocks({
+    url: 'https://x', channelCategory: '인지 광고', productName: 'JD', source: 'youtube_ads',
+    campaignName: '[빙과] 파인트 인지', adTitle: 'F_V_JD_인지_빙과_정요한', extraAssignees: ['U_VIDEO'],
+  }, comment, undefined, assignees);
+  assert.ok(pint.some((x) => x.text?.text === '*담당자*\n<@U_P_SPON> <@U_P_VIDEO>'));
+
+  // Meta는 campaignName이 없을 수 있어 adTitle의 파인트를 보조 신호로 사용한다.
+  const metaFallback = buildAlertBlocks({
+    url: 'https://x', channelCategory: '인지 광고', productName: 'JD', source: 'meta_ads',
+    adTitle: '[빙과_파인트] 인지 소재', extraAssignees: ['U_VIDEO'],
+  }, { ...comment, platform: 'instagram' }, undefined, assignees);
+  assert.ok(metaFallback.some((x) => x.text?.text === '*담당자*\n<@U_P_SPON> <@U_P_VIDEO>'));
+
+  const ordinary = buildAlertBlocks({
+    url: 'https://x', channelCategory: '인지 광고', productName: 'JD', source: 'youtube_ads',
+    campaignName: '[빙과] 쫀득바 인지', extraAssignees: ['U_VIDEO'],
+  }, comment, undefined, assignees);
+  assert.ok(ordinary.some((x) => x.text?.text === '*담당자*\n<@U_VIDEO>'));
+
+  const jdBokWins = buildAlertBlocks({
+    url: 'https://x', channelCategory: '인지 광고', productName: 'JD복', source: 'youtube_ads',
+    campaignName: '[빙과] 파인트 인지', extraAssignees: ['U_VIDEO'],
+  }, comment, undefined, assignees);
+  assert.ok(jdBokWins.some((x) => x.text?.text === '*담당자*\n<@U_JDBOK>'));
+});
 test('alert card(틱톡·유튜브 광고): 메타와 동일하게 제작자만 태그(awareness 카드 중복 제외)', () => {
   for (const source of ['tiktok_ads', 'youtube_ads']) {
     const blocks = buildAlertBlocks(

@@ -68,6 +68,7 @@ test('buildTikTokAdEntriesFromComments normalizes comments, replies and skips hi
   assert.equal(entries.length, 1);
   assert.equal(entries[0].target.source, 'tiktok_ads');
   assert.equal(entries[0].target.productName, 'JD');
+  assert.equal(entries[0].target.campaignName, '[빙과] 인지');
   assert.equal(entries[0].target.postKey, 'tt:123456');
   assert.deepEqual(entries[0].target.extraAssignees, ['U_VIDEO']);
   assert.deepEqual(entries[0].comments.map((x) => x.id), ['c1', 'c2']);
@@ -92,9 +93,9 @@ test('buildTikTokAdEntries paginates campaigns/ads/comments and returns matching
     if (url.pathname.endsWith('/campaign/get/')) {
       data = { list: [{ campaign_id: 'cp1', campaign_name: '[빙과] 인지' }, { campaign_id: 'cp2', campaign_name: '전환' }], page_info: { total_page: 1 } };
     } else if (url.pathname.endsWith('/ad/get/')) {
-      data = { list: [{ ad_id: 'a1', adgroup_id: 'g1' }], page_info: { total_page: 1 } };
+      data = { list: [{ ad_id: 'a1', adgroup_id: 'g1', campaign_id: 'cp1', ad_name: '소재' }], page_info: { total_page: 1 } };
     } else {
-      data = { comments: [{ comment_id: 'c1', content: '맛없다', campaign_name: '[빙과] 인지', ad_id: 'a1', adgroup_id: 'g1', ad_name: '소재', tiktok_item_id: 'v1' }], page_info: { total_page: 1 } };
+      data = { comments: [{ comment_id: 'c1', content: '맛없다', ad_id: 'a1', adgroup_id: 'g1', tiktok_item_id: 'v1' }], page_info: { total_page: 1 } };
     }
     return { ok: true, status: 200, json: async () => ({ code: 0, message: 'OK', data }) };
   };
@@ -104,6 +105,7 @@ test('buildTikTokAdEntries paginates campaigns/ads/comments and returns matching
   assert.equal(result.adgroups, 1);
   assert.equal(result.comments, 1);
   assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0].target.campaignName, '[빙과] 인지');
   const commentCall = calls.find((url) => url.pathname.endsWith('/comment/list/'));
   assert.equal(commentCall.searchParams.get('search_field'), 'ADGROUP_ID');
   assert.equal(commentCall.searchParams.get('start_time'), '2026-08-07');

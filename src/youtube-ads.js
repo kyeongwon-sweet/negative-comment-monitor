@@ -451,6 +451,7 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
         // 카드 링크명과 제작자 태그 모두 실제 광고 소재명(ad_group_ad.ad.name)을 우선한다.
         // 구형/무명 광고만 캠페인명·영상 제목으로 폴백한다.
         adTitle: adNames[0] || (campaignNames[0] ? `${campaignNames[0]} · ${title}` : title),
+        campaignName: campaignNames.join(' / '),
         googleAdsCustomerId: video.adAsset?.customerId || '',
         googleAdsCampaignIds: video.adAsset?.campaignIds || [],
         youtubeVideoId: video.id,

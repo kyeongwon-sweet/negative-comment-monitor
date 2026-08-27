@@ -163,6 +163,7 @@ test('buildYouTubeAdEntries discovers manager child, ad video, top comment and a
   assert.equal(result.entries[0].target.postKey, 'yt:abc123XYZ');
   assert.equal(result.entries[0].target.productName, 'JD');
   assert.equal(result.entries[0].target.adTitle, '[26.08]F_V_JD_인지_빙과_정요한');
+  assert.equal(result.entries[0].target.campaignName, '[빙과] 쫀득바 인지');
   assert.deepEqual(result.entries[0].target.extraAssignees, ['U_VIDEO']);
   assert.deepEqual(result.entries[0].comments.map((comment) => comment.id), ['top1', 'reply1', 'reply2']);
   assert.equal(calls.filter((call) => call.url.hostname === 'oauth2.googleapis.com').length, 2);

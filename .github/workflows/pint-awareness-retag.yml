@@ -1,34 +1,23 @@
-name: YouTube awareness alert creative retag
-run-name: YouTube awareness alert creative retag (${{ inputs.kst_date }})
+name: Pint awareness alert retag
+run-name: Pint awareness alert retag (${{ inputs.apply && 'apply' || 'dry-run' }})
 
 on:
   workflow_dispatch:
     inputs:
-      mode:
-        description: awareness ads or owned organic YouTube cards
+      apply:
+        description: Update existing Slack cards after the API-backed dry run
         required: true
-        type: choice
-        options: ['awareness', 'owner']
-        default: 'awareness'
-      kst_date:
-        description: KST thread date (YYYY-MM-DD)
-        required: true
-        type: string
-      lookback_days:
-        description: YouTube comment lookup days
-        required: true
-        type: choice
-        options: ['7', '14', '30', '90']
-        default: '30'
+        type: boolean
+        default: false
 
 concurrency:
-  group: youtube-awareness-alert-creative-retag
+  group: pint-awareness-alert-retag
   cancel-in-progress: false
 
 jobs:
   retag:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -37,32 +26,31 @@ jobs:
         with:
           node-version: 20
       - run: npm install --ignore-scripts
-      - name: Update unhandled YouTube cards with creative and producer
-        run: node src/youtube-ads-retag.js
+      - name: Identify Pint campaigns and retag matching awareness cards
+        run: node src/pint-awareness-retag.js
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          APPLY: ${{ inputs.apply }}
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
-          SLACK_ASSIGNEE_JDBOK: ${{ vars.SLACK_ASSIGNEE_JDBOK }}
           SLACK_ASSIGNEE_AWARENESS: ${{ vars.SLACK_ASSIGNEE_AWARENESS }}
           SLACK_ASSIGNEE_P_SPONSORSHIP: ${{ vars.SLACK_ASSIGNEE_P_SPONSORSHIP }}
           SLACK_ASSIGNEE_P_VIRAL_VIDEO: ${{ vars.SLACK_ASSIGNEE_P_VIRAL_VIDEO }}
-          META_AD_VIDEO_ASSIGNEES: ${{ vars.META_AD_VIDEO_ASSIGNEES }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
+          TIKTOK_ADVERTISER_ID: ${{ vars.TIKTOK_ADVERTISER_ID }}
+          TIKTOK_ADS_LOOKBACK_DAYS: '30'
+          TIKTOK_ADS_MAX_COMMENTS_PER_ADGROUP: '1000'
+          TIKTOK_ADS_CONCURRENCY: '1'
+          TIKTOK_ADS_REQUEST_DELAY_MS: '1000'
           GOOGLE_ADS_DEVELOPER_TOKEN: ${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}
           GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
           GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
           GOOGLE_ADS_REFRESH_TOKEN: ${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}
           YOUTUBE_ADS_REFRESH_TOKEN: ${{ secrets.YOUTUBE_ADS_REFRESH_TOKEN }}
           GOOGLE_ADS_LOGIN_CUSTOMER_ID: ${{ vars.GOOGLE_ADS_LOGIN_CUSTOMER_ID }}
+          GOOGLE_ADS_CUSTOMER_IDS: ${{ vars.GOOGLE_ADS_CUSTOMER_IDS }}
           YOUTUBE_ADS_CHANNEL_ID: ${{ vars.YOUTUBE_ADS_CHANNEL_ID }}
           AD_CAMPAIGN_NAME_FILTER: ${{ vars.AD_CAMPAIGN_NAME_FILTER }}
-          YOUTUBE_ADS_PRODUCT_NAME: JD
-          YOUTUBE_ADS_CHANNEL_CATEGORY: 인지 광고
-          YOUTUBE_ADS_LOOKBACK_DAYS: ${{ inputs.lookback_days }}
-          YOUTUBE_ADS_MAX_THREAD_PAGES: '100'
-          YOUTUBE_ADS_ALERT_DELAY_MS: '1200'
-          RETAG_MODE: ${{ inputs.mode }}
-          RETAG_KST_DATE: ${{ inputs.kst_date }}
+          YOUTUBE_ADS_LOOKBACK_DAYS: '90'

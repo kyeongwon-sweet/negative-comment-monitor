@@ -201,6 +201,7 @@ export function buildTikTokAdEntriesFromComments(config, comments, allowedAdIds 
           caption: String(raw.ad_text || raw.ad_name || ''),
           isManagedAccount: true,
           adTitle,
+          campaignName: String(raw.campaign_name || ''),
           extraAssignees: videoAssigneeId ? [videoAssigneeId] : [],
           tiktokAdvertiserId: config.tiktokAdvertiserId,
           tiktokAdId: adId,
@@ -236,6 +237,8 @@ export async function buildTikTokAdEntries(config, fetchImpl = fetch, now = Date
 
   const ads = await fetchTikTokAds(config, campaigns.map((campaign) => campaign.campaign_id), fetchImpl);
   const allowedAdIds = new Set(ads.map((ad) => String(ad.ad_id || '')).filter(Boolean));
+  const campaignById = new Map(campaigns.map((campaign) => [String(campaign.campaign_id || ''), campaign]));
+  const adById = new Map(ads.map((ad) => [String(ad.ad_id || ''), ad]));
   const adgroupIds = [...new Set(ads.map((ad) => String(ad.adgroup_id || '')).filter(Boolean))];
   let startedRequests = 0;
   const batches = await mapWithConcurrency(
@@ -249,7 +252,17 @@ export async function buildTikTokAdEntries(config, fetchImpl = fetch, now = Date
       return fetchTikTokAdgroupComments(config, adgroupId, fetchImpl, now);
     },
   );
-  const comments = batches.flat();
+  // comment/list 응답은 계정/API 버전에 따라 campaign_name·ad_name을 생략한다.
+  // ad/get 결과로 보강해 라우팅이 응답 모양에 의존하지 않게 한다.
+  const comments = batches.flat().map((comment) => {
+    const ad = adById.get(String(comment.ad_id || '')) || {};
+    const campaign = campaignById.get(String(comment.campaign_id || ad.campaign_id || '')) || {};
+    return {
+      ...comment,
+      campaign_name: comment.campaign_name || campaign.campaign_name || '',
+      ad_name: comment.ad_name || ad.ad_name || ad.ad_text || '',
+    };
+  });
   return {
     entries: buildTikTokAdEntriesFromComments(config, comments, allowedAdIds),
     campaigns: campaigns.length,
