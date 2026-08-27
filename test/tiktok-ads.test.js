@@ -84,6 +84,14 @@ test('buildTikTokAdEntriesFromComments honors the go-live cutoff without droppin
   assert.deepEqual(entries[0].comments.map((comment) => comment.id), ['new', 'unknown-time']);
 });
 
+test('TikTok 인지 광고 캠페인명 파인트는 target 상품 P로 정규화한다', () => {
+  const [entry] = buildTikTokAdEntriesFromComments(CFG, [{
+    comment_id: 'p1', content: '별로', campaign_name: '[빙과] 파인트 인지',
+    ad_id: 'a1', adgroup_id: 'g1', ad_name: '소재', tiktok_item_id: 'v1',
+  }], new Set(['a1']));
+  assert.equal(entry.target.productName, 'P');
+});
+
 test('buildTikTokAdEntries paginates campaigns/ads/comments and returns matching entries', async () => {
   const calls = [];
   const fetchImpl = async (input) => {

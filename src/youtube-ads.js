@@ -1,6 +1,7 @@
 import { loadMetaAdsConfig } from './meta-ads.js';
 import { campaignNameMatchesFilter } from './normalize.js';
 import { videoAssigneeFromAdTitle } from './slack.js';
+import { awarenessProductName } from './ad-common.js';
 
 export const YOUTUBE_AD_SOURCE = 'youtube_ads';
 export const DEFAULT_GOOGLE_ADS_API_BASE = 'https://googleads.googleapis.com';
@@ -432,10 +433,12 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
     if (!comments.length) continue;
     const campaignNames = video.adAsset?.campaignNames || [];
     const adNames = video.adAsset?.adNames || [];
+    const title = String(video.snippet?.title || video.adAsset?.title || video.id);
+    const campaignName = campaignNames.join(' / ');
+    const adTitle = adNames[0] || (campaignNames[0] ? `${campaignNames[0]} · ${title}` : title);
     const extraAssignees = unique(adNames
       .map((name) => videoAssigneeFromAdTitle(name, config.videoAssignees))
       .filter(Boolean));
-    const title = String(video.snippet?.title || video.adAsset?.title || video.id);
     entries.push({
       target: {
         platform: 'youtube',
@@ -444,14 +447,14 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
         url: `https://www.youtube.com/watch?v=${encodeURIComponent(video.id)}`,
         channelName: String(video.snippet?.channelTitle || channel.snippet?.title || ''),
         channelCategory: config.youtubeAdsChannelCategory,
-        productName: config.youtubeAdsProductName,
+        productName: awarenessProductName(config.youtubeAdsProductName, campaignName, adTitle),
         brandName: config.brandContext,
         caption: [title, ...adNames, ...campaignNames].filter(Boolean).join(' / '),
         isManagedAccount: Boolean(video.isOwnedChannel),
         // 카드 링크명과 제작자 태그 모두 실제 광고 소재명(ad_group_ad.ad.name)을 우선한다.
         // 구형/무명 광고만 캠페인명·영상 제목으로 폴백한다.
-        adTitle: adNames[0] || (campaignNames[0] ? `${campaignNames[0]} · ${title}` : title),
-        campaignName: campaignNames.join(' / '),
+        adTitle,
+        campaignName,
         googleAdsCustomerId: video.adAsset?.customerId || '',
         googleAdsCampaignIds: video.adAsset?.campaignIds || [],
         youtubeVideoId: video.id,

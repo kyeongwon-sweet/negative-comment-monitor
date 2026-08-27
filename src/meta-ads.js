@@ -1,6 +1,7 @@
 import { loadMetaToken } from './meta-token.js';
 import { videoAssigneeFromAdTitle } from './slack.js';
 import { scheduledRoutingActive } from './config.js';
+import { awarenessProductName } from './ad-common.js';
 
 export const META_AD_SOURCE = 'meta_ads';
 
@@ -132,7 +133,9 @@ export async function buildMetaAdEntries(config, events, fetchImpl = fetch) {
     const media = mediaById.get(mediaId) || {};
     if (!grouped.has(key)) {
       // 광고 이름(ad_title) 마지막 이름 = 영상 담당자 → 기본 담당자와 함께 태그.
-      const videoAssigneeId = videoAssigneeFromAdTitle(event.ad_title, config.videoAssignees);
+      const adTitle = String(event.ad_title || '');
+      const campaignName = String(event.campaign_name || '');
+      const videoAssigneeId = videoAssigneeFromAdTitle(adTitle, config.videoAssignees);
       grouped.set(key, {
         target: {
           platform: 'instagram',
@@ -140,14 +143,14 @@ export async function buildMetaAdEntries(config, events, fetchImpl = fetch) {
           url: String(media.permalink || fallbackUrl),
           channelName: config.metaAdsInstagramUsername,
           channelCategory: config.metaAdsChannelCategory,
-          productName: config.metaAdsProductName,
+          productName: awarenessProductName(config.metaAdsProductName, campaignName, adTitle),
           brandName: config.brandContext,
           caption: String(media.caption || event.ad_title || ''),
           isManagedAccount: true,
           metaMediaId: mediaId === 'unknown' ? '' : mediaId,
           metaAdId: String(event.ad_id || ''),
-          adTitle: String(event.ad_title || ''),
-          campaignName: String(event.campaign_name || ''),
+          adTitle,
+          campaignName,
           extraAssignees: videoAssigneeId ? [videoAssigneeId] : [],
         },
         comments: [],

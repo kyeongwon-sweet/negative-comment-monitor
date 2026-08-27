@@ -138,10 +138,11 @@ test('alert card: 소재명에 JD복 포함 시 카테고리·제작자 무관 �
 test('alert card: 파인트 인지광고는 손유곤+박지원 동시 태그, JD복이 최우선', () => {
   const comment = { id: 'c1', platform: 'youtube', text: '별로', risk: {} };
   const pint = buildAlertBlocks({
-    url: 'https://x', channelCategory: '인지 광고', productName: 'JD', source: 'youtube_ads',
+    url: 'https://x', channelCategory: '인지 광고', productName: 'P', source: 'youtube_ads',
     campaignName: '[빙과] 파인트 인지', adTitle: 'F_V_JD_인지_빙과_정요한', extraAssignees: ['U_VIDEO'],
   }, comment, undefined, assignees);
   assert.ok(pint.some((x) => x.text?.text === '*담당자*\n<@U_P_SPON> <@U_P_VIDEO>'));
+  assert.ok(pint.some((x) => x.text?.text === '*[파인트] 인지 광고*'));
 
   // Meta는 campaignName이 없을 수 있어 adTitle의 파인트를 보조 신호로 사용한다.
   const metaFallback = buildAlertBlocks({

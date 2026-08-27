@@ -1,6 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { adClassificationLedgerKey, inAdMorningWindow, dailyAdRunKey, hasAdRunToday } from '../src/ad-common.js';
+import {
+  adClassificationLedgerKey,
+  awarenessProductName,
+  dailyAdRunKey,
+  hasAdRunToday,
+  inAdMorningWindow,
+} from '../src/ad-common.js';
+
+test('인지 광고 캠페인명 파인트는 P로, 그 외와 JD복은 기존 상품을 유지한다', () => {
+  assert.equal(awarenessProductName('JD', '[빙과] 파인트 인지', '소재'), 'P');
+  assert.equal(awarenessProductName('JD', '', '[파인트] 인지 소재'), 'P');
+  assert.equal(awarenessProductName('JD', '[빙과] 쫀득바 인지', '소재'), 'JD');
+  assert.equal(awarenessProductName('JD복', '[빙과] 파인트 인지', '소재'), 'JD복');
+});
 
 test('inAdMorningWindow: prefix별 FORCE·KST 창 판정', () => {
   const kst9 = Date.parse('2026-08-14T00:10:00Z'); // KST 09

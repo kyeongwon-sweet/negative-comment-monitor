@@ -132,6 +132,15 @@ test('buildMetaAdEntries still classifies when no stored token exists', async ()
   assert.equal(entry.comments[0].id, 'c3');
 });
 
+test('Meta 인지 광고는 소재명 파인트 신호로 상품 P를 싣는다', async () => {
+  const fetchImpl = async () => ({ ok: true, json: async () => [] });
+  const [entry] = await buildMetaAdEntries(CFG, [{
+    id: 4, comment_id: 'c4', ig_user_id: 'ig1', media_id: 'm4', ad_id: 'ad4',
+    ad_title: '[빙과 파인트] 인지 소재', username: 'u', comment_text: '싫어요',
+  }], fetchImpl);
+  assert.equal(entry.target.productName, 'P');
+});
+
 test('markMetaAdEventsProcessed marks the selected queue rows', async () => {
   let request;
   const fetchImpl = async (url, options) => { request = { url: String(url), options }; return { ok: true, text: async () => '' }; };

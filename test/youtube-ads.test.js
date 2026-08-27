@@ -109,13 +109,13 @@ test('buildYouTubeAdEntries discovers manager child, ad video, top comment and a
       }
       if (query.includes('FROM campaign ')) {
         return jsonResponse([{ results: [
-          { campaign: { id: 'cp1', name: '[빙과] 쫀득바 인지', status: 'ENABLED', advertisingChannelType: 'VIDEO' } },
+          { campaign: { id: 'cp1', name: '[빙과] 파인트 인지', status: 'ENABLED', advertisingChannelType: 'VIDEO' } },
           { campaign: { id: 'cp2', name: '[전환] 기타', status: 'ENABLED', advertisingChannelType: 'VIDEO' } },
         ] }]);
       }
       if (query.includes('FROM ad_group_ad_asset_view')) {
         return jsonResponse([{ results: [{
-          campaign: { id: 'cp1', name: '[빙과] 쫀득바 인지' },
+          campaign: { id: 'cp1', name: '[빙과] 파인트 인지' },
           adGroupAd: { ad: { name: '[26.08]F_V_JD_인지_빙과_정요한' } },
           asset: { resourceName: 'customers/8151438670/assets/9', youtubeVideoAsset: { youtubeVideoId: 'abc123XYZ', youtubeVideoTitle: '광고영상' } },
         }] }]);
@@ -161,9 +161,9 @@ test('buildYouTubeAdEntries discovers manager child, ad video, top comment and a
   assert.equal(result.creatorAssignedVideos, 1);
   assert.equal(result.entries[0].target.source, 'youtube_ads');
   assert.equal(result.entries[0].target.postKey, 'yt:abc123XYZ');
-  assert.equal(result.entries[0].target.productName, 'JD');
+  assert.equal(result.entries[0].target.productName, 'P');
   assert.equal(result.entries[0].target.adTitle, '[26.08]F_V_JD_인지_빙과_정요한');
-  assert.equal(result.entries[0].target.campaignName, '[빙과] 쫀득바 인지');
+  assert.equal(result.entries[0].target.campaignName, '[빙과] 파인트 인지');
   assert.deepEqual(result.entries[0].target.extraAssignees, ['U_VIDEO']);
   assert.deepEqual(result.entries[0].comments.map((comment) => comment.id), ['top1', 'reply1', 'reply2']);
   assert.equal(calls.filter((call) => call.url.hostname === 'oauth2.googleapis.com').length, 2);

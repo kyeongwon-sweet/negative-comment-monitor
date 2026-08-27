@@ -1,6 +1,7 @@
 import { loadMetaAdsConfig } from './meta-ads.js';
 import { campaignNameMatchesFilter } from './normalize.js';
 import { videoAssigneeFromAdTitle } from './slack.js';
+import { awarenessProductName } from './ad-common.js';
 
 export const TIKTOK_AD_SOURCE = 'tiktok_ads';
 export const DEFAULT_TIKTOK_API_BASE = 'https://business-api.tiktok.com/open_api/v1.3';
@@ -187,6 +188,7 @@ export function buildTikTokAdEntriesFromComments(config, comments, allowedAdIds 
     const key = `${targetKey(raw)}|${adId}`;
     if (!grouped.has(key)) {
       const adTitle = String(raw.ad_name || '');
+      const campaignName = String(raw.campaign_name || '');
       const videoAssigneeId = videoAssigneeFromAdTitle(adTitle, config.videoAssignees);
       grouped.set(key, {
         target: {
@@ -196,12 +198,12 @@ export function buildTikTokAdEntriesFromComments(config, comments, allowedAdIds 
           postKey: targetKey(raw),
           channelName: 'TikTok 광고',
           channelCategory: config.tiktokAdsChannelCategory,
-          productName: config.tiktokAdsProductName,
+          productName: awarenessProductName(config.tiktokAdsProductName, campaignName, adTitle),
           brandName: config.brandContext,
           caption: String(raw.ad_text || raw.ad_name || ''),
           isManagedAccount: true,
           adTitle,
-          campaignName: String(raw.campaign_name || ''),
+          campaignName,
           extraAssignees: videoAssigneeId ? [videoAssigneeId] : [],
           tiktokAdvertiserId: config.tiktokAdvertiserId,
           tiktokAdId: adId,
