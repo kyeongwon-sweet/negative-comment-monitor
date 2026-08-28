@@ -13,6 +13,10 @@ import { adClassificationLedgerKey, inAdMorningWindow, dailyAdRunKey, hasAdRunTo
 import { autoHideTikTokAwareness } from './awareness-auto-hide.js';
 import { monitorLlmHealth } from './llm-health.js';
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function inTikTokAdsWindow(now = Date.now(), env = process.env) {
   return inAdMorningWindow(now, env, 'TIKTOK_ADS');
 }
@@ -83,6 +87,9 @@ export async function runTikTokAds(config = loadTikTokAdsConfig(), fetchImpl = f
       const fingerprint = fingerprints[alertIndex];
       if (seen.has(fingerprint)) continue;
       if (!config.dryRun) {
+        if (summary.sentAlerts > 0 && config.tiktokAdsAlertDelayMs > 0) {
+          await wait(config.tiktokAdsAlertDelayMs);
+        }
         const threadTs = await resolveThreadTs(target);
         const slack = await sendAlert(config, target, comment, fetchImpl, threadTs);
         await recordAlert(config, target, comment, fingerprint, slack.ts, classifierHash, fetchImpl);

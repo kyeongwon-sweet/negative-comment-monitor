@@ -40,6 +40,15 @@ test('loadTikTokAdsConfig requires only ad adapter credentials plus shared alert
   }).tiktokAdsAutoHide, true);
 });
 
+test('TikTok 대량 백필은 Slack 발송 간격을 안전 범위로 읽는다', () => {
+  const config = loadTikTokAdsConfig({
+    SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'service',
+    SLACK_BOT_TOKEN: 'xoxb-test', TIKTOK_ACCESS_TOKEN: 'token', TIKTOK_ADVERTISER_ID: 'adv',
+    TIKTOK_ADS_ALERT_DELAY_MS: '1200',
+  });
+  assert.equal(config.tiktokAdsAlertDelayMs, 1200);
+});
+
 test('filterTikTokCampaigns keeps only names containing 빙과', () => {
   const campaigns = filterTikTokCampaigns([
     { campaign_id: '1', campaign_name: '[빙과] 쫀득바 인지' },

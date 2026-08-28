@@ -71,6 +71,8 @@ export function loadTikTokAdsConfig(env = process.env) {
     // comment/list는 QPS 제한이 낮다. 기본은 직렬+간격으로 두고 환경변수로만 상향한다.
     tiktokAdsConcurrency: positiveInt(env.TIKTOK_ADS_CONCURRENCY, 1, 5),
     tiktokAdsRequestDelayMs: positiveInt(env.TIKTOK_ADS_REQUEST_DELAY_MS, 1000, 5000),
+    // 대량 백필 때 Slack chat.postMessage의 채널별 rate limit을 피한다. 평시 기본 0, 백필에서만 명시.
+    tiktokAdsAlertDelayMs: Math.max(0, Math.min(5000, Number(env.TIKTOK_ADS_ALERT_DELAY_MS || 0))),
     tiktokAdsAutoHide: String(env.TIKTOK_ADS_AUTO_HIDE || 'false').toLowerCase() === 'true',
   };
 }
