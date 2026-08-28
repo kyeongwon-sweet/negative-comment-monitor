@@ -12,7 +12,7 @@ const assignees = {
   jdBok: 'U_JDBOK',
   awareness: 'U_AWARENESS',
   sponsorship: 'U_SPONSORSHIP',
-  jd: { sponsorship: 'U_JD_SPON', viralBanner: 'U_JD_BANNER', viralVideo: 'U_JD_VIDEO', satellite: 'U_JD_SAT' },
+  jd: { powerChannel: 'U_JD_POWER', sponsorship: 'U_JD_SPON', viralBanner: 'U_JD_BANNER', viralVideo: 'U_JD_VIDEO', satellite: 'U_JD_SAT' },
   p: { viralBanner: 'U_P_BANNER', viralVideo: 'U_P_VIDEO', powerChannel: 'U_P_POWER', sponsorship: 'U_P_SPON' },
 };
 
@@ -209,10 +209,11 @@ test('assigneeForTarget: 상품×카테고리 라우팅 + 미지정은 카테고
   // 파인트 파워채널/매거진 = 이도경(p.powerChannel, 협찬 인플루언서보다 우선)
   assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '협찬 (파워채널/매거진)' }, assignees), 'U_P_POWER');
   assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '협찬 (매거진)' }, assignees), 'U_P_POWER');
-  // 쫀득바 협찬(인플루언서)=김바다(jd.sponsorship), 파워채널/매거진=황경원(other)
+  // 쫀득바 협찬(인플루언서)=김바다(jd.sponsorship), 파워채널/매거진=이재원(jd.powerChannel)
   assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_JD_SPON');
-  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (파워채널/매거진)' }, assignees), 'U_OTHER');
-  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (매거진)' }, assignees), 'U_OTHER');
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (파워채널/먹스타)' }, assignees), 'U_JD_POWER');
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (파워채널/매거진)' }, assignees), 'U_JD_POWER');
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (매거진)' }, assignees), 'U_JD_POWER');
   // 온드미디어는 상품군 무관 owned(김바다)
   assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '온드미디어' }, assignees), 'U_OWNED');
   assert.equal(assigneeForTarget({ productName: 'DB혼', channelCategory: '온드미디어' }, assignees), 'U_OWNED');

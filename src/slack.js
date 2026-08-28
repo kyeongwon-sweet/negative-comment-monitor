@@ -88,7 +88,8 @@ export function assigneeForTarget(target, assignees = {}) {
   const isOwned = category.includes('온드'); // 온드미디어
   const isAwareness = category.includes('인지'); // 인지(메타) 광고 부정댓글 전용 담당자
   if (group === 'jd') {
-    // 쫀득바 협찬(인플루언서)만 김바다. 파워채널/매거진은 매치 제외 → 아래로 흘러 other(황경원).
+    // 쫀득바 협찬: 파워채널/매거진=이재원, 인플루언서=김바다.
+    if (isSponsorship && isPowerChannel && assignees.jd?.powerChannel) return assignees.jd.powerChannel;
     if (isSponsorship && !isPowerChannel && assignees.jd?.sponsorship) return assignees.jd.sponsorship;
     if (isBanner && assignees.jd?.viralBanner) return assignees.jd.viralBanner;
     if (isVideo && assignees.jd?.viralVideo) return assignees.jd.viralVideo;

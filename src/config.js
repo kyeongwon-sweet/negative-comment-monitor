@@ -45,6 +45,7 @@ export function loadConfig(env = process.env, now = Date.now()) {
       sponsorship: String(env.SLACK_ASSIGNEE_SPONSORSHIP || '').trim(),
       // 상품별 담당자(상품 코드 × 카테고리). 미지정 조합/상품은 위 카테고리 기본값으로 폴백.
       jd: {
+        powerChannel: String(env.SLACK_ASSIGNEE_JD_POWER_CHANNEL || '').trim(), // 쫀득바 협찬(파워채널/매거진)=이재원
         sponsorship: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_SPONSORSHIP', 'SLACK_ASSIGNEE_JD_SPONSORSHIP_NEXT', nextRoutingActive),
         viralBanner: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_VIRAL_BANNER', 'SLACK_ASSIGNEE_JD_VIRAL_BANNER_NEXT', nextRoutingActive),
         viralVideo: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_VIRAL_VIDEO', 'SLACK_ASSIGNEE_JD_VIRAL_VIDEO_NEXT', nextRoutingActive),
