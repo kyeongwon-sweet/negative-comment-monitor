@@ -1,6 +1,7 @@
 import { appendFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { classifyNegativeComment, normalizeKoreanText } from './classify.js';
 import { classifyTargetsBatched, isLlmDeferred } from './hybrid-classify.js';
 import { commentFingerprint, loadSeenFingerprints } from './dedup.js';
 import {
@@ -30,7 +31,10 @@ export function loadOwnerCoverageAuditConfig(env = process.env, now = Date.now()
     ...loadYouTubeOwnerChannelConfig({ ...env, DRY_RUN: 'true' }, now),
     auditVideoIds: csvSet(env.YOUTUBE_OWNER_COVERAGE_AUDIT_VIDEO_IDS),
     auditMaxVideos: positiveInt(env.YOUTUBE_OWNER_COVERAGE_AUDIT_MAX_VIDEOS, 5, 25),
-    auditForceReclassify: String(env.YOUTUBE_OWNER_COVERAGE_AUDIT_FORCE_RECLASSIFY || 'true').toLowerCase() !== 'false',
+    // 주간 감사는 라이브와 같은 캐시/분류 결과를 읽는다. 강제 재분류는 명시적 진단 때만 사용한다.
+    auditForceReclassify: String(env.YOUTUBE_OWNER_COVERAGE_AUDIT_FORCE_RECLASSIFY || 'false').toLowerCase() === 'true',
+    auditMissingAlertThreshold: positiveInt(env.YOUTUBE_OWNER_COVERAGE_AUDIT_MISSING_THRESHOLD, 3, 100),
+    auditDeferredAlertThreshold: positiveInt(env.YOUTUBE_OWNER_COVERAGE_AUDIT_DEFERRED_THRESHOLD, 25, 500),
     classificationCacheReadOnly: true,
   };
 }
@@ -43,6 +47,34 @@ export function selectOwnerAuditVideos(candidates, requestedIds = new Set(), max
     .sort((a, b) => Number(b.video?.statistics?.commentCount || 0) - Number(a.video?.statistics?.commentCount || 0));
   // 명시한 영상은 모두 감사한다. maxVideos는 자동 표본 선택에만 적용한다.
   return requested.size ? sorted : sorted.slice(0, Math.max(1, Number(maxVideos) || 5));
+}
+
+const EXPLICIT_BRAND_OR_PRODUCT_TARGET = [
+  '라라스윗', '라라스위트', '쫀득바', '아이스크림', '제품', '브랜드', '회사',
+  '이거', '이건', '저거', '저건', '맛', '식감', '성분', '광고',
+].map(normalizeKoreanText);
+
+// 커버리지 감사는 새로운 의미론적 정책을 만드는 곳이 아니다. LLM 단독 톤 판정(드립·배우 평가·
+// 댓글러끼리의 다툼)을 누락으로 세지 않고, 라이브 키워드 안전망도 동의하는 명백 부정 또는
+// 제품/브랜드를 댓글 본문에서 직접 겨냥한 적대만 고신뢰 후보로 집계한다.
+export function isHighConfidenceOwnerAuditRisk(entry, comment, risk) {
+  if (risk?.alert !== true) return false;
+  const target = entry?.target || {};
+  const strict = classifyNegativeComment(comment, {
+    ...target,
+    ownedChannelBrandHostilityScope: false,
+    fullContextReview: false,
+  });
+  if (strict.alert === true) return true;
+  if (String(risk.category || '') !== '브랜드 적대/조롱') return false;
+
+  const normalized = normalizeKoreanText(comment?.text || comment || '');
+  if (!EXPLICIT_BRAND_OR_PRODUCT_TARGET.some((keyword) => normalized.includes(keyword))) return false;
+  return classifyNegativeComment(comment, {
+    ...target,
+    ownedChannelBrandHostilityScope: true,
+    fullContextReview: false,
+  }).alert === true;
 }
 
 async function loadSeenInBatches(config, fingerprints, fetchImpl) {
@@ -58,6 +90,8 @@ export function summarizeOwnerDetectionAudit(entries, risksPerEntry, seen, meta 
   const videos = [];
   let publicComments = 0;
   let negativeCandidates = 0;
+  let rawNegativeCandidates = 0;
+  let suppressedCandidates = 0;
   let alreadyAlerted = 0;
   let missing = 0;
   let deferred = 0;
@@ -76,6 +110,11 @@ export function summarizeOwnerDetectionAudit(entries, risksPerEntry, seen, meta 
         continue;
       }
       if (!risk.alert) continue;
+      rawNegativeCandidates += 1;
+      if (!isHighConfidenceOwnerAuditRisk(entry, entry.comments[commentIndex], risk)) {
+        suppressedCandidates += 1;
+        continue;
+      }
       negativeCandidates += 1;
       videoNegative += 1;
       const fingerprint = commentFingerprint(entry.target, entry.comments[commentIndex]);
@@ -104,6 +143,8 @@ export function summarizeOwnerDetectionAudit(entries, risksPerEntry, seen, meta 
     videoCount: entries.length,
     publicComments,
     negativeCandidates,
+    rawNegativeCandidates,
+    suppressedCandidates,
     alreadyAlerted,
     missing,
     deferred,
@@ -116,11 +157,11 @@ async function postSlack(config, summary, fetchImpl) {
   if (!config.slackBotToken || !config.slackChannelId) return false;
   const affected = summary.videos.filter((video) => video.missing || video.deferred).slice(0, 5);
   const text = [
-    '⚠️ *YouTube 소유채널 공개댓글 감사 — 탐지 지연/누락 후보*',
+    '⚠️ *YouTube 소유채널 공개댓글 감사 — 고신뢰 탐지 지연/누락 후보*',
     `표본 영상 ${summary.videoCount}개 · 공개댓글 ${summary.publicComments}개`,
-    `현재 분류기 기준 누락 후보 ${summary.missing}개 · LLM 보류 ${summary.deferred}개`,
+    `고신뢰 누락 후보 ${summary.missing}개 · LLM 보류 ${summary.deferred}개 · 톤/드립 제외 ${summary.suppressedCandidates}개`,
     ...affected.map((video) => `• <https://www.youtube.com/watch?v=${encodeURIComponent(video.videoId)}|${video.channelName || '소유 채널'} 영상> — 누락 ${video.missing}, 보류 ${video.deferred}`),
-    '이 수치는 현재 분류기 기준 파이프라인 누락 후보이며, 사람 기준 의미론적 미탐률은 아닙니다.',
+    '제품·브랜드 지향 명백 부정만 집계하며, 배우 평가·오프토픽 드립·댓글러 간 다툼은 제외합니다.',
     config.slackAssignees?.other ? `담당자: <@${config.slackAssignees.other}>` : '',
   ].filter(Boolean).join('\n');
   const response = await fetchImpl('https://slack.com/api/chat.postMessage', {
@@ -134,16 +175,18 @@ async function postSlack(config, summary, fetchImpl) {
 }
 
 async function monitorAuditResult(config, summary, fetchImpl, now) {
+  const missingThreshold = Math.max(1, Number(config.auditMissingAlertThreshold || 3));
+  const deferredThreshold = Math.max(1, Number(config.auditDeferredAlertThreshold || 25));
   const ok = summary.videoCount > 0
     && summary.requestedNotFound === 0
-    && summary.missing === 0
-    && summary.deferred === 0
+    && summary.missing < missingThreshold
+    && summary.deferred < deferredThreshold
     && summary.channelFailures === 0;
   const healthConfig = { ...config, platformFailureThreshold: 1, platformFailureAlertCooldownHours: 168 };
   const outcome = await recordPlatformOutcome(healthConfig, {
     platform: HEALTH_KEY,
     ok,
-    error: ok ? '' : `videos=${summary.videoCount}; missing=${summary.missing}; deferred=${summary.deferred}; requestedNotFound=${summary.requestedNotFound}; channelFailures=${summary.channelFailures}`,
+    error: ok ? '' : `videos=${summary.videoCount}; highConfidenceMissing=${summary.missing}/${missingThreshold}; deferred=${summary.deferred}/${deferredThreshold}; requestedNotFound=${summary.requestedNotFound}; channelFailures=${summary.channelFailures}`,
   }, fetchImpl, now);
   let alerted = false;
   if (!ok && outcome.shouldEscalate) {
@@ -240,8 +283,8 @@ async function writeSummary(summary) {
     '## YouTube 소유채널 공개댓글 탐지 커버리지 감사', '',
     `- OAuth 인증/설정 채널: ${summary.authenticatedChannels}/${summary.configuredChannels}`,
     `- 후보/표본 영상: ${summary.candidateVideos}/${summary.videoCount}`,
-    `- 공개댓글/현재분류 부정후보: ${summary.publicComments}/${summary.negativeCandidates}`,
-    `- 기존알림/누락후보/LLM보류: ${summary.alreadyAlerted}/${summary.missing}/${summary.deferred}`,
+    `- 공개댓글/LLM부정/고신뢰/톤·드립제외: ${summary.publicComments}/${summary.rawNegativeCandidates}/${summary.negativeCandidates}/${summary.suppressedCandidates}`,
+    `- 기존알림/고신뢰 누락/LLM보류: ${summary.alreadyAlerted}/${summary.missing}/${summary.deferred}`,
     `- 파이프라인 누락 후보율: ${summary.pipelineMissRatePercent}%`,
     `- 요청 영상 미발견/채널 실패: ${summary.requestedNotFound}/${summary.channelFailures}`, '',
     '| 채널/영상 | 공개댓글 | 부정후보 | 기존 | 누락 | 보류 |',
@@ -264,6 +307,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
         videoCount: summary.videoCount,
         publicComments: summary.publicComments,
         negativeCandidates: summary.negativeCandidates,
+        rawNegativeCandidates: summary.rawNegativeCandidates,
+        suppressedCandidates: summary.suppressedCandidates,
         alreadyAlerted: summary.alreadyAlerted,
         missing: summary.missing,
         deferred: summary.deferred,

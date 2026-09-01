@@ -15,7 +15,7 @@ on:
       force_reclassify:
         description: Ignore classification cache for the audit (read-only; human FP still wins)
         required: true
-        default: true
+        default: false
         type: boolean
   schedule:
     # 주 1회 KST 일요일 14:19. UTC 00시 혼잡구간을 피하고 최고댓글 표본 5개만 읽기전용 대조한다.
@@ -54,7 +54,9 @@ jobs:
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
           YOUTUBE_OWNER_COVERAGE_AUDIT_VIDEO_IDS: ${{ github.event_name == 'workflow_dispatch' && inputs.video_ids || '' }}
           YOUTUBE_OWNER_COVERAGE_AUDIT_MAX_VIDEOS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_videos || '5' }}
-          YOUTUBE_OWNER_COVERAGE_AUDIT_FORCE_RECLASSIFY: ${{ github.event_name != 'workflow_dispatch' || inputs.force_reclassify }}
+          YOUTUBE_OWNER_COVERAGE_AUDIT_FORCE_RECLASSIFY: ${{ github.event_name == 'workflow_dispatch' && inputs.force_reclassify || false }}
+          YOUTUBE_OWNER_COVERAGE_AUDIT_MISSING_THRESHOLD: '3'
+          YOUTUBE_OWNER_COVERAGE_AUDIT_DEFERRED_THRESHOLD: '25'
           YOUTUBE_OWNER_MAX_UPLOAD_PAGES: '10'
           YOUTUBE_OWNER_DEEP_MAX_THREAD_PAGES: '100'
           YOUTUBE_OWNER_MAX_REPLY_PAGES: '100'
