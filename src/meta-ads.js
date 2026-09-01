@@ -10,6 +10,15 @@ function parseVideoAssignees(raw) {
   try { const m = JSON.parse(String(raw || '{}')); return m && typeof m === 'object' ? m : {}; }
   catch { return {}; }
 }
+
+function parseMetaInstagramUserIds(raw) {
+  return [...new Set(
+    String(raw || '')
+      .split(/[\s,]+/)
+      .map((value) => value.trim())
+      .filter((value) => /^\d+$/.test(value)),
+  )];
+}
 export const DEFAULT_META_GRAPH = 'https://graph.facebook.com/v26.0';
 
 // 소재명 카테고리 토큰이 '전환'이면 전환(conversion) 광고 = 우리 봇 대상 아님(김유진 별도관리).
@@ -74,6 +83,11 @@ export function loadMetaAdsConfig(env = process.env, now = Date.now()) {
     videoAssignees: parseVideoAssignees(env.META_AD_VIDEO_ASSIGNEES),
     dryRun: String(env.DRY_RUN || 'false').toLowerCase() === 'true',
     metaAdsAutoHide: String(env.META_ADS_AUTO_HIDE || 'false').toLowerCase() === 'true',
+    // 파트너십 광고처럼 광고 조회 권한은 있지만 원 게시물 댓글 관리 권한은 없는
+    // Instagram 사용자는 계정 단위로 자동숨김에서 제외한다. 탐지·알림은 유지한다.
+    metaAutoHideExcludedInstagramUserIds: parseMetaInstagramUserIds(
+      env.META_AUTO_HIDE_EXCLUDED_IG_USER_IDS,
+    ),
     costThresholds: { apify: 2, anthropic: 0.1, total: 3 },
   };
 }

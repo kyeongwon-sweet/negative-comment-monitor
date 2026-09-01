@@ -30,6 +30,7 @@ jobs:
           SLACK_ASSIGNEE_AWARENESS: ${{ vars.SLACK_ASSIGNEE_AWARENESS }}
           META_GRAPH_BASE: https://graph.facebook.com/v26.0
           META_TOKEN_KIND: ig_ads
+          META_AUTO_HIDE_EXCLUDED_IG_USER_IDS: ${{ vars.META_AUTO_HIDE_EXCLUDED_IG_USER_IDS }}
           TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
           TIKTOK_ADVERTISER_ID: ${{ vars.TIKTOK_ADVERTISER_ID }}
           AD_CAMPAIGN_NAME_FILTER: ${{ vars.AD_CAMPAIGN_NAME_FILTER }}

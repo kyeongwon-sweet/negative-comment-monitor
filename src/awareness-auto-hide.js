@@ -24,7 +24,7 @@ export async function loadActionableAwarenessAlerts(
   { includeHumanDecisions = false } = {},
 ) {
   const url = `${config.supabaseUrl}/rest/v1/negative_comment_alerts`
-    + '?select=id,comment_id,comment_text,post_url,review_decision,reviewed_by,reviewed_at,slack_channel_id,slack_ts'
+    + '?select=id,comment_id,comment_text,post_url,meta_ad_id,review_decision,reviewed_by,reviewed_at,slack_channel_id,slack_ts'
     + `&source=eq.${encodeURIComponent(source)}&comment_id=not.is.null&order=id.asc&limit=2000`;
   const response = await fetchImpl(url, { headers: headers(config) });
   if (!response.ok) throw new Error(`Awareness alert lookup failed (${response.status})`);
@@ -39,6 +39,49 @@ export async function loadActionableAwarenessAlerts(
     if (!decision && (row.reviewed_by || row.reviewed_at)) return false;
     return true;
   });
+}
+
+async function partitionMetaAutoHideRows(config, rows, token, fetchImpl) {
+  const excludedOwners = new Set(
+    (config.metaAutoHideExcludedInstagramUserIds || []).map(String).filter(Boolean),
+  );
+  if (!excludedOwners.size || !rows.length) {
+    return { eligible: rows, excluded: [], ownerLookupDeferred: [] };
+  }
+
+  const eligible = [];
+  const excluded = [];
+  const ownerLookupDeferred = [];
+  const rowsByAd = new Map();
+  for (const row of rows) {
+    const adId = String(row.meta_ad_id || '').trim();
+    if (!adId) {
+      // 구 데이터처럼 광고 ID가 없으면 기존 hide 경로가 권한 오류를 안전하게 판별한다.
+      eligible.push(row);
+      continue;
+    }
+    if (!rowsByAd.has(adId)) rowsByAd.set(adId, []);
+    rowsByAd.get(adId).push(row);
+  }
+
+  for (const adRows of rowsByAd.values()) {
+    const adId = String(adRows[0].meta_ad_id);
+    const response = await fetchImpl(
+      `${config.metaGraphBase}/${encodeURIComponent(adId)}?fields=${encodeURIComponent('creative{instagram_user_id}')}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.error) {
+      // 제외 여부를 확인하지 못한 광고만 이번 회차 보류한다. 다른 계정 숨김과 run은 계속한다.
+      ownerLookupDeferred.push(...adRows);
+      continue;
+    }
+    const ownerId = String(payload.creative?.instagram_user_id || '');
+    if (ownerId && excludedOwners.has(ownerId)) excluded.push(...adRows);
+    else eligible.push(...adRows);
+  }
+
+  return { eligible, excluded, ownerLookupDeferred };
 }
 
 async function persistAutoHidden(config, source, rows, fetchImpl, now) {
@@ -158,8 +201,11 @@ export async function autoHideMetaAwareness(
   const rows = await loadActionableAwarenessAlerts(config, 'meta_ads', fetchImpl, options);
   const token = rows.length ? await loadMetaToken(config, config.metaTokenKind || 'ig_ads', fetchImpl) : null;
   if (rows.length && !token?.token) throw new Error('Meta awareness token not found');
+  const ownerPartition = rows.length
+    ? await partitionMetaAutoHideRows(config, rows, token.token, fetchImpl)
+    : { eligible: [], excluded: [], ownerLookupDeferred: [] };
   const rowsByComment = new Map();
-  for (const row of rows) {
+  for (const row of ownerPartition.eligible) {
     const id = String(row.comment_id);
     if (!rowsByComment.has(id)) rowsByComment.set(id, []);
     rowsByComment.get(id).push(row);
@@ -198,6 +244,11 @@ export async function autoHideMetaAwareness(
     : await persistModerationUnavailable(config, 'meta_ads', unavailable, fetchImpl, now);
   return {
     actionable: rows.length,
+    eligible: ownerPartition.eligible.length,
+    excluded: new Set(ownerPartition.excluded.map((row) => String(row.comment_id))).size,
+    ownerLookupDeferred: new Set(
+      ownerPartition.ownerLookupDeferred.map((row) => String(row.comment_id)),
+    ).size,
     hidden: new Set(succeeded.map((row) => String(row.comment_id))).size,
     unavailable: new Set(unavailable.map((row) => String(row.comment_id))).size,
     failed: failed.length,

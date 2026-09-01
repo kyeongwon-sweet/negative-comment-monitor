@@ -175,6 +175,7 @@ jobs:
           META_ADS_CHANNEL_CATEGORY: 인지 광고
           META_ADS_INSTAGRAM_USERNAME: lalasweet_icecream
           META_AD_VIDEO_ASSIGNEES: ${{ vars.META_AD_VIDEO_ASSIGNEES }}
+          META_AUTO_HIDE_EXCLUDED_IG_USER_IDS: ${{ vars.META_AUTO_HIDE_EXCLUDED_IG_USER_IDS }}
           # 아침 배치 창(KST 8~11시). ⚠️ KST 9시(UTC0)는 GitHub 크론 대량 드롭 구간이라 단일 9시 게이트
           # 금지 — 앞뒤로 넓혀 실제 도는 웨이크(UTC 23/1/2)를 타게 한다. 수동 실행은 FORCE로 시간 무관.
           META_ADS_WINDOW_START: '8'

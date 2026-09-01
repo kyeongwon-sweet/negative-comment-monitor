@@ -31,6 +31,7 @@ test('loadMetaAdsConfig only requires Supabase and Slack secrets', () => {
   assert.equal(config.metaAdsChannelCategory, '인지 광고');
   assert.equal(config.metaGraphBase, 'https://graph.facebook.com/v26.0');
   assert.equal(config.metaAdsAutoHide, false);
+  assert.deepEqual(config.metaAutoHideExcludedInstagramUserIds, []);
   assert.equal(config.llmProvider, 'gemini');
   assert.equal(config.geminiModel, 'gemini-3.1-flash-lite');
   assert.deepEqual(loadMetaAdsConfig({
@@ -45,6 +46,11 @@ test('loadMetaAdsConfig only requires Supabase and Slack secrets', () => {
     SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc',
     SLACK_BOT_TOKEN: 'xoxb-test', META_ADS_AUTO_HIDE: 'true',
   }).metaAdsAutoHide, true);
+  assert.deepEqual(loadMetaAdsConfig({
+    SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc',
+    SLACK_BOT_TOKEN: 'xoxb-test',
+    META_AUTO_HIDE_EXCLUDED_IG_USER_IDS: '17841475281500944, 123 17841475281500944 invalid',
+  }).metaAutoHideExcludedInstagramUserIds, ['17841475281500944', '123']);
 });
 
 test('awareness routing switches to the next assignee at the configured KST date', () => {

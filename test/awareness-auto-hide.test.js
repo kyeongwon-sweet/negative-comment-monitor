@@ -69,7 +69,8 @@ test('Meta 자동 숨김은 중복 comment_id를 한 번만 호출하고 Slack �
   };
   const result = await autoHideMetaAwareness(CFG, fetchImpl, Date.parse('2026-08-18T01:00:00Z'), { includeHumanDecisions: true });
   assert.deepEqual(result, {
-    actionable: 2, hidden: 1, unavailable: 0, failed: 0, dbUpdated: 1, unavailableDbUpdated: 0,
+    actionable: 2, eligible: 2, excluded: 0, ownerLookupDeferred: 0,
+    hidden: 1, unavailable: 0, failed: 0, dbUpdated: 1, unavailableDbUpdated: 0,
     slack: { updated: 1, unavailable: 0, failed: 0 },
   });
   assert.equal(calls.filter((call) => call.url.includes('graph.test/c1')).length, 1);
@@ -77,6 +78,64 @@ test('Meta 자동 숨김은 중복 comment_id를 한 번만 호출하고 Slack �
   const patchIndex = calls.findIndex((call) => call.url.includes('negative_comment_alerts?id=in.'));
   assert.ok(slackIndex >= 0 && patchIndex > slackIndex);
   assert.equal(JSON.parse(calls[patchIndex].init.body).review_decision, 'hidden');
+});
+
+test('Meta 파트너 Instagram 사용자는 자동숨김만 제외하고 다른 계정은 계속 숨긴다', async () => {
+  const calls = [];
+  const config = {
+    ...CFG,
+    metaAutoHideExcludedInstagramUserIds: ['17841475281500944'],
+  };
+  const fetchImpl = async (input, init = {}) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.includes('negative_comment_alerts?select=')) return response(200, [
+      { id: 1, comment_id: 'partner-comment', meta_ad_id: 'partner-ad', review_decision: null },
+      { id: 2, comment_id: 'owned-comment', meta_ad_id: 'owned-ad', review_decision: null },
+    ]);
+    if (url.includes('/meta_tokens?')) return response(200, [{ token: 'META' }]);
+    if (url.includes('/partner-ad?fields=')) {
+      return response(200, { creative: { instagram_user_id: '17841475281500944' } });
+    }
+    if (url.includes('/owned-ad?fields=')) {
+      return response(200, { creative: { instagram_user_id: '17841406113247705' } });
+    }
+    if (url.includes('/owned-comment?hide=true')) return response(200, { success: true });
+    if (url.includes('negative_comment_alerts?id=in.')) return response(200, [{ id: 2 }]);
+    throw new Error(`unexpected ${url}`);
+  };
+
+  const result = await autoHideMetaAwareness(config, fetchImpl, Date.parse('2026-09-01T04:00:00Z'));
+  assert.equal(result.actionable, 2);
+  assert.equal(result.eligible, 1);
+  assert.equal(result.excluded, 1);
+  assert.equal(result.ownerLookupDeferred, 0);
+  assert.equal(result.hidden, 1);
+  assert.equal(result.failed, 0);
+  assert.equal(calls.some((call) => call.url.includes('partner-comment?hide=true')), false);
+});
+
+test('Meta 광고 소유자 조회 실패는 해당 광고만 fail-soft 보류한다', async () => {
+  const config = {
+    ...CFG,
+    metaAutoHideExcludedInstagramUserIds: ['17841475281500944'],
+  };
+  const fetchImpl = async (input) => {
+    const url = String(input);
+    if (url.includes('negative_comment_alerts?select=')) return response(200, [
+      { id: 1, comment_id: 'unknown-owner', meta_ad_id: 'lookup-fails', review_decision: null },
+    ]);
+    if (url.includes('/meta_tokens?')) return response(200, [{ token: 'META' }]);
+    if (url.includes('/lookup-fails?fields=')) return response(500, { error: { code: 1 } });
+    throw new Error(`unexpected ${url}`);
+  };
+
+  const result = await autoHideMetaAwareness(config, fetchImpl);
+  assert.equal(result.eligible, 0);
+  assert.equal(result.excluded, 0);
+  assert.equal(result.ownerLookupDeferred, 1);
+  assert.equal(result.hidden, 0);
+  assert.equal(result.failed, 0);
 });
 
 test('Meta Slack 일시 실패는 DB 완료 처리를 보류해 다음 회차 재시도를 보장한다', async () => {
@@ -124,6 +183,9 @@ test('Meta #100/33과 #10은 hidden 위조 없이 unavailable로 종결한다', 
   const now = Date.parse('2026-08-18T01:00:00Z');
   const result = await autoHideMetaAwareness(CFG, fetchImpl, now);
   assert.equal(result.hidden, 0);
+  assert.equal(result.eligible, 2);
+  assert.equal(result.excluded, 0);
+  assert.equal(result.ownerLookupDeferred, 0);
   assert.equal(result.unavailable, 2);
   assert.equal(result.failed, 0);
   assert.equal(result.dbUpdated, 0);
