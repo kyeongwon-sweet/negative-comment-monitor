@@ -45,7 +45,7 @@ async function releasePollBlock(config, runKey, fetchImpl) {
 }
 
 export async function fetchMetaAdMedia(config, token, accountId, fetchImpl = fetch) {
-  const fields = 'id,name,updated_time,creative{effective_instagram_media_id,source_instagram_media_id}';
+  const fields = 'id,name,updated_time,campaign{name},creative{effective_instagram_media_id,source_instagram_media_id}';
   let next = `${config.metaGraphBase}/${encodeURIComponent(accountId)}/ads`
     + `?fields=${encodeURIComponent(fields)}&limit=100`
     + `&effective_status=${encodeURIComponent(JSON.stringify(['ACTIVE']))}&sort=updated_time_descending`;
@@ -63,10 +63,11 @@ export async function fetchMetaAdMedia(config, token, accountId, fetchImpl = fet
     for (const ad of payload.data || []) {
       const adId = String(ad.id || '');
       const adTitle = String(ad.name || '');
+      const campaignName = String(ad.campaign?.name || '');
       if (!adId || isConversionAd(adTitle)) continue;
       for (const raw of [ad.creative?.effective_instagram_media_id, ad.creative?.source_instagram_media_id]) {
         const mediaId = String(raw || '');
-        if (mediaId && !byMedia.has(mediaId)) byMedia.set(mediaId, { adId, adTitle });
+        if (mediaId && !byMedia.has(mediaId)) byMedia.set(mediaId, { adId, adTitle, campaignName });
       }
     }
     next = String(payload.paging?.next || '');

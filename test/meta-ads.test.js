@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildMetaAdEntries,
   isConversionAd,
+  loadMetaAdCampaignNames,
   loadMetaAdsConfig,
   loadPendingMetaAdEvents,
   markMetaAdEventsProcessed,
@@ -83,6 +84,9 @@ test('buildMetaAdEntries groups Webhook comments and enriches the permalink', as
     if (value.includes('/178900?fields=')) {
       return { ok: true, json: async () => ({ id: '178900', permalink: 'https://www.instagram.com/p/ABC/', caption: '쫀득바 광고' }) };
     }
+    if (value.includes('/ad1?fields=')) {
+      return { ok: true, json: async () => ({ id: 'ad1', campaign: { name: '[빙과] 쫀득바 인지' } }) };
+    }
     throw new Error(`unexpected ${value}`);
   };
   const entries = await buildMetaAdEntries(CFG, [
@@ -93,6 +97,7 @@ test('buildMetaAdEntries groups Webhook comments and enriches the permalink', as
   assert.equal(entries[0].target.source, 'meta_ads');
   assert.equal(entries[0].target.url, 'https://www.instagram.com/p/ABC/');
   assert.equal(entries[0].target.channelCategory, '인지 광고');
+  assert.equal(entries[0].target.campaignName, '[빙과] 쫀득바 인지');
   assert.equal(entries[0].comments.length, 2);
   assert.equal(entries[0].comments[0].metaEventId, 1);
 });
@@ -138,12 +143,39 @@ test('buildMetaAdEntries still classifies when no stored token exists', async ()
   assert.equal(entry.comments[0].id, 'c3');
 });
 
+test('loadMetaAdCampaignNames caches duplicate ad ids within one build', async () => {
+  let calls = 0;
+  const result = await loadMetaAdCampaignNames(CFG, ['ad-cache', 'ad-cache'], 'TOKEN', async () => {
+    calls += 1;
+    return { ok: true, json: async () => ({ campaign: { name: '[빙과] 파인트 인지' } }) };
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.get('ad-cache'), '[빙과] 파인트 인지');
+});
+
 test('Meta 인지 광고는 소재명 파인트 신호로 상품 P를 싣는다', async () => {
   const fetchImpl = async () => ({ ok: true, json: async () => [] });
   const [entry] = await buildMetaAdEntries(CFG, [{
     id: 4, comment_id: 'c4', ig_user_id: 'ig1', media_id: 'm4', ad_id: 'ad4',
     ad_title: '[빙과 파인트] 인지 소재', username: 'u', comment_text: '싫어요',
   }], fetchImpl);
+  assert.equal(entry.target.productName, 'P');
+});
+
+test('Meta 인지 광고는 소재명과 무관하게 캠페인명 파인트 신호로 상품 P를 싣는다', async () => {
+  const fetchImpl = async (url) => {
+    const value = String(url);
+    if (value.includes('/rest/v1/meta_tokens')) return { ok: true, json: async () => [{ token: 'TOKEN' }] };
+    if (value.includes('/ad-pint?fields=')) {
+      return { ok: true, json: async () => ({ campaign: { name: '[빙과] 파인트 인지 캠페인' } }) };
+    }
+    return { ok: false, json: async () => ({}) };
+  };
+  const [entry] = await buildMetaAdEntries(CFG, [{
+    id: 5, comment_id: 'c5', ig_user_id: 'ig1', media_id: 'm5', ad_id: 'ad-pint',
+    ad_title: '[26.09]F_V_JD_인지_소재', username: 'u', comment_text: '싫어요',
+  }], fetchImpl);
+  assert.equal(entry.target.campaignName, '[빙과] 파인트 인지 캠페인');
   assert.equal(entry.target.productName, 'P');
 });
 

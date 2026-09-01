@@ -16,11 +16,11 @@ test('Meta poll block key is stable within the configured interval', () => {
 test('Meta poll maps active ad creatives and excludes conversion ads', async () => {
   const media = await fetchMetaAdMedia(CFG, 'TOKEN', 'act_1', async () => response(200, {
     data: [
-      { id: 'a1', name: '인지_소재', creative: { effective_instagram_media_id: 'm1' } },
+      { id: 'a1', name: '인지_소재', campaign: { name: '[빙과] 파인트 인지' }, creative: { effective_instagram_media_id: 'm1' } },
       { id: 'a2', name: 'F_I_JD_전환_소재', creative: { effective_instagram_media_id: 'm2' } },
     ],
   }));
-  assert.deepEqual([...media], [['m1', { adId: 'a1', adTitle: '인지_소재' }]]);
+  assert.deepEqual([...media], [['m1', { adId: 'a1', adTitle: '인지_소재', campaignName: '[빙과] 파인트 인지' }]]);
 });
 
 test('Meta poll batches media comment-count lookups before opening comment pages', async () => {

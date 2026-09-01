@@ -124,6 +124,38 @@ export async function loadMetaMedia(config, mediaId, token, fetchImpl = fetch) {
   return data && !data.error ? data : null;
 }
 
+// Webhook payload에는 campaign_name이 없으므로 ad_id로 Marketing API를 보강한다.
+// 같은 실행에서 동일 ad_id는 한 번만 조회하고, 권한/삭제 광고 조회 실패는 소재명
+// 보조 판정으로 fail-open한다. 토큰과 광고 ID는 로그에 남기지 않는다.
+export async function loadMetaAdCampaignNames(config, adIds, token, fetchImpl = fetch) {
+  const ids = [...new Set((adIds || []).map((value) => String(value || '').trim()).filter(Boolean))];
+  const campaignByAdId = new Map();
+  if (!token || !ids.length) return campaignByAdId;
+
+  let cursor = 0;
+  const concurrency = Math.min(6, ids.length);
+  await Promise.all(Array.from({ length: concurrency }, async () => {
+    while (cursor < ids.length) {
+      const adId = ids[cursor];
+      cursor += 1;
+      const fields = encodeURIComponent('campaign{name}');
+      try {
+        const response = await fetchImpl(
+          `${config.metaGraphBase}/${encodeURIComponent(adId)}?fields=${fields}`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        if (!response.ok) continue;
+        const payload = await response.json().catch(() => ({}));
+        const campaignName = String(payload?.campaign?.name || '').trim();
+        if (campaignName) campaignByAdId.set(adId, campaignName);
+      } catch {
+        // 개별 광고 조회 실패가 전체 댓글 분류를 막지 않게 한다.
+      }
+    }
+  }));
+  return campaignByAdId;
+}
+
 // Webhook 이벤트를 기존 분류기 입력(entries)으로 변환한다.
 // 광고 소재가 unpublished/dynamic이라 permalink 조회가 실패해도 댓글 본문 분류는 계속한다.
 export async function buildMetaAdEntries(config, events, fetchImpl = fetch) {
@@ -135,6 +167,12 @@ export async function buildMetaAdEntries(config, events, fetchImpl = fetch) {
     const media = await loadMetaMedia(config, mediaId, token, fetchImpl);
     if (media) mediaById.set(String(mediaId), media);
   }
+  const campaignByAdId = await loadMetaAdCampaignNames(
+    config,
+    events.map((event) => event.ad_id),
+    token,
+    fetchImpl,
+  );
 
   const fallbackUrl = `https://www.instagram.com/${encodeURIComponent(config.metaAdsInstagramUsername)}/`;
   const grouped = new Map();
@@ -148,7 +186,8 @@ export async function buildMetaAdEntries(config, events, fetchImpl = fetch) {
     if (!grouped.has(key)) {
       // 광고 이름(ad_title) 마지막 이름 = 영상 담당자 → 기본 담당자와 함께 태그.
       const adTitle = String(event.ad_title || '');
-      const campaignName = String(event.campaign_name || '');
+      const adId = String(event.ad_id || '');
+      const campaignName = String(event.campaign_name || campaignByAdId.get(adId) || '');
       const videoAssigneeId = videoAssigneeFromAdTitle(adTitle, config.videoAssignees);
       grouped.set(key, {
         target: {
@@ -162,7 +201,7 @@ export async function buildMetaAdEntries(config, events, fetchImpl = fetch) {
           caption: String(media.caption || event.ad_title || ''),
           isManagedAccount: true,
           metaMediaId: mediaId === 'unknown' ? '' : mediaId,
-          metaAdId: String(event.ad_id || ''),
+          metaAdId: adId,
           adTitle,
           campaignName,
           extraAssignees: videoAssigneeId ? [videoAssigneeId] : [],
