@@ -6,6 +6,7 @@ import {
   buildOwnerOverloadWarning,
   maybeWarnOwnerCommentOverload,
 } from '../src/youtube-owner-overload.js';
+import { suppressLowConfidenceOwnerRisks } from '../src/youtube-owner-risk.js';
 
 function response(status, body = {}) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
@@ -52,6 +53,25 @@ test('엔터·가십 반응을 LLM이 과민 판정해도 과부하 고신뢰 �
   assert.equal(result.negatives, 2);
   assert.equal(result.suppressedNegatives, 4);
   assert.equal(result.overloaded, false);
+});
+
+test('소유채널 개별 알림도 동일 고신뢰 게이트를 쓰고 일반 채널은 건드리지 않는다', () => {
+  const comments = [
+    { text: '광고 참신하다 잘 만들었네' },
+    { text: '이 광고 발연기네 ㅋㅋ' },
+    { text: '라라스윗 진짜 극혐' },
+    { text: '쫀득바 맛없으니 사지마' },
+  ];
+  const risks = comments.map((_, index) => ({
+    alert: true,
+    category: index < 3 ? '브랜드 적대/조롱' : '제품 불만',
+  }));
+  const filtered = suppressLowConfidenceOwnerRisks(target, comments, risks);
+  assert.deepEqual(filtered.map((risk) => risk.alert), [false, false, true, true]);
+  assert.equal(filtered[0].ownerLowConfidenceSuppressed, true);
+  assert.equal(suppressLowConfidenceOwnerRisks(
+    { ...target, ownedChannelBrandHostilityScope: false }, comments, risks,
+  ), risks);
 });
 
 test('과부하 경고는 Studio 링크·담당자를 포함하고 Slack 성공 뒤 쿨다운 상태를 남긴다', async () => {

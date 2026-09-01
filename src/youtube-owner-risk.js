@@ -33,3 +33,13 @@ export function isHighConfidenceOwnerRisk(target, comment, risk) {
     fullContextReview: false,
   }).alert === true;
 }
+
+export function suppressLowConfidenceOwnerRisks(target, comments, risks) {
+  const safeRisks = Array.isArray(risks) ? risks : [];
+  if (target?.ownedChannelBrandHostilityScope !== true) return safeRisks;
+  const safeComments = Array.isArray(comments) ? comments : [];
+  return safeRisks.map((risk, index) => {
+    if (risk?.alert !== true || isHighConfidenceOwnerRisk(target, safeComments[index], risk)) return risk;
+    return { ...risk, alert: false, ownerLowConfidenceSuppressed: true };
+  });
+}

@@ -19,6 +19,7 @@ import {
   assessOwnerCommentOverload,
   maybeWarnOwnerCommentOverload,
 } from './youtube-owner-overload.js';
+import { suppressLowConfidenceOwnerRisks } from './youtube-owner-risk.js';
 import { monitorLlmHealth } from './llm-health.js';
 import { monitorOwnerOAuthCoverage, summarizeOwnerOAuthCoverage } from './youtube-owner-coverage.js';
 
@@ -158,8 +159,9 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
   for (let entryIndex = 0; entryIndex < collected.entries.length; entryIndex += 1) {
     const { target, comments } = collected.entries[entryIndex];
     const risks = risksPerEntry[entryIndex] || [];
+    const alertRisks = suppressLowConfidenceOwnerRisks(target, comments, risks);
     const alerts = comments
-      .map((comment, index) => ({ ...comment, risk: risks[index] || { alert: false } }))
+      .map((comment, index) => ({ ...comment, risk: alertRisks[index] || { alert: false } }))
       .filter((comment) => comment.risk.alert);
     const fingerprints = alerts.map((comment) => commentFingerprint(target, comment));
     const seen = config.dryRun ? new Set() : await loadSeenFingerprints(config, fingerprints, fetchImpl);
