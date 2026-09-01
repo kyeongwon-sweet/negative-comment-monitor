@@ -1,5 +1,6 @@
 const NEGATIVE_COMMENT_SPREADSHEET_ID_ = '1TBMDj6-dElbXcW3MeZOXO-td6zRYATLt-DsRgxjmHwY';
-const NEGATIVE_COMMENT_SHEET_NAME_ = '+ 8월_부정댓글리스트(경원)';
+// 탭 이름은 팀 운영 중 바뀔 수 있으므로 식별에는 쓰지 않고 진단용으로만 둔다.
+const NEGATIVE_COMMENT_SHEET_NAME_ = '+ 부정댓글리스트(경원 26.08~)';
 const NEGATIVE_COMMENT_SHEET_GID_ = 338810723;
 const NEGATIVE_COMMENT_TOKEN_PROPERTY_ = 'NEGATIVE_COMMENT_SHEET_TOKEN';
 const VISIBLE_HEADERS_ = [
@@ -70,9 +71,11 @@ function appendNegativeCommentRows_(rows) {
 
 function getTargetSheet_() {
   const spreadsheet = SpreadsheetApp.openById(NEGATIVE_COMMENT_SPREADSHEET_ID_);
-  const sheet = spreadsheet.getSheetByName(NEGATIVE_COMMENT_SHEET_NAME_);
-  if (!sheet || sheet.getSheetId() !== NEGATIVE_COMMENT_SHEET_GID_) {
-    throw new Error('Target sheet name/gid mismatch');
+  const sheet = spreadsheet.getSheets().find(function(candidate) {
+    return candidate.getSheetId() === NEGATIVE_COMMENT_SHEET_GID_;
+  });
+  if (!sheet) {
+    throw new Error('Target sheet gid not found: ' + NEGATIVE_COMMENT_SHEET_GID_);
   }
   return sheet;
 }
