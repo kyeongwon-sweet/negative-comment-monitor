@@ -47,6 +47,7 @@ export async function runMetaAds(config = loadMetaAdsConfig(), fetchImpl = fetch
 
   const llmStats = { calls: 0, attempts: 0, failedAttempts: 0, persistentFailures: 0, transientFailures: 0, reviewed: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheHits: 0, cacheMiss: 0 };
   try {
+    let moderationError = null;
     const entries = await buildMetaAdEntries(config, events, fetchImpl);
     summary.entries = entries.length;
     const risksPerEntry = await classifyTargetsBatched(entries, config, undefined, llmStats, fetchImpl);
@@ -99,7 +100,12 @@ export async function runMetaAds(config = loadMetaAdsConfig(), fetchImpl = fetch
     if (!config.dryRun) {
       if (config.metaAdsAutoHide) {
         summary.moderation = await autoHideMetaAwareness(config, fetchImpl, now);
-        if (summary.moderation.failed || summary.moderation.slack.failed) throw new Error('Meta awareness auto-hide failed');
+        if (summary.moderation.failed || summary.moderation.slack.failed) {
+          // 분류·Slack 알림까지 성공한 이벤트를 자동숨김 한 건의 권한 오류 때문에
+          // pending으로 되돌리면 다음 회차마다 LLM/알림 루프를 재실행한다. 큐는 먼저
+          // 완료 처리하고, review_decision=null인 카드만 후속 회차에서 숨김을 재시도한다.
+          moderationError = new Error('Meta awareness auto-hide failed');
+        }
       }
       if (summary.llmDeferredComments > 0) {
         // 큐를 완료 처리하면 크레딧/인증 복구 뒤 LLM 재분류 기회가 영구 소실된다.
@@ -125,6 +131,7 @@ export async function runMetaAds(config = loadMetaAdsConfig(), fetchImpl = fetch
       } catch (error) {
         console.error('[meta-ads] 비용 집계 실패(분류에는 영향 없음):', error.message);
       }
+      if (moderationError) throw moderationError;
     }
     return summary;
   } catch (error) {
