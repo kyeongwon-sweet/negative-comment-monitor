@@ -57,6 +57,7 @@ test('coverage audit counts brand-directed hard negatives but suppresses praise,
   assert.equal(isHighConfidenceOwnerAuditRisk(entry, { text: '이 광고 발연기네 ㅋㅋ' }, { alert: true, category: '브랜드 적대/조롱' }), false);
   assert.equal(isHighConfidenceOwnerAuditRisk(entry, { text: '너나 닥쳐 병신아' }, { alert: true, category: '욕설/비속어' }), false);
   assert.equal(isHighConfidenceOwnerAuditRisk(entry, { text: '라라스윗 왤케 비호감' }, { alert: true, category: '브랜드 적대/조롱' }), true);
+  assert.equal(isHighConfidenceOwnerAuditRisk(entry, { text: '라라스윗 진짜 극혐' }, { alert: true, category: '브랜드 적대/조롱' }), true);
   assert.equal(isHighConfidenceOwnerAuditRisk(entry, { text: '쫀득바 맛없으니 사지마' }, { alert: true, category: '제품 불만' }), true);
   assert.equal(isHighConfidenceOwnerAuditRisk(entry, { text: '허위광고 하지마라' }, { alert: true, category: '광고/바이럴 의심' }), true);
 });

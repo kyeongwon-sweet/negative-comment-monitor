@@ -1,7 +1,6 @@
 import { appendFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { classifyNegativeComment, normalizeKoreanText } from './classify.js';
 import { classifyTargetsBatched, isLlmDeferred } from './hybrid-classify.js';
 import { commentFingerprint, loadSeenFingerprints } from './dedup.js';
 import {
@@ -13,6 +12,7 @@ import {
 import { fetchYouTubeVideoComments } from './youtube-ads.js';
 import { loadYouTubeOwnerTokens, refreshAndVerifyOwner } from './youtube-owner-moderation.js';
 import { clearPlatformAlertClaim, recordPlatformOutcome } from './platform-health.js';
+import { isHighConfidenceOwnerRisk } from './youtube-owner-risk.js';
 
 const HEALTH_KEY = 'youtube-owner-detection-audit';
 
@@ -49,32 +49,11 @@ export function selectOwnerAuditVideos(candidates, requestedIds = new Set(), max
   return requested.size ? sorted : sorted.slice(0, Math.max(1, Number(maxVideos) || 5));
 }
 
-const EXPLICIT_BRAND_OR_PRODUCT_TARGET = [
-  '라라스윗', '라라스위트', '쫀득바', '아이스크림', '제품', '브랜드', '회사',
-  '이거', '이건', '저거', '저건', '맛', '식감', '성분', '광고',
-].map(normalizeKoreanText);
-
 // 커버리지 감사는 새로운 의미론적 정책을 만드는 곳이 아니다. LLM 단독 톤 판정(드립·배우 평가·
 // 댓글러끼리의 다툼)을 누락으로 세지 않고, 라이브 키워드 안전망도 동의하는 명백 부정 또는
 // 제품/브랜드를 댓글 본문에서 직접 겨냥한 적대만 고신뢰 후보로 집계한다.
 export function isHighConfidenceOwnerAuditRisk(entry, comment, risk) {
-  if (risk?.alert !== true) return false;
-  const target = entry?.target || {};
-  const strict = classifyNegativeComment(comment, {
-    ...target,
-    ownedChannelBrandHostilityScope: false,
-    fullContextReview: false,
-  });
-  if (strict.alert === true) return true;
-  if (String(risk.category || '') !== '브랜드 적대/조롱') return false;
-
-  const normalized = normalizeKoreanText(comment?.text || comment || '');
-  if (!EXPLICIT_BRAND_OR_PRODUCT_TARGET.some((keyword) => normalized.includes(keyword))) return false;
-  return classifyNegativeComment(comment, {
-    ...target,
-    ownedChannelBrandHostilityScope: true,
-    fullContextReview: false,
-  }).alert === true;
+  return isHighConfidenceOwnerRisk(entry?.target || {}, comment, risk);
 }
 
 async function loadSeenInBatches(config, fingerprints, fetchImpl) {

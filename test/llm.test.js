@@ -142,6 +142,9 @@ test('소유채널 확대 정책은 표시된 댓글이 있을 때만 프롬프�
   await classifyCommentsLLM([{ text: '인플루언서 왤케 비호감' }], { anthropicKey: 'k' }, fetchImpl);
   assert.match(prompts[0], /소유 YouTube 채널 확대 정책/);
   assert.match(prompts[0], /\[소유채널\] 라라스윗 왤케 비호감/);
+  assert.match(prompts[0], /댓글러끼리의 다툼·욕설·신고 언급/);
+  assert.match(prompts[0], /광고 배우의 연기·연출만 평가하는 '발연기'/);
+  assert.match(prompts[0], /부정적인 말투만으로 브랜드 공격이라고 추측하지 마세요/);
   assert.doesNotMatch(prompts[1], /소유 YouTube 채널 확대 정책/);
 });
 

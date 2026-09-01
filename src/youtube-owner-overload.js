@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { recordPlatformOutcome } from './platform-health.js';
 import { postThreadBlocks } from './slack.js';
+import { isHighConfidenceOwnerRisk } from './youtube-owner-risk.js';
 
 function safeVideoId(target) {
   return String(target?.youtubeVideoId || '').trim();
@@ -14,16 +15,32 @@ function overloadHealthKey(videoId) {
   return `youtube-owner-overload:${createHash('sha256').update(videoId).digest('hex').slice(0, 20)}`;
 }
 
-export function assessOwnerCommentOverload(comments, risks, config) {
+export function assessOwnerCommentOverload(comments, risks, config, target = {}) {
   const total = Array.isArray(comments) ? comments.length : 0;
-  const negatives = (Array.isArray(risks) ? risks : []).filter((risk) => risk?.alert === true).length;
+  const safeComments = Array.isArray(comments) ? comments : [];
+  const safeRisks = Array.isArray(risks) ? risks : [];
+  const rawNegatives = safeRisks.filter((risk) => risk?.alert === true).length;
+  const negatives = safeRisks.filter((risk, index) => (
+    isHighConfidenceOwnerRisk(target, safeComments[index], risk)
+  )).length;
+  const suppressedNegatives = Math.max(0, rawNegatives - negatives);
   const ratioPercent = total ? (negatives / total) * 100 : 0;
   const countThreshold = Number(config.youtubeOwnerOverloadNegativeCount || 20);
   const ratioThreshold = Number(config.youtubeOwnerOverloadRatioPercent || 40);
   const minComments = Number(config.youtubeOwnerOverloadMinComments || 10);
   const overloaded = negatives >= countThreshold
     || (total >= minComments && ratioPercent >= ratioThreshold);
-  return { total, negatives, ratioPercent, countThreshold, ratioThreshold, minComments, overloaded };
+  return {
+    total,
+    negatives,
+    rawNegatives,
+    suppressedNegatives,
+    ratioPercent,
+    countThreshold,
+    ratioThreshold,
+    minComments,
+    overloaded,
+  };
 }
 
 export function buildOwnerOverloadWarning(target, assessment, assignee = '') {
@@ -42,7 +59,7 @@ export function buildOwnerOverloadWarning(target, assessment, assignee = '') {
   const channelLabel = channelId ? `${channelName} (${escapeMrkdwn(channelId)})` : channelName;
   const volumeLine = assessment.cumulative === true
     ? `최근 감시 기간 누적 부정댓글 ${assessment.negatives}개가 탐지됐습니다.\n`
-    : `이번 확인 댓글 ${assessment.total}개 중 부정 ${assessment.negatives}개 (${assessment.ratioPercent.toFixed(1)}%)입니다.\n`;
+    : `이번 확인 댓글 ${assessment.total}개 중 고신뢰 부정 ${assessment.negatives}개 (${assessment.ratioPercent.toFixed(1)}%)입니다.\n`;
   return `🚨 *소유 YouTube 댓글 과부하 — 댓글창 사용 중지 권고*\n`
     + `${mention}${title}\n`
     + volumeLine

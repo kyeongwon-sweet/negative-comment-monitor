@@ -179,7 +179,7 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
 
     if (!config.dryRun && target.ownedChannelBrandHostilityScope === true) {
       try {
-        const assessment = assessOwnerCommentOverload(comments, risks, config);
+        const assessment = assessOwnerCommentOverload(comments, risks, config, target);
         const route = threadRouteForOwnerTarget(target);
         const overload = await maybeWarnOwnerCommentOverload(
           config,
