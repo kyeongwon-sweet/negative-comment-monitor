@@ -126,6 +126,23 @@ jobs:
           TRACKING_DAYS: ${{ vars.TRACKING_DAYS }}
           DELTA_ENABLED: 'true'
           DRY_RUN: 'false'
+      - name: Poll Meta awareness ad comments (webhook fallback)
+        # Meta Webhook의 Advanced Access/구독이 끊겨도 광고 댓글을 놓치지 않도록
+        # Marketing API로 최근 공개 광고 댓글만 1시간에 한 번 보완 수집한다.
+        continue-on-error: true
+        run: node src/meta-ads-poll.js
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          META_GRAPH_BASE: https://graph.facebook.com/v26.0
+          META_TOKEN_KIND: ig_ads
+          META_AD_ACCOUNT_ID: act_550617335901928
+          META_ADS_POLL_INTERVAL_MINUTES: '60'
+          META_ADS_POLL_LOOKBACK_HOURS: '72'
+          META_ADS_POLL_MAX_PAGES: '3'
+          META_ADS_POLL_CONCURRENCY: '8'
+          META_ADS_POLL_FORCE: ${{ github.event_name == 'workflow_dispatch' }}
       - name: Process queued Meta Instagram ad comments
         # 인지 광고 부정댓글은 '아침 배치'로만 발송(부정댓글 관리 시간 정렬). 웹훅은 하루 종일 큐에 쌓임.
         # ⚠️ 특정 아침 크론(13,26,39,52)에만 걸면 GitHub이 그 크론을 드롭할 때 배치가 통째로 누락된다(실측 사고).
