@@ -67,17 +67,62 @@ async function persistAutoHidden(config, source, rows, fetchImpl, now) {
   return updated;
 }
 
+async function persistModerationUnavailable(config, source, rows, fetchImpl, now) {
+  const ids = rows
+    .filter((row) => !row.review_decision && !row.reviewed_by && !row.reviewed_at)
+    .map((row) => row.id);
+  let updated = 0;
+  for (const batch of chunk(ids, 100)) {
+    const encoded = batch.map((id) => `"${String(id).replace(/"/g, '\\"')}"`).join(',');
+    const response = await fetchImpl(
+      `${config.supabaseUrl}/rest/v1/negative_comment_alerts?id=in.(${encodeURIComponent(encoded)})&source=eq.${encodeURIComponent(source)}`,
+      {
+        method: 'PATCH',
+        headers: headers(config, { 'Content-Type': 'application/json', Prefer: 'return=representation' }),
+        body: JSON.stringify({
+          // hidden 성공을 위조하지 않고, 같은 영구 오류를 매 회차 재호출하지 않는 종결 상태다.
+          review_decision: 'unavailable',
+          reviewed_by: `${source}-auto-hide`,
+          reviewed_at: new Date(now).toISOString(),
+        }),
+      },
+    );
+    if (!response.ok) throw new Error(`Awareness unavailable update failed (${response.status})`);
+    const result = await response.json().catch(() => []);
+    updated += Array.isArray(result) ? result.length : 0;
+  }
+  return updated;
+}
+
+export function classifyMetaModerationFailure(response, payload = {}) {
+  const code = Number(payload.error?.code || 0);
+  const subcode = Number(payload.error?.error_subcode || 0);
+  if (Number(response?.status) === 400 && code === 100 && subcode === 33) {
+    return { reason: 'object_unavailable', code, subcode };
+  }
+  // #3(capability), #10/#200(permission)은 동일 요청을 다시 보내도 회복되지 않는다.
+  // #190(토큰 만료), #4/#17(rate limit), 5xx는 시스템 복구가 필요하므로 hard failure로 남긴다.
+  if ([3, 10, 200].includes(code)) return { reason: 'permission_denied', code, subcode };
+  return null;
+}
+
 function metaHiddenBlocks(row, now) {
   const when = new Date(now + 9 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ');
   const unavailable = Boolean(row.moderationUnavailable);
-  const title = unavailable ? 'Instagram 광고 댓글 비노출 확인 완료' : 'Instagram 광고 댓글 자동 숨김 완료';
-  const context = unavailable ? 'Meta에서 이미 삭제·숨김되어 조회 불가' : 'Meta Graph API 자동 숨김';
+  const permissionDenied = row.moderationUnavailableReason === 'permission_denied';
+  const title = permissionDenied
+    ? 'Instagram 광고 댓글 자동 숨김 불가'
+    : unavailable ? 'Instagram 광고 댓글 비노출 확인 완료' : 'Instagram 광고 댓글 자동 숨김 완료';
+  const context = permissionDenied
+    ? 'Meta 앱의 해당 댓글 모더레이션 권한 없음 · 영구 재시도 중단'
+    : unavailable ? 'Meta에서 이미 삭제·숨김되어 조회 불가' : 'Meta Graph API 자동 숨김';
+  const status = permissionDenied ? '모더레이션 불가 ⚠️' : '비노출 처리 🚫';
   const text = String(row.comment_text || '').slice(0, 700)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const post = String(row.post_url || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return [
     { type: 'section', text: { type: 'mrkdwn', text: `🚫 *${title}*${post ? `\n<${post}|게시물 열기>` : ''}${text ? `\n\n*댓글*\n${text}` : ''}` } },
-    { type: 'context', elements: [{ type: 'mrkdwn', text: `*비노출 처리 🚫* · ${context} · ${when} KST` }] },
+    { type: 'context', elements: [{ type: 'mrkdwn', text: `*${status}* · ${context} · ${when} KST` }] },
   ];
 }
 
@@ -90,9 +135,9 @@ async function syncMetaSlack(config, rows, fetchImpl, now) {
       body: JSON.stringify({
         channel: row.slack_channel_id,
         ts: row.slack_ts,
-        text: row.moderationUnavailable
-          ? 'Instagram 광고 댓글 비노출 확인 완료'
-          : 'Instagram 광고 댓글 자동 숨김 완료',
+        text: row.moderationUnavailableReason === 'permission_denied'
+          ? 'Instagram 광고 댓글 자동 숨김 불가'
+          : row.moderationUnavailable ? 'Instagram 광고 댓글 비노출 확인 완료' : 'Instagram 광고 댓글 자동 숨김 완료',
         blocks: metaHiddenBlocks(row, now),
       }),
     });
@@ -127,15 +172,18 @@ export async function autoHideMetaAwareness(
     );
     const payload = await response.json().catch(() => ({}));
     if (response.ok && payload.success === true) succeeded.push(...commentRows);
-    else if (
-      response.status === 400
-      && Number(payload.error?.code) === 100
-      && Number(payload.error?.error_subcode) === 33
-    ) {
-      // Meta #100/33은 객체가 이미 삭제·숨김됐거나 더는 로드할 수 없다는 뜻이다.
-      // Slack에는 비노출 사실을 남기되 Graph 숨김 성공은 아니므로 DB를 hidden으로 기록하지 않는다.
-      unavailable.push(...commentRows.map((row) => ({ ...row, moderationUnavailable: true })));
-    } else failed.push(String(payload.error?.message || `HTTP ${response.status}`).slice(0, 160));
+    else {
+      const terminal = classifyMetaModerationFailure(response, payload);
+      if (terminal) {
+        // 객체 소멸(#100/33)과 영구 권한 오류(#3/#10/#200)를 hidden으로 위조하지 않는다.
+        // unavailable로 수렴시켜 run 실패·무한 재시도만 막는다.
+        unavailable.push(...commentRows.map((row) => ({
+          ...row,
+          moderationUnavailable: true,
+          moderationUnavailableReason: terminal.reason,
+        })));
+      } else failed.push(String(payload.error?.message || `HTTP ${response.status}`).slice(0, 160));
+    }
   }
   const slackRows = [...succeeded, ...unavailable]
     .filter((row) => !row.review_decision && !row.reviewed_by && !row.reviewed_at);
@@ -143,14 +191,18 @@ export async function autoHideMetaAwareness(
     ? await syncMetaSlack(config, slackRows, fetchImpl, now)
     : { updated: 0, unavailable: 0, failed: 0 };
   // Slack 일시 장애면 DB를 완료 처리하지 않아 다음 회차가 API(멱등)+Slack을 함께 재시도한다.
-  // #100/33 행은 실제 숨김 성공이 아니므로 감사값 null을 보존한다.
+  // hidden과 unavailable은 서로 다른 감사 상태로 기록한다. Slack 일시 장애가 있으면 둘 다 다음 회차로 미룬다.
   const dbUpdated = slack.failed ? 0 : await persistAutoHidden(config, 'meta_ads', succeeded, fetchImpl, now);
+  const unavailableDbUpdated = slack.failed
+    ? 0
+    : await persistModerationUnavailable(config, 'meta_ads', unavailable, fetchImpl, now);
   return {
     actionable: rows.length,
     hidden: new Set(succeeded.map((row) => String(row.comment_id))).size,
     unavailable: new Set(unavailable.map((row) => String(row.comment_id))).size,
     failed: failed.length,
     dbUpdated,
+    unavailableDbUpdated,
     slack,
   };
 }

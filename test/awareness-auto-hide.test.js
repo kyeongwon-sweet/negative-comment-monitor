@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   autoHideMetaAwareness,
   autoHideTikTokAwareness,
+  classifyMetaModerationFailure,
   loadActionableAwarenessAlerts,
 } from '../src/awareness-auto-hide.js';
 
@@ -36,6 +37,7 @@ test('상시 자동 숨김은 미처리만, 명시적 백로그 정리는 hide/c
     { id: 6, comment_id: 'hidden', review_decision: 'hidden' },
     { id: 7, comment_id: 'abnormal', review_decision: null, reviewed_by: 'U5' },
     { id: 8, comment_id: 'unhide', review_decision: 'unhide', reviewed_by: 'U6' },
+    { id: 9, comment_id: 'unavailable', review_decision: 'unavailable', reviewed_by: 'meta_ads-auto-hide' },
   ];
   const fetchImpl = async () => response(200, rows);
   assert.deepEqual(
@@ -67,7 +69,7 @@ test('Meta 자동 숨김은 중복 comment_id를 한 번만 호출하고 Slack �
   };
   const result = await autoHideMetaAwareness(CFG, fetchImpl, Date.parse('2026-08-18T01:00:00Z'), { includeHumanDecisions: true });
   assert.deepEqual(result, {
-    actionable: 2, hidden: 1, unavailable: 0, failed: 0, dbUpdated: 1,
+    actionable: 2, hidden: 1, unavailable: 0, failed: 0, dbUpdated: 1, unavailableDbUpdated: 0,
     slack: { updated: 1, unavailable: 0, failed: 0 },
   });
   assert.equal(calls.filter((call) => call.url.includes('graph.test/c1')).length, 1);
@@ -90,20 +92,21 @@ test('Meta Slack 일시 실패는 DB 완료 처리를 보류해 다음 회차 �
     if (url.includes('negative_comment_alerts?id=in.')) { patched = true; return response(200, []); }
     throw new Error(`unexpected ${url}`);
   };
-  const result = await autoHideMetaAwareness(CFG, fetchImpl);
+  const now = Date.parse('2026-08-18T01:00:00Z');
+  const result = await autoHideMetaAwareness(CFG, fetchImpl, now);
   assert.equal(result.slack.failed, 1);
   assert.equal(result.dbUpdated, 0);
   assert.equal(patched, false);
 });
 
-test('Meta #100/33은 Slack에 비노출만 표시하고 hidden 감사값은 위조하지 않는다', async () => {
+test('Meta #100/33과 #10은 hidden 위조 없이 unavailable로 종결한다', async () => {
   const patched = [];
   const slackBodies = [];
   const fetchImpl = async (input, init = {}) => {
     const url = String(input);
     if (url.includes('negative_comment_alerts?select=')) return response(200, [
       { id: 1, comment_id: 'gone', review_decision: null, slack_channel_id: 'C1', slack_ts: '1.1' },
-      { id: 2, comment_id: 'denied', review_decision: null },
+      { id: 2, comment_id: 'denied', review_decision: null, slack_channel_id: 'C1', slack_ts: '1.2' },
     ]);
     if (url.includes('/meta_tokens?')) return response(200, [{ token: 'META' }]);
     if (url.includes('/gone?hide=true')) return response(400, { error: { code: 100, error_subcode: 33 } });
@@ -114,17 +117,36 @@ test('Meta #100/33은 Slack에 비노출만 표시하고 hidden 감사값은 위
     }
     if (url.includes('negative_comment_alerts?id=in.')) {
       patched.push(JSON.parse(init.body));
-      return response(200, [{ id: 1 }]);
+      return response(200, [{ id: 1 }, { id: 2 }]);
     }
     throw new Error(`unexpected ${url}`);
   };
-  const result = await autoHideMetaAwareness(CFG, fetchImpl);
+  const now = Date.parse('2026-08-18T01:00:00Z');
+  const result = await autoHideMetaAwareness(CFG, fetchImpl, now);
   assert.equal(result.hidden, 0);
-  assert.equal(result.unavailable, 1);
-  assert.equal(result.failed, 1);
+  assert.equal(result.unavailable, 2);
+  assert.equal(result.failed, 0);
   assert.equal(result.dbUpdated, 0);
+  assert.equal(result.unavailableDbUpdated, 2);
   assert.match(slackBodies[0].text, /비노출/);
-  assert.equal(patched.length, 0);
+  assert.match(slackBodies[1].text, /숨김 불가/);
+  assert.deepEqual(patched, [{
+    review_decision: 'unavailable',
+    reviewed_by: 'meta_ads-auto-hide',
+    reviewed_at: new Date(now).toISOString(),
+  }]);
+});
+
+test('Meta 영구 권한 오류만 unavailable이며 토큰·rate-limit 오류는 hard failure다', () => {
+  assert.deepEqual(classifyMetaModerationFailure({ status: 403 }, { error: { code: 10 } }), {
+    reason: 'permission_denied', code: 10, subcode: 0,
+  });
+  assert.deepEqual(classifyMetaModerationFailure({ status: 400 }, { error: { code: 100, error_subcode: 33 } }), {
+    reason: 'object_unavailable', code: 100, subcode: 33,
+  });
+  assert.equal(classifyMetaModerationFailure({ status: 401 }, { error: { code: 190 } }), null);
+  assert.equal(classifyMetaModerationFailure({ status: 429 }, { error: { code: 4 } }), null);
+  assert.equal(classifyMetaModerationFailure({ status: 500 }, { error: { code: 1 } }), null);
 });
 
 test('TikTok 자동 숨김은 실패 댓글만 격리하고 성공한 미처리 행만 기록한다', async () => {
