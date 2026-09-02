@@ -1,0 +1,33 @@
+name: Ban YouTube repeat offender
+
+on:
+  workflow_dispatch:
+    inputs:
+      evidence_alert_id:
+        description: Alert ID shown in the reviewed repeat-offender report
+        required: true
+      confirmation:
+        description: Type BAN_YOUTUBE_REPEAT_OFFENDER to reject the comment and ban its author
+        required: true
+
+jobs:
+  ban:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts
+      - name: Validate candidate and hide author from owned channel
+        run: npm run ban:youtube-repeat-offender
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          YOUTUBE_REPEAT_OFFENDER_ALERT_ID: ${{ inputs.evidence_alert_id }}
+          YOUTUBE_REPEAT_OFFENDER_BAN_CONFIRM: ${{ inputs.confirmation }}

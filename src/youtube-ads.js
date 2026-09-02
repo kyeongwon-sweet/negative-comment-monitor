@@ -322,11 +322,16 @@ export async function fetchOwnedYouTubeVideos(config, videoAssets, channelId, ac
 
 function normalizeYouTubeComment(comment, videoId, parentId = '') {
   const snippet = comment?.snippet || {};
+  const authorChannelId = typeof snippet.authorChannelId === 'object'
+    ? snippet.authorChannelId?.value
+    : snippet.authorChannelId;
   return {
     id: String(comment?.id || ''),
     platform: 'youtube',
     url: `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&lc=${encodeURIComponent(comment?.id || '')}`,
     username: String(snippet.authorDisplayName || ''),
+    authorChannelId: String(authorChannelId || ''),
+    authorDisplayName: String(snippet.authorDisplayName || ''),
     text: String(snippet.textOriginal || snippet.textDisplay || ''),
     timestamp: String(snippet.publishedAt || snippet.updatedAt || ''),
     parentId: String(parentId || snippet.parentId || ''),

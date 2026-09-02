@@ -136,7 +136,7 @@ test('buildYouTubeAdEntries discovers manager child, ad video, top comment and a
         id: 'thread1',
         snippet: {
           totalReplyCount: 2,
-          topLevelComment: { id: 'top1', snippet: { authorDisplayName: 'u1', textOriginal: '별로', publishedAt: '2026-08-14T01:00:00Z' } },
+          topLevelComment: { id: 'top1', snippet: { authorChannelId: { value: 'UC_AUTHOR_1' }, authorDisplayName: 'u1', textOriginal: '별로', publishedAt: '2026-08-14T01:00:00Z' } },
         },
         replies: { comments: [{ id: 'reply1', snippet: { authorDisplayName: 'u2', textOriginal: '맞아', publishedAt: '2026-08-14T02:00:00Z', parentId: 'top1' } }] },
       }] });
@@ -166,6 +166,8 @@ test('buildYouTubeAdEntries discovers manager child, ad video, top comment and a
   assert.equal(result.entries[0].target.campaignName, '[빙과] 파인트 인지');
   assert.deepEqual(result.entries[0].target.extraAssignees, ['U_VIDEO']);
   assert.deepEqual(result.entries[0].comments.map((comment) => comment.id), ['top1', 'reply1', 'reply2']);
+  assert.equal(result.entries[0].comments[0].authorChannelId, 'UC_AUTHOR_1');
+  assert.equal(result.entries[0].comments[0].authorDisplayName, 'u1');
   assert.equal(calls.filter((call) => call.url.hostname === 'oauth2.googleapis.com').length, 2);
 });
 

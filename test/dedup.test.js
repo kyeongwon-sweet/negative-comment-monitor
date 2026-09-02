@@ -34,7 +34,7 @@ test('recordAlert writes a conflict-safe row', async () => {
   const fetchImpl = async (url, options) => { request = { url, options }; return { ok: true, json: async () => [{ id: 1 }] }; };
   const inserted = await recordAlert(config,
     { url: 'https://x.com/u/status/1', productName: 'JD멜', channelCategory: '바이럴 (영상)', channelName: '채널', assetName: '소재' },
-    { id: 'c1', platform: 'twitter', text: 'bad', timestamp: '2026-08-21T00:00:00Z', risk: { category: '제품 불만', reason: '맛이 없다고 평가' } },
+    { id: 'c1', platform: 'twitter', username: '작성자', authorChannelId: 'UC_AUTHOR', authorDisplayName: '표시명', text: 'bad', timestamp: '2026-08-21T00:00:00Z', risk: { category: '제품 불만', reason: '맛이 없다고 평가' } },
     'fp', '1.2', 'hash123', fetchImpl);
   assert.match(request.url, /on_conflict=fingerprint/);
   const body = JSON.parse(request.options.body);
@@ -45,6 +45,8 @@ test('recordAlert writes a conflict-safe row', async () => {
   assert.equal(body.product_name, 'JD멜');
   assert.equal(body.channel_category, '바이럴 (영상)');
   assert.equal(body.comment_timestamp, '2026-08-21T00:00:00Z');
+  assert.equal(body.author_channel_id, 'UC_AUTHOR');
+  assert.equal(body.author_display_name, '표시명');
   assert.equal(inserted.id, 1);
 });
 
@@ -57,6 +59,23 @@ test('recordAlert preserves Meta ad source identifiers for server-side moderatio
   assert.equal(body.source, 'meta_ads');
   assert.equal(body.meta_media_id, 'm1');
   assert.equal(body.meta_ad_id, 'a1');
+});
+
+test('작성자 컬럼 migration 전에는 구형 payload로 한 번만 fail-open한다', async () => {
+  const bodies = [];
+  const config = { supabaseUrl: 'https://db.test', supabaseKey: 'key', slackChannelId: 'C1' };
+  const fetchImpl = async (_url, options) => {
+    bodies.push(JSON.parse(options.body));
+    if (bodies.length === 1) return { ok: false, status: 400, text: async () => "Could not find the 'author_channel_id' column" };
+    return { ok: true, status: 201, json: async () => [{ id: 2 }] };
+  };
+  const inserted = await recordAlert(config, { url: 'https://youtu.be/v1' }, {
+    id: 'c1', platform: 'youtube', text: 'bad', authorChannelId: 'UC_AUTHOR', authorDisplayName: '작성자',
+  }, 'fp', '1.2', null, fetchImpl);
+  assert.equal(bodies.length, 2);
+  assert.equal(bodies[0].author_channel_id, 'UC_AUTHOR');
+  assert.equal('author_channel_id' in bodies[1], false);
+  assert.equal(inserted.id, 2);
 });
 
 test('loads recently alerted post keys for intensive monitoring', async () => {

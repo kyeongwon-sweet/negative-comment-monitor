@@ -1,0 +1,43 @@
+name: YouTube repeat offender report
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_comments:
+        description: Candidate threshold by negative-comment count
+        required: false
+        default: '3'
+      min_videos:
+        description: Candidate threshold by distinct video count
+        required: false
+        default: '2'
+      notify_slack:
+        description: Post the candidate report to Slack
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts
+      - name: Build owned-channel repeat-offender report
+        run: npm run report:youtube-repeat-offenders
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          YOUTUBE_REPEAT_OFFENDER_MIN_COMMENTS: ${{ inputs.min_comments }}
+          YOUTUBE_REPEAT_OFFENDER_MIN_VIDEOS: ${{ inputs.min_videos }}
+          YOUTUBE_REPEAT_OFFENDER_NOTIFY_SLACK: ${{ inputs.notify_slack }}
