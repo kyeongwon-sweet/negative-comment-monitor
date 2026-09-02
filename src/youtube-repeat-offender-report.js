@@ -112,30 +112,33 @@ export function buildRepeatOffenderCandidates(alerts, options = {}) {
 
 async function loadYouTubeAlerts(config, fetchImpl) {
   const rows = [];
+  let authorSchemaAvailable = true;
   for (let offset = 0; ; offset += 1000) {
     const url = new URL(`${config.supabaseUrl}/rest/v1/negative_comment_alerts`);
-    url.searchParams.set('select', [
+    const baseColumns = [
       'id', 'source', 'platform', 'comment_id', 'comment_text', 'post_url', 'review_decision',
-      'author_channel_id', 'author_display_name',
-    ].join(','));
+    ];
+    url.searchParams.set('select', [...baseColumns, 'author_channel_id', 'author_display_name'].join(','));
     url.searchParams.set('platform', 'eq.youtube');
     url.searchParams.set('comment_id', 'not.is.null');
     url.searchParams.set('order', 'alerted_at.asc');
     url.searchParams.set('offset', String(offset));
     url.searchParams.set('limit', '1000');
-    const response = await fetchImpl(url, { headers: headers(config) });
+    let response = await fetchImpl(url, { headers: headers(config) });
     if (!response.ok) {
       const text = await response.text();
-      const hint = /author_channel_id|author_display_name/i.test(text)
-        ? '; run supabase/012_youtube_comment_authors.sql'
-        : '';
-      throw new Error(`YouTube author alert query failed (${response.status})${hint}`);
+      if (response.status === 400 && /author_channel_id|author_display_name/i.test(text)) {
+        authorSchemaAvailable = false;
+        url.searchParams.set('select', baseColumns.join(','));
+        response = await fetchImpl(url, { headers: headers(config) });
+      }
+      if (!response.ok) throw new Error(`YouTube author alert query failed (${response.status})`);
     }
     const page = await response.json();
     rows.push(...page);
     if (page.length < 1000) break;
   }
-  return rows;
+  return { rows, authorSchemaAvailable };
 }
 
 async function fetchCommentAuthors(config, alerts, ownerByVideo, accessTokens, fetchImpl) {
@@ -281,7 +284,8 @@ async function postSlack(config, text, fetchImpl) {
 export async function prepareYouTubeRepeatOffenderReport(
   config = loadYouTubeRepeatOffenderConfig(), fetchImpl = fetch,
 ) {
-  const alerts = (await loadYouTubeAlerts(config, fetchImpl)).filter(isNegativeAlertForOffenderReport);
+  const loaded = await loadYouTubeAlerts(config, fetchImpl);
+  const alerts = loaded.rows.filter(isNegativeAlertForOffenderReport);
   const owners = await loadYouTubeOwnerTokens(config, fetchImpl);
   const accessTokens = new Map();
   const ownerTokenFailures = [];
@@ -304,7 +308,9 @@ export async function prepareYouTubeRepeatOffenderReport(
         }
       : { ...row, owner_channel_id: ownerChannelId };
   });
-  const authorsPersisted = await persistAuthors(config, enriched, fetchImpl);
+  const authorsPersisted = loaded.authorSchemaAvailable
+    ? await persistAuthors(config, enriched, fetchImpl)
+    : 0;
   const candidates = buildRepeatOffenderCandidates(enriched, config);
   const firstToken = accessTokens.values().next().value;
   const handles = firstToken ? await fetchAuthorHandles(config, candidates, firstToken, fetchImpl) : new Map();
@@ -316,6 +322,7 @@ export async function prepareYouTubeRepeatOffenderReport(
   }
   const summary = {
     youtubeAlerts: alerts.length,
+    authorSchemaAvailable: loaded.authorSchemaAvailable,
     ownedAlerts: ownedAlerts.length,
     authorsPersisted,
     unresolvedAuthorAlerts: authorLookup.unresolved,
