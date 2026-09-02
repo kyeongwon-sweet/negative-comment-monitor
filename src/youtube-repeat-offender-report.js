@@ -144,6 +144,10 @@ async function loadYouTubeAlerts(config, fetchImpl) {
 async function fetchCommentAuthors(config, alerts, ownerByVideo, accessTokens, fetchImpl) {
   const byComment = new Map();
   let unresolved = 0;
+  let requested = 0;
+  let returnedCount = 0;
+  let authorFieldMissing = 0;
+  let notReturned = 0;
   const groups = new Map();
   for (const alert of alerts) {
     const existingId = clean(alert.author_channel_id);
@@ -163,6 +167,7 @@ async function fetchCommentAuthors(config, alerts, ownerByVideo, accessTokens, f
   for (const [ownerId, ownerAlerts] of groups) {
     const accessToken = accessTokens.get(ownerId);
     for (const batch of chunk(ownerAlerts, 50)) {
+      requested += batch.length;
       const url = new URL(`${config.youtubeApiBase}/comments`);
       url.searchParams.set('part', 'id,snippet');
       url.searchParams.set('id', batch.map((row) => row.comment_id).join(','));
@@ -173,22 +178,33 @@ async function fetchCommentAuthors(config, alerts, ownerByVideo, accessTokens, f
         unresolved += batch.length;
         continue;
       }
-      const returned = new Set();
+      const returnedIds = new Set();
       for (const item of payload.items || []) {
         const commentId = clean(item.id);
         const authorChannelId = authorIdFromSnippet(item.snippet);
         if (!commentId) continue;
-        returned.add(commentId);
-        if (!authorChannelId) { unresolved += 1; continue; }
+        returnedIds.add(commentId);
+        returnedCount += 1;
+        if (!authorChannelId) { unresolved += 1; authorFieldMissing += 1; continue; }
         byComment.set(commentId, {
           authorChannelId,
           authorDisplayName: clean(item.snippet?.authorDisplayName),
         });
       }
-      unresolved += batch.filter((row) => !returned.has(clean(row.comment_id))).length;
+      const missingCount = batch.filter((row) => !returnedIds.has(clean(row.comment_id))).length;
+      notReturned += missingCount;
+      unresolved += missingCount;
     }
   }
-  return { byComment, unresolved, failures };
+  return {
+    byComment,
+    unresolved,
+    failures,
+    requested,
+    returned: returnedCount,
+    authorFieldMissing,
+    notReturned,
+  };
 }
 
 async function persistAuthors(config, alerts, fetchImpl) {
@@ -326,6 +342,10 @@ export async function prepareYouTubeRepeatOffenderReport(
     ownedAlerts: ownedAlerts.length,
     authorsPersisted,
     unresolvedAuthorAlerts: authorLookup.unresolved,
+    authorLookupRequested: authorLookup.requested,
+    authorLookupReturned: authorLookup.returned,
+    authorFieldMissing: authorLookup.authorFieldMissing,
+    commentsNotReturned: authorLookup.notReturned,
     lookupFailures: authorLookup.failures.length,
     ownerTokenFailures: ownerTokenFailures.length,
     ownerMappingFailures: ownerErrors.length,
