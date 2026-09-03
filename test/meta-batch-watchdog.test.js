@@ -5,6 +5,7 @@ import {
   buildInflowMessage,
   evaluateBacklog,
   evaluateInflow,
+  evaluateInflowPoll,
   morningStartInstant,
   runMetaBatchWatchdog,
 } from '../src/meta-batch-watchdog.js';
@@ -90,20 +91,71 @@ test('evaluateInflow: 역대 유입 이력이 없으면 정지로 단정하지 �
   });
 });
 
-test('buildInflowMessage: 백로그 장애와 구분되는 웹훅 정지 경고', () => {
+test('evaluateInflowPoll: 활성 광고에 댓글이 없으면 정상 무댓글로 억제', () => {
+  assert.deepEqual(evaluateInflowPoll({ adsMedia: 12, comments: 0, stored: 0 }), {
+    warn: false,
+    reason: 'benign-no-comments',
+    missing: 0,
+    adsMedia: 12,
+    comments: 0,
+  });
+});
+
+test('evaluateInflowPoll: poll이 DB 누락 댓글을 적재했으면 경고', () => {
+  assert.deepEqual(evaluateInflowPoll({ adsMedia: 12, comments: 3, stored: 2 }), {
+    warn: true,
+    reason: 'db-gap',
+    missing: 2,
+  });
+});
+
+test('evaluateInflowPoll: 댓글이 있어도 모두 DB에 있으면 억제', () => {
+  assert.equal(evaluateInflowPoll({ adsMedia: 12, comments: 3, stored: 0 }).warn, false);
+});
+
+test('evaluateInflowPoll: poll 실패는 경고', () => {
+  assert.deepEqual(evaluateInflowPoll(null, new Error('token expired')), {
+    warn: true,
+    reason: 'poll-failed',
+    missing: 0,
+  });
+});
+
+test('buildInflowMessage: 백로그 장애와 구분되는 DB 누락 경고', () => {
   const msg = buildInflowMessage({
     lastEventAt: NOW - 49 * 3600_000,
     ageHours: 49,
     thresholdHours: 48,
-  }, 'UHKW');
+  }, 'UHKW', { reason: 'db-gap', missing: 2 });
 
-  assert.match(msg, /Meta 인지광고 댓글 웹훅 유입 정지/);
+  assert.match(msg, /Meta 인지광고 댓글 웹훅 유입 이상/);
   assert.match(msg, /48시간 이상/);
+  assert.match(msg, /댓글 2건/);
   assert.match(msg, /subscribed_apps/);
   assert.match(msg, /<@UHKW>/);
 });
 
-test('runMetaBatchWatchdog: 49시간 무유입은 하루 claim 후 Slack 경고하고 monitor는 dispatch하지 않음', async () => {
+test('runMetaBatchWatchdog: 49시간 무유입이어도 활성 광고 댓글 0이면 경고 억제', async () => {
+  const calls = [];
+  const lastReceived = new Date(NOW - 49 * 3600_000).toISOString();
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (String(url).includes('processed_at=is.null')) return jsonResponse([]);
+    if (String(url).includes('order=received_at.desc')) return jsonResponse([{ received_at: lastReceived }]);
+    throw new Error(`unexpected URL: ${url}`);
+  };
+
+  const result = await runMetaBatchWatchdog(ENV, NOW, fetchImpl, {
+    pollMetaAdComments: async () => ({ adsMedia: 12, comments: 0, stored: 0 }),
+  });
+
+  assert.deepEqual(result, { warned: false, dispatched: false });
+  assert.equal(calls.some((call) => call.url.endsWith('/dispatches')), false);
+  assert.equal(calls.some((call) => call.url.includes('cost_usage_ledger')), false);
+  assert.equal(calls.some((call) => call.url === 'https://slack.com/api/chat.postMessage'), false);
+});
+
+test('runMetaBatchWatchdog: poll 실패 시 하루 claim 후 Slack 경고', async () => {
   const calls = [];
   const lastReceived = new Date(NOW - 49 * 3600_000).toISOString();
   const fetchImpl = async (url, options = {}) => {
@@ -117,14 +169,41 @@ test('runMetaBatchWatchdog: 49시간 무유입은 하루 claim 후 Slack 경고�
     throw new Error(`unexpected URL: ${url}`);
   };
 
-  const result = await runMetaBatchWatchdog(ENV, NOW, fetchImpl);
+  const result = await runMetaBatchWatchdog(ENV, NOW, fetchImpl, {
+    pollMetaAdComments: async () => { throw new Error('poll failed'); },
+  });
 
   assert.deepEqual(result, { warned: true, dispatched: false });
-  assert.equal(calls.some((call) => call.url.endsWith('/dispatches')), false);
   const claim = calls.find((call) => call.url.includes('cost_usage_ledger?on_conflict=run_key'));
   assert.equal(JSON.parse(claim.options.body).run_key, 'meta-inflow-stale:2026-08-10');
   const slack = calls.find((call) => call.url === 'https://slack.com/api/chat.postMessage');
-  assert.match(JSON.parse(slack.options.body).text, /웹훅 유입 정지/);
+  assert.match(JSON.parse(slack.options.body).text, /보완 poll이 실패/);
+});
+
+test('runMetaBatchWatchdog: poll이 DB 누락을 복구하면 경고와 monitor 재실행', async () => {
+  const calls = [];
+  const lastReceived = new Date(NOW - 49 * 3600_000).toISOString();
+  const env = { ...ENV, GITHUB_REPOSITORY: 'owner/repo', GITHUB_TOKEN: 'gh-token', GITHUB_REF_NAME: 'master' };
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (String(url).includes('processed_at=is.null')) return jsonResponse([]);
+    if (String(url).includes('order=received_at.desc')) return jsonResponse([{ received_at: lastReceived }]);
+    if (String(url).endsWith('/actions/workflows/monitor.yml/dispatches')) return new Response(null, { status: 204 });
+    if (String(url).includes('cost_usage_ledger?on_conflict=run_key')) {
+      return jsonResponse([{ run_key: 'meta-inflow-stale:2026-08-10' }], 201);
+    }
+    if (url === 'https://slack.com/api/chat.postMessage') return jsonResponse({ ok: true });
+    throw new Error(`unexpected URL: ${url}`);
+  };
+
+  const result = await runMetaBatchWatchdog(env, NOW, fetchImpl, {
+    pollMetaAdComments: async () => ({ adsMedia: 12, comments: 2, stored: 2 }),
+  });
+
+  assert.deepEqual(result, { warned: true, dispatched: true });
+  assert.equal(calls.filter((call) => call.url.endsWith('/dispatches')).length, 1);
+  const slack = calls.find((call) => call.url === 'https://slack.com/api/chat.postMessage');
+  assert.match(JSON.parse(slack.options.body).text, /댓글 2건/);
 });
 
 test('runMetaBatchWatchdog: 2시간 전 유입이 있으면 claim·Slack·dispatch 없이 정상', async () => {

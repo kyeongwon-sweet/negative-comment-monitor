@@ -3,9 +3,13 @@
 // 창(KST 8~11) 밖이라 스킵돼 배치가 조용히 누락되는 경우(주말 30건 적체 사고)를 못 잡는다.
 // → 여기선 결과(증상)를 직접 본다: '아침 창 시작(08:00) 전에 들어온 웹훅 이벤트가
 //   워치독 시점(정오 이후)에도 미처리로 남아있으면' 아침 배치가 안 돈 것 → 자가치유 + 경고.
-// 별도로 마지막 웹훅 수신 시각도 확인한다. 미처리 행이 0이어도 유입 자체가 오래 끊겼다면
-// 배치 성공으로 오판하지 않고 하루 한 번 경고한다.
+// 별도로 마지막 웹훅 수신 시각도 확인한다. 다만 저볼륨 광고의 정상적인 무댓글 기간을
+// 장애로 오판하지 않도록, 유입이 오래 끊겼을 때는 Marketing API poll을 먼저 실행한다.
+// poll 실패 또는 poll이 새 댓글을 찾아 DB 누락을 복구한 경우에만 하루 한 번 경고한다.
 // DB(meta_ad_comment_events)만 조회. 정상이면 조용히 종료(알림 없음).
+
+import { loadMetaAdsConfig } from './meta-ads.js';
+import { pollMetaAdComments } from './meta-ads-poll.js';
 
 const HOUR = 3600 * 1000;
 function kstDate(now) { return new Date(now + 9 * HOUR).toISOString().slice(0, 10); }
@@ -39,6 +43,27 @@ export function evaluateInflow(lastEvent, now = Date.now(), staleHours = 48) {
   return { stale: ageHours > thresholdHours, lastEventAt, ageHours, thresholdHours };
 }
 
+// zero-inflow는 그 자체로 장애가 아니다. 활성 광고에 새 댓글이 없는 정상 저볼륨 기간과
+// 웹훅 장애를 구분하기 위해 poll 결과를 함께 본다.
+// - poll 실패/스킵: 정상 여부를 확인하지 못했으므로 경고
+// - stored > 0: 광고 댓글이 DB에 없었다가 poll로 복구됨 = 실제 유입 갭이므로 경고
+// - 그 외: 광고/댓글이 없거나 조회된 댓글이 이미 DB에 있음 = 정상 조용함
+export function evaluateInflowPoll(pollSummary, pollError = null) {
+  if (pollError) return { warn: true, reason: 'poll-failed', missing: 0 };
+  if (!pollSummary || pollSummary.skipped) return { warn: true, reason: 'poll-unverified', missing: 0 };
+  const missing = Math.max(0, Number(pollSummary.stored) || 0);
+  if (missing > 0) return { warn: true, reason: 'db-gap', missing };
+  const adsMedia = Math.max(0, Number(pollSummary.adsMedia) || 0);
+  const comments = Math.max(0, Number(pollSummary.comments) || 0);
+  return {
+    warn: false,
+    reason: adsMedia > 0 && comments === 0 ? 'benign-no-comments' : 'benign-no-missing',
+    missing: 0,
+    adsMedia,
+    comments,
+  };
+}
+
 export function buildBacklogMessage(now, res, assigneeOther = '') {
   const owner = String(assigneeOther || '').trim();
   return [
@@ -50,12 +75,16 @@ export function buildBacklogMessage(now, res, assigneeOther = '') {
   ].filter(Boolean).join('\n');
 }
 
-export function buildInflowMessage(res, assigneeOther = '') {
+export function buildInflowMessage(res, assigneeOther = '', pollGate = null) {
   const owner = String(assigneeOther || '').trim();
+  const detail = pollGate?.reason === 'db-gap'
+    ? `보완 poll에서 DB에 없던 댓글 ${pollGate.missing}건을 찾아 적재했습니다.`
+    : '보완 poll이 실패해 정상 무댓글 상태인지 확인하지 못했습니다.';
   return [
-    '⚠️ *Meta 인지광고 댓글 웹훅 유입 정지*',
+    '⚠️ *Meta 인지광고 댓글 웹훅 유입 이상*',
     `최근 유입 ${fmtKst(res.lastEventAt)} · ${res.thresholdHours}시간 이상 신규 이벤트가 없습니다.`,
-    '미처리 큐가 0건이어도 웹훅·페이지 subscribed_apps·Meta 토큰·광고 집행 상태를 확인해야 합니다.',
+    detail,
+    '웹훅·페이지 subscribed_apps·Meta 토큰 상태를 확인하세요.',
     owner ? `담당자: <@${owner}>` : '',
   ].filter(Boolean).join('\n');
 }
@@ -140,7 +169,7 @@ async function postSlack(env, text, fetchImpl) {
   return payload;
 }
 
-export async function runMetaBatchWatchdog(env = process.env, now = Date.now(), fetchImpl = fetch) {
+export async function runMetaBatchWatchdog(env = process.env, now = Date.now(), fetchImpl = fetch, deps = {}) {
   const windowStart = Number(env.META_ADS_WINDOW_START || 8);
   const staleHours = Number(env.META_INFLOW_STALE_HOURS || 48);
   const [events, lastEvent] = await Promise.all([
@@ -149,6 +178,7 @@ export async function runMetaBatchWatchdog(env = process.env, now = Date.now(), 
   ]);
   const res = evaluateBacklog(events, now, windowStart);
   const inflow = evaluateInflow(lastEvent, now, staleHours);
+  const pollFn = deps.pollMetaAdComments || pollMetaAdComments;
   let warned = false;
   let dispatched = false;
 
@@ -159,7 +189,25 @@ export async function runMetaBatchWatchdog(env = process.env, now = Date.now(), 
     warned = true;
   }
 
+  let inflowPoll = null;
   if (inflow.stale) {
+    const pollEnv = { ...env, META_ADS_POLL_FORCE: 'true' };
+    let pollSummary = null;
+    let pollError = null;
+    try {
+      pollSummary = await pollFn(loadMetaAdsConfig(pollEnv, now), fetchImpl, now, pollEnv);
+    } catch (error) {
+      pollError = error;
+      console.error(`[meta-watchdog] zero-inflow 확인 poll 실패: ${error.message}`);
+    }
+    inflowPoll = evaluateInflowPoll(pollSummary, pollError);
+  }
+
+  if (inflow.stale && inflowPoll?.warn) {
+    // poll이 새 댓글을 복구했다면 다음 정기 회차까지 기다리지 않고 즉시 처리한다.
+    if (inflowPoll.reason === 'db-gap' && !dispatched) {
+      dispatched = await dispatchMonitor(env, fetchImpl).catch(() => false);
+    }
     let claim = null;
     try {
       claim = await claimInflowWarning(env, now, fetchImpl);
@@ -169,19 +217,21 @@ export async function runMetaBatchWatchdog(env = process.env, now = Date.now(), 
     }
     if (!claim || claim.claimed) {
       try {
-        await postSlack(env, buildInflowMessage(inflow, env.SLACK_ASSIGNEE_OTHER), fetchImpl);
-        console.error(`[meta-watchdog] ZERO_INFLOW — 마지막 유입 ${fmtKst(inflow.lastEventAt)} (${inflow.ageHours.toFixed(1)}h 전), 경고 발송`);
+        await postSlack(env, buildInflowMessage(inflow, env.SLACK_ASSIGNEE_OTHER, inflowPoll), fetchImpl);
+        console.error(`[meta-watchdog] ZERO_INFLOW(${inflowPoll.reason}) — 마지막 유입 ${fmtKst(inflow.lastEventAt)} (${inflow.ageHours.toFixed(1)}h 전), 경고 발송`);
         warned = true;
       } catch (error) {
         if (claim?.claimed) await releaseInflowWarning(env, claim.runKey, fetchImpl);
         throw error;
       }
     } else {
-      console.error(`[meta-watchdog] ZERO_INFLOW — 마지막 유입 ${fmtKst(inflow.lastEventAt)} (${inflow.ageHours.toFixed(1)}h 전), 오늘 경고는 이미 발송됨`);
+      console.error(`[meta-watchdog] ZERO_INFLOW(${inflowPoll.reason}) — 마지막 유입 ${fmtKst(inflow.lastEventAt)} (${inflow.ageHours.toFixed(1)}h 전), 오늘 경고는 이미 발송됨`);
     }
   }
 
-  if (!warned && !inflow.stale) {
+  if (!warned && inflow.stale && inflowPoll && !inflowPoll.warn) {
+    console.log(`[meta-watchdog] OK — zero-inflow poll 정상(${inflowPoll.reason}, adsMedia=${inflowPoll.adsMedia}, comments=${inflowPoll.comments}), 경고 억제`);
+  } else if (!warned && !inflow.stale) {
     const inflowText = inflow.lastEventAt == null ? '유입 이력 없음' : `마지막 유입 ${fmtKst(inflow.lastEventAt)}`;
     console.log(`[meta-watchdog] OK — 창 전 미처리 없음(전체 미처리 ${res.total}), ${inflowText}`);
   }
