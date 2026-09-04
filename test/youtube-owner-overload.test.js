@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   assessOwnerCommentOverload,
+  buildCumulativeOwnerOverloadAssessments,
   buildOwnerOverloadBlocks,
   buildOwnerOverloadWarning,
   maybeWarnOwnerCommentOverload,
@@ -53,6 +54,55 @@ test('엔터·가십 반응을 LLM이 과민 판정해도 과부하 고신뢰 �
   assert.equal(result.negatives, 2);
   assert.equal(result.suppressedNegatives, 4);
   assert.equal(result.overloaded, false);
+});
+
+test('누적 과부하는 사람의 유지 결정과 과민 LLM 오탐을 제외하고 모든 추적 영상을 평가한다', () => {
+  const targets = [
+    { ...target, youtubeVideoId: 'video-a', youtubeCommentCount: 50 },
+    { ...target, youtubeVideoId: 'video-b', youtubeCommentCount: 10 },
+    { ...target, youtubeVideoId: 'video-third-party', youtubeCommentCount: 10, ownedChannelBrandHostilityScope: false },
+  ];
+  const rows = [];
+  for (let index = 0; index < 20; index += 1) {
+    rows.push({
+      comment_id: `a-${index}`,
+      comment_text: '쫀득바 맛없으니 사지마',
+      category: '제품 불만',
+      post_url: 'https://www.youtube.com/watch?v=video-a',
+      review_decision: 'hidden',
+    });
+  }
+  rows.push(
+    {
+      comment_id: 'a-fp', comment_text: '쫀득바 맛없으니 사지마', category: '제품 불만',
+      post_url: 'https://www.youtube.com/watch?v=video-a', review_decision: 'false_positive',
+    },
+    {
+      comment_id: 'a-chat', comment_text: '광고 참신하다 잘 만들었네', category: '브랜드 적대/조롱',
+      post_url: 'https://www.youtube.com/watch?v=video-a', review_decision: 'hidden',
+    },
+  );
+  for (let index = 0; index < 4; index += 1) {
+    rows.push({
+      comment_id: `b-${index}`,
+      comment_text: '라라스윗 진짜 비호감',
+      category: '브랜드 적대/조롱',
+      post_url: 'https://youtube.com/shorts/video-b',
+      review_decision: null,
+    });
+  }
+  rows.push({
+    comment_id: 'third', comment_text: '쫀득바 맛없음', category: '제품 불만',
+    post_url: 'https://youtube.com/watch?v=video-third-party', review_decision: null,
+  });
+
+  const result = buildCumulativeOwnerOverloadAssessments(targets, rows, config);
+  assert.deepEqual(result.map(({ target: row, assessment }) => [
+    row.youtubeVideoId, assessment.negatives, assessment.total, assessment.cumulative,
+  ]), [
+    ['video-a', 20, 50, true],
+    ['video-b', 4, 10, true],
+  ]);
 });
 
 test('소유채널 개별 알림도 동일 고신뢰 게이트를 쓰고 일반 채널은 건드리지 않는다', () => {

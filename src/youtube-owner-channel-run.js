@@ -16,7 +16,7 @@ import {
   saveOwnerVideoStates,
 } from './youtube-owner-channel.js';
 import {
-  assessOwnerCommentOverload,
+  loadCumulativeOwnerOverloadAssessments,
   maybeWarnOwnerCommentOverload,
 } from './youtube-owner-overload.js';
 import { suppressLowConfidenceOwnerRisks } from './youtube-owner-risk.js';
@@ -109,6 +109,7 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
     comments: collected.comments,
     entries: collected.entries.length,
     sentAlerts: 0,
+    overloadCandidates: 0,
     overloadWarnings: 0,
     overloadWarningFailures: 0,
     channelFailures: collected.channelFailures,
@@ -181,26 +182,37 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
       summary.sentAlerts += 1;
     }
 
-    if (!config.dryRun && target.ownedChannelBrandHostilityScope === true) {
-      try {
-        const assessment = assessOwnerCommentOverload(comments, risks, config, target);
+  }
+
+  // 과부하는 '이번 회차에 우연히 읽은 댓글 묶음'이 아니라 최근 감시 기간의
+  // 누적 고신뢰 악플로 판정한다. 사람이 오탐/유지한 댓글은 집계에서 제외된다.
+  try {
+    const overloads = await loadCumulativeOwnerOverloadAssessments(
+      config, collected.trackedTargets || [], fetchImpl, now,
+    );
+    summary.overloadCandidates = overloads.length;
+    if (!config.dryRun) {
+      for (const { target, assessment } of overloads) {
         const route = threadRouteForOwnerTarget(target);
         const overload = await maybeWarnOwnerCommentOverload(
           config,
           target,
           assessment,
-          assessment.overloaded ? await threadFor(target) : '',
+          await threadFor(target),
           assigneeForTarget(route.target, config.slackAssignees),
           fetchImpl,
           now,
         );
-        if (overload.alerted) summary.overloadWarnings += 1;
+        if (overload.alerted) {
+          summary.overloadWarnings += 1;
+          if (config.youtubeOwnerAlertDelayMs > 0) await wait(config.youtubeOwnerAlertDelayMs);
+        }
         if (overload.error) throw new Error(overload.error);
-      } catch (error) {
-        summary.overloadWarningFailures += 1;
-        console.error(`[youtube-owner-overload:degraded] ${error.message}`);
       }
     }
+  } catch (error) {
+    summary.overloadWarningFailures += 1;
+    console.error(`[youtube-owner-overload:degraded] ${error.message}`);
   }
 
   if (!config.dryRun) {
@@ -262,7 +274,7 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
       kstDate: kstDateKey(now), apifyUsd: 0, anthropicUsd: estimatedUsd,
     }, fetchImpl);
   }
-  console.error(`[youtube-owner-channel] channels=${summary.channels}/${summary.totalConfiguredChannels} authenticated=${summary.authenticatedChannels} missingOAuth=${summary.oauthCoverage.missing} videos=${summary.videos} due=${summary.due} deepDue=${summary.deepDue} spikeDue=${summary.spikeDue} paginationDeepDue=${summary.paginationDeepDue} riskDue=${summary.riskDue} riskSignals=${summary.riskSignals} unchanged=${summary.unchanged} noSignal=${summary.noSignal} comments=${summary.comments} alerts=${summary.sentAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} fallback=${llmStats.keywordFallbackComments || 0} deferred=${llmStats.llmDeferredComments || 0} failures=${summary.channelFailures.length} softDegraded=${summary.softDegraded.length} est=$${estimatedUsd.toFixed(5)}`);
+  console.error(`[youtube-owner-channel] channels=${summary.channels}/${summary.totalConfiguredChannels} authenticated=${summary.authenticatedChannels} missingOAuth=${summary.oauthCoverage.missing} videos=${summary.videos} due=${summary.due} deepDue=${summary.deepDue} spikeDue=${summary.spikeDue} paginationDeepDue=${summary.paginationDeepDue} riskDue=${summary.riskDue} riskSignals=${summary.riskSignals} unchanged=${summary.unchanged} noSignal=${summary.noSignal} comments=${summary.comments} alerts=${summary.sentAlerts} overloadCandidates=${summary.overloadCandidates} overloadWarnings=${summary.overloadWarnings} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} fallback=${llmStats.keywordFallbackComments || 0} deferred=${llmStats.llmDeferredComments || 0} failures=${summary.channelFailures.length} softDegraded=${summary.softDegraded.length} est=$${estimatedUsd.toFixed(5)}`);
   if (summary.channelFailures.length) {
     summary.degraded.push({
       stage: 'collection',

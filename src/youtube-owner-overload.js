@@ -2,6 +2,10 @@ import { createHash } from 'node:crypto';
 import { recordPlatformOutcome } from './platform-health.js';
 import { postThreadBlocks } from './slack.js';
 import { isHighConfidenceOwnerRisk } from './youtube-owner-risk.js';
+import { extractPostKey } from './delta.js';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const HUMAN_KEEP_DECISIONS = new Set(['false_positive', 'ignore', 'approve', 'unhide']);
 
 function safeVideoId(target) {
   return String(target?.youtubeVideoId || '').trim();
@@ -41,6 +45,91 @@ export function assessOwnerCommentOverload(comments, risks, config, target = {})
     minComments,
     overloaded,
   };
+}
+
+function cumulativeAssessment(totalValue, negativeValue, config) {
+  const negatives = Math.max(0, Number(negativeValue || 0));
+  // 자동숨김 뒤 YouTube의 공개 commentCount가 내려갈 수 있다. 분모가 누적 악플보다
+  // 작아져 100%를 넘지 않도록 최소한 누적 악플 수만큼은 총 댓글로 인정한다.
+  const total = Math.max(negatives, Number(totalValue || 0));
+  const countThreshold = Number(config.youtubeOwnerOverloadNegativeCount || 20);
+  const ratioThreshold = Number(config.youtubeOwnerOverloadRatioPercent || 40);
+  const minComments = Number(config.youtubeOwnerOverloadMinComments || 10);
+  const ratioPercent = total ? (negatives / total) * 100 : 0;
+  return {
+    total,
+    negatives,
+    rawNegatives: negatives,
+    suppressedNegatives: 0,
+    ratioPercent,
+    countThreshold,
+    ratioThreshold,
+    minComments,
+    overloaded: negatives >= countThreshold
+      || (total >= minComments && ratioPercent >= ratioThreshold),
+    cumulative: true,
+  };
+}
+
+export function buildCumulativeOwnerOverloadAssessments(targets, rows, config) {
+  const targetByVideo = new Map((targets || [])
+    .filter((target) => target?.ownedChannelBrandHostilityScope === true && safeVideoId(target))
+    .map((target) => [safeVideoId(target), target]));
+  const negativesByVideo = new Map();
+  for (const row of rows || []) {
+    if (HUMAN_KEEP_DECISIONS.has(String(row?.review_decision || '').trim().toLowerCase())) continue;
+    const postKey = extractPostKey(row?.post_url);
+    const videoId = postKey?.startsWith('yt:') ? postKey.slice(3) : '';
+    const target = targetByVideo.get(videoId);
+    if (!target) continue;
+    const comment = { id: row?.comment_id, text: String(row?.comment_text || '') };
+    const risk = { alert: true, category: row?.category, reason: row?.reason };
+    // 과거 LLM 오탐을 누적 수치로 되살리지 않는다. 현재 개별 카드와 동일한
+    // 고신뢰 게이트를 다시 적용하고 사람의 유지/오탐 결정은 위에서 제외한다.
+    if (!isHighConfidenceOwnerRisk(target, comment, risk)) continue;
+    const fingerprint = String(row?.comment_id || `${videoId}\u001f${comment.text}`).trim();
+    if (!fingerprint) continue;
+    if (!negativesByVideo.has(videoId)) negativesByVideo.set(videoId, new Set());
+    negativesByVideo.get(videoId).add(fingerprint);
+  }
+
+  const out = [];
+  for (const [videoId, target] of targetByVideo) {
+    const assessment = cumulativeAssessment(
+      target.youtubeCommentCount,
+      negativesByVideo.get(videoId)?.size || 0,
+      config,
+    );
+    if (assessment.overloaded) out.push({ target, assessment });
+  }
+  return out.sort((a, b) => b.assessment.negatives - a.assessment.negatives
+    || safeVideoId(a.target).localeCompare(safeVideoId(b.target)));
+}
+
+function supabaseHeaders(config) {
+  return { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}` };
+}
+
+export async function loadCumulativeOwnerOverloadAssessments(
+  config, targets, fetchImpl = fetch, now = Date.now(),
+) {
+  const cutoff = new Date(now - Number(config.youtubeOwnerRiskLookbackDays || 60) * DAY_MS).toISOString();
+  const rows = [];
+  for (let offset = 0; ; offset += 1000) {
+    const url = new URL(`${config.supabaseUrl}/rest/v1/negative_comment_alerts`);
+    url.searchParams.set('select', 'comment_id,comment_text,category,reason,post_url,review_decision');
+    url.searchParams.set('platform', 'eq.youtube');
+    url.searchParams.set('alerted_at', `gte.${cutoff}`);
+    url.searchParams.set('order', 'alerted_at.asc');
+    url.searchParams.set('offset', String(offset));
+    url.searchParams.set('limit', '1000');
+    const response = await fetchImpl(url, { headers: supabaseHeaders(config) });
+    if (!response.ok) throw new Error(`YouTube owner cumulative overload GET failed (${response.status})`);
+    const page = await response.json();
+    rows.push(...page);
+    if (page.length < 1000) break;
+  }
+  return buildCumulativeOwnerOverloadAssessments(targets, rows, config);
 }
 
 export function buildOwnerOverloadWarning(target, assessment, assignee = '') {

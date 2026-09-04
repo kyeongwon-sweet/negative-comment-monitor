@@ -225,6 +225,29 @@ export function inferOwnerVideoProduct(video, fallback = 'JD') {
   return String(fallback || 'JD').trim() || 'JD';
 }
 
+function ownerChannelTarget(config, channel, channelName, video, videoId, decision) {
+  const ownedChannelBrandHostilityScope = YOUTUBE_BRAND_HOSTILITY_CHANNEL_IDS.has(channel.channelId);
+  return {
+    platform: 'youtube',
+    url: `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`,
+    postKey: `yt:${videoId}`,
+    channelName,
+    channelCategory: channel.channelCategory,
+    productName: inferOwnerVideoProduct(video, config.youtubeOwnerDefaultProductName),
+    brandName: config.brandContext,
+    caption: [video.snippet?.title, video.snippet?.description].filter(Boolean).join(' / '),
+    youtubeVideoId: videoId,
+    youtubeCommentCount: Number.isFinite(Number(decision?.current)) ? Number(decision.current) : null,
+    ownerChannelId: channel.channelId,
+    isManagedAccount: true,
+    // 대표님 승인 B 정책은 먹짱언니·썰푸는앵무새에만 적용한다. 위성·협찬·제3자
+    // 채널에는 이 플래그를 절대 전달하지 않는다.
+    ownedChannelBrandHostilityScope,
+    fullContextReview: ownedChannelBrandHostilityScope || decision?.highComment === true,
+    bypassClassificationCache: decision?.forceReclassify === true,
+  };
+}
+
 export function shouldScanOwnerVideo(video, previous, options = {}) {
   const current = Number(video?.statistics?.commentCount);
   if (!Number.isFinite(current) || current < 0) return { due: false, reason: 'no-signal', current: null };
@@ -391,6 +414,7 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
     }));
   if (!owners.length) throw new Error('No configured YouTube owner OAuth channels are available');
   const entries = [];
+  const trackedTargets = [];
   const stateUpdates = [];
   const allowedVideoIds = new Set();
   const channelFailures = [];
@@ -443,6 +467,13 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
         const { video, videoId, previous, decision } = plan;
         if (!videoId) continue;
         allowedVideoIds.add(videoId);
+        // 과부하 평가는 이번 회차에 댓글 본문을 읽은 영상만이 아니라 감시 중인
+        // 모든 소유 영상을 대상으로 한다. 그래야 델타가 없는 오래된 바이럴 영상도
+        // 누적 악플 임계에 도달했을 때 알림에서 사라지지 않는다.
+        const target = ownerChannelTarget(
+          config, channel, collected.channelName, video, videoId, decision,
+        );
+        trackedTargets.push(target);
         if (decision.reason === 'no-signal') { counts.noSignal += 1; continue; }
         if (decision.reason === 'zero-baseline') {
           counts.zeroBaseline += 1;
@@ -487,35 +518,18 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
         // 통계가 따라잡기 전까지 다음 회차에도 변화로 인식되어 재확인되므로 stale 신호에
         // 기대어 신규 댓글을 놓치는 구간을 만들지 않는다.
         const checkpointCount = statisticsUnderstated ? observedCount : decision.current;
+        target.youtubeCommentCount = checkpointCount;
+        target.fullContextReview = target.ownedChannelBrandHostilityScope
+          || decision.highComment === true
+          || actualDeepScan;
         counts.comments += comments.length;
         stateUpdates.push(stateRow(
           channel, video, checkpointCount, now, true, previous,
           decision.highComment === true && actualDeepScan !== true,
         ));
         if (!comments.length) continue;
-        const productName = inferOwnerVideoProduct(video, config.youtubeOwnerDefaultProductName);
-        const ownedChannelBrandHostilityScope = YOUTUBE_BRAND_HOSTILITY_CHANNEL_IDS.has(channel.channelId);
         entries.push({
-          target: {
-            platform: 'youtube',
-            url: `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`,
-            postKey: `yt:${videoId}`,
-            channelName: collected.channelName,
-            channelCategory: channel.channelCategory,
-            productName,
-            brandName: config.brandContext,
-            caption: [video.snippet?.title, video.snippet?.description].filter(Boolean).join(' / '),
-            youtubeVideoId: videoId,
-            ownerChannelId: channel.channelId,
-            isManagedAccount: true,
-            // 대표님 승인 B 정책은 먹짱언니·썰푸는앵무새에만 적용한다. 위성·협찬·제3자
-            // 채널에는 이 플래그를 절대 전달하지 않는다.
-            ownedChannelBrandHostilityScope,
-            fullContextReview: ownedChannelBrandHostilityScope
-              || decision.highComment === true
-              || actualDeepScan,
-            bypassClassificationCache: decision.forceReclassify === true,
-          },
+          target,
           comments,
         });
       }
@@ -526,6 +540,7 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
   return {
     ...counts,
     entries,
+    trackedTargets,
     stateUpdates,
     allowedVideoIds,
     channelFailures,

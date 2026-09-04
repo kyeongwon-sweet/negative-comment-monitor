@@ -16,6 +16,13 @@ on:
         required: false
         type: boolean
         default: true
+  schedule:
+    # 매일 18:23 KST. 정각 크론 지연 구간을 피하고, 후보가 있을 때만 Slack에 보낸다.
+    - cron: '23 9 * * *'
+
+concurrency:
+  group: youtube-repeat-offender-report
+  cancel-in-progress: false
 
 jobs:
   report:
@@ -38,6 +45,6 @@ jobs:
           GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
-          YOUTUBE_REPEAT_OFFENDER_MIN_COMMENTS: ${{ inputs.min_comments }}
-          YOUTUBE_REPEAT_OFFENDER_MIN_VIDEOS: ${{ inputs.min_videos }}
-          YOUTUBE_REPEAT_OFFENDER_NOTIFY_SLACK: ${{ inputs.notify_slack }}
+          YOUTUBE_REPEAT_OFFENDER_MIN_COMMENTS: ${{ github.event_name == 'workflow_dispatch' && inputs.min_comments || '3' }}
+          YOUTUBE_REPEAT_OFFENDER_MIN_VIDEOS: ${{ github.event_name == 'workflow_dispatch' && inputs.min_videos || '2' }}
+          YOUTUBE_REPEAT_OFFENDER_NOTIFY_SLACK: ${{ github.event_name == 'schedule' && 'true' || inputs.notify_slack && 'true' || 'false' }}

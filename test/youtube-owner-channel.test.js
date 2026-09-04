@@ -240,6 +240,8 @@ test('collector lists recent uploads and calls commentThreads only for changed c
   assert.equal(result.unchanged, 1);
   assert.equal(result.zeroBaseline, 1);
   assert.equal(result.entries.length, 2);
+  assert.equal(result.trackedTargets.length, 4);
+  assert.equal(result.trackedTargets.find((row) => row.youtubeVideoId === 'stale-high').youtubeCommentCount, 250);
   assert.equal(result.stateUpdates.length, 4);
   assert.ok(result.stateUpdates.every((row) => Object.hasOwn(row, 'last_scanned_count') && Object.hasOwn(row, 'last_scanned_at')));
   assert.equal(result.stateUpdates.find((row) => row.video_id === 'stale-high').last_scanned_count, 250);

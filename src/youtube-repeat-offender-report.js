@@ -158,6 +158,13 @@ async function fetchCommentAuthors(config, alerts, ownerByVideo, accessTokens, f
       });
       continue;
     }
+    // 과거 자동숨김(rejected) 댓글은 comments.list(id=...)에서도 더 이상 반환되지
+    // 않아 매일 같은 무의미한 조회만 만든다. 신규 댓글은 숨기기 전에 작성자 ID를
+    // alert 행에 저장하므로, 작성자 없는 과거 hidden 행은 복구 불가로 즉시 제외한다.
+    if (clean(alert.review_decision).toLowerCase() === 'hidden') {
+      unresolved += 1;
+      continue;
+    }
     const ownerId = ownerByVideo.get(videoIdFromAlert(alert));
     if (!ownerId || !accessTokens.get(ownerId)) { unresolved += 1; continue; }
     if (!groups.has(ownerId)) groups.set(ownerId, []);
