@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildYouTubeAdEntries,
   fetchMatchingGoogleAdsCampaigns,
+  fetchYouTubeVideoCommentsWithMeta,
   loadYouTubeAdsConfig,
 } from '../src/youtube-ads.js';
 import { hasYouTubeAdsRunToday, inYouTubeAdsWindow, ownerModerationConfigFromAds, retrySlackRateLimit, youtubeDailyRunKey } from '../src/youtube-ads-run.js';
@@ -32,6 +33,31 @@ const CFG = {
 function jsonResponse(payload, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => payload, text: async () => JSON.stringify(payload) };
 }
+
+test('댓글 조회는 pageInfo 실측치와 페이지 잘림 여부를 함께 반환한다', async () => {
+  const result = await fetchYouTubeVideoCommentsWithMeta({
+    youtubeApiBase: 'https://youtube.test/youtube/v3',
+    youtubeAdsMaxThreadPages: 1,
+    youtubeAdsMaxReplyPages: 1,
+  }, 'video-1', 'access', async () => jsonResponse({
+    pageInfo: { totalResults: 250 },
+    nextPageToken: 'next',
+    items: [{
+      snippet: {
+        totalReplyCount: 0,
+        topLevelComment: {
+          id: 'comment-1',
+          snippet: { authorDisplayName: 'u', textOriginal: 'text', publishedAt: '2026-09-05T00:00:00Z' },
+        },
+      },
+    }],
+  }));
+  assert.equal(result.reportedThreadCount, 250);
+  assert.equal(result.threadCount, 1);
+  assert.equal(result.pagesFetched, 1);
+  assert.equal(result.truncated, true);
+  assert.equal(result.comments.length, 1);
+});
 
 test('loadYouTubeAdsConfig separates Google Ads and channel-owner refresh tokens', () => {
   const config = loadYouTubeAdsConfig({

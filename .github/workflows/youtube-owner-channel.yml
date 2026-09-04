@@ -72,10 +72,14 @@ jobs:
           YOUTUBE_OWNER_MAX_UPLOAD_PAGES: '10'
           YOUTUBE_OWNER_MAX_THREAD_PAGES: '10'
           YOUTUBE_OWNER_MAX_REPLY_PAGES: '100'
-          YOUTUBE_OWNER_QUICK_MAX_THREAD_PAGES: '2'
+          # 변화 감지 회차는 최대 400개 스레드까지 확인. 24h 딥스캔보다 가볍지만
+          # 광고 노출이 큰 소유 영상의 최신 댓글을 2페이지보다 넓게 커버한다.
+          YOUTUBE_OWNER_QUICK_MAX_THREAD_PAGES: '4'
           YOUTUBE_OWNER_DEEP_MAX_THREAD_PAGES: '100'
           YOUTUBE_OWNER_HIGH_COMMENT_THRESHOLD: '200'
           YOUTUBE_OWNER_HIGH_COMMENT_RESCAN_HOURS: '24'
+          # 직전 스캔 대비 댓글 25개 이상 급증하면 24h cadence를 건너뛰고 즉시 딥스캔.
+          YOUTUBE_OWNER_SPIKE_COMMENT_DELTA: '25'
           YOUTUBE_OWNER_RISK_LOOKBACK_DAYS: '60'
           YOUTUBE_OWNER_RECENT_NEGATIVE_DAYS: '7'
           YOUTUBE_OWNER_RECENT_NEGATIVE_RESCAN_HOURS: '3'

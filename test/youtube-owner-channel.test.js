@@ -5,6 +5,8 @@ import {
   inferOwnerVideoProduct,
   loadOwnerVideoRiskSignals,
   loadYouTubeOwnerChannelConfig,
+  ownerCommentEvidence,
+  prioritizeOwnerVideoPlans,
   shouldScanOwnerVideo,
   YOUTUBE_BRAND_HOSTILITY_CHANNEL_IDS,
 } from '../src/youtube-owner-channel.js';
@@ -35,6 +37,8 @@ test('owner channel config includes the two existing owners and eight satellites
   assert.equal(config.youtubeOwnerRecentNegativeRescanHours, 3);
   assert.equal(config.youtubeOwnerHistoricalNegativeThreshold, 5);
   assert.equal(config.youtubeOwnerHistoricalNegativeRescanHours, 24);
+  assert.equal(config.youtubeOwnerQuickMaxThreadPages, 4);
+  assert.equal(config.youtubeOwnerSpikeCommentDelta, 25);
   assert.equal(config.youtubeOwnerCoverageAlertCooldownHours, 168);
 });
 
@@ -70,6 +74,50 @@ test('고댓글 영상은 댓글수 불변이어도 일일 심층검사하고 �
   }, { now, highCommentThreshold: 200, highCommentRescanHours: 24 }), {
     due: true, reason: 'changed', current: 496, highComment: true,
   });
+});
+
+test('댓글 급증 영상은 24시간 딥 cadence 전이어도 즉시 딥스캔한다', () => {
+  const now = Date.parse('2026-09-05T00:00:00Z');
+  const recent = { last_scanned_count: 495, last_scanned_at: '2026-09-04T23:00:00Z' };
+  assert.deepEqual(shouldScanOwnerVideo({ id: 'viral', statistics: { commentCount: '525' } }, recent, {
+    now,
+    highCommentThreshold: 200,
+    highCommentRescanHours: 24,
+    spikeCommentDelta: 25,
+  }), {
+    due: true,
+    reason: 'comment-spike',
+    current: 525,
+    highComment: true,
+    spike: true,
+    increase: 30,
+    deepScan: true,
+  });
+  assert.equal(shouldScanOwnerVideo({ id: 'viral', statistics: { commentCount: '510' } }, recent, {
+    now,
+    highCommentThreshold: 200,
+    highCommentRescanHours: 24,
+    spikeCommentDelta: 25,
+  }).deepScan, undefined);
+});
+
+test('급증·강제·고댓글 딥 후보를 일반 변화보다 먼저 처리한다', () => {
+  const plans = prioritizeOwnerVideoPlans([
+    { video: { id: 'changed' }, decision: { due: true, reason: 'changed', current: 400 } },
+    { video: { id: 'risk' }, decision: { due: true, reason: 'recent-negative-cadence', current: 20, riskScan: true } },
+    { video: { id: 'deep' }, decision: { due: true, reason: 'high-comment-cadence', current: 500, deepScan: true } },
+    { video: { id: 'spike' }, decision: { due: true, reason: 'comment-spike', current: 250, deepScan: true, spike: true } },
+    { video: { id: 'forced' }, decision: { due: true, reason: 'forced-deep-scan', current: 10, deepScan: true } },
+  ]);
+  assert.deepEqual(plans.map((plan) => plan.video.id), ['forced', 'spike', 'deep', 'risk', 'changed']);
+});
+
+test('YouTube 통계보다 실측 페이지네이션 수가 크면 실측값으로 고댓글을 보정한다', () => {
+  assert.equal(ownerCommentEvidence(150, {
+    reportedThreadCount: 260,
+    threadCount: 200,
+    comments: Array.from({ length: 210 }),
+  }), 260);
 });
 
 test('악플 이력이 있는 소유 영상은 공개 댓글수 불변이어도 위험도별 주기로 재스캔한다', () => {
@@ -136,7 +184,10 @@ test('collector lists recent uploads and calls commentThreads only for changed c
     const url = new URL(String(input));
     calls.push(url);
     if (url.hostname === 'db.test' && url.pathname.endsWith('/youtube_owner_video_state')) {
-      return json([{ channel_id: 'owner-1', video_id: 'same', comment_count: 2, last_scanned_count: 2, last_scanned_at: '2026-08-19T00:00:00Z' }]);
+      return json([
+        { channel_id: 'owner-1', video_id: 'same', comment_count: 2, last_scanned_count: 2, last_scanned_at: '2026-08-19T00:00:00Z' },
+        { channel_id: 'owner-1', video_id: 'stale-high', comment_count: 149, last_scanned_count: 149, last_scanned_at: '2026-08-20T02:00:00Z' },
+      ]);
     }
     if (url.hostname === 'db.test' && url.pathname.endsWith('/negative_comment_alerts')) return json([]);
     if (url.hostname === 'db.test' && url.pathname.endsWith('/meta_tokens')) {
@@ -150,16 +201,24 @@ test('collector lists recent uploads and calls commentThreads only for changed c
     if (url.pathname.endsWith('/playlistItems')) return json({ items: [
       { contentDetails: { videoId: 'same', videoPublishedAt: '2026-08-19T00:00:00Z' } },
       { contentDetails: { videoId: 'changed', videoPublishedAt: '2026-08-19T00:00:00Z' } },
+      { contentDetails: { videoId: 'stale-high', videoPublishedAt: '2026-08-19T00:00:00Z' } },
       { contentDetails: { videoId: 'zero', videoPublishedAt: '2026-08-19T00:00:00Z' } },
     ] });
     if (url.pathname.endsWith('/videos')) return json({ items: [
       { id: 'same', snippet: { channelId: 'owner-1', channelTitle: '먹짱언니', title: '쫀득바', publishedAt: '2026-08-19T00:00:00Z' }, statistics: { commentCount: '2' } },
       { id: 'changed', snippet: { channelId: 'owner-1', channelTitle: '먹짱언니', title: '멜론바', publishedAt: '2026-08-19T00:00:00Z' }, statistics: { commentCount: '1' } },
+      { id: 'stale-high', snippet: { channelId: 'owner-1', channelTitle: '먹짱언니', title: '쫀득바', publishedAt: '2026-08-19T00:00:00Z' }, statistics: { commentCount: '150' } },
       { id: 'zero', snippet: { channelId: 'owner-1', channelTitle: '먹짱언니', title: '쫀득바', publishedAt: '2026-08-19T00:00:00Z' }, statistics: { commentCount: '0' } },
     ] });
-    if (url.pathname.endsWith('/commentThreads')) return json({ items: [{
-      snippet: { totalReplyCount: 0, topLevelComment: { id: 'comment-1', snippet: { authorDisplayName: 'u', textOriginal: '별로', publishedAt: '2026-08-20T00:00:00Z' } } },
-    }] });
+    if (url.pathname.endsWith('/commentThreads')) {
+      const videoId = url.searchParams.get('videoId');
+      return json({
+        pageInfo: { totalResults: videoId === 'stale-high' ? 250 : 1 },
+        items: [{
+          snippet: { totalReplyCount: 0, topLevelComment: { id: `comment-${videoId}`, snippet: { authorDisplayName: 'u', textOriginal: '별로', publishedAt: '2026-08-20T00:00:00Z' } } },
+        }],
+      });
+    }
     throw new Error(`unexpected ${url}`);
   };
   const config = loadYouTubeOwnerChannelConfig({
@@ -174,16 +233,19 @@ test('collector lists recent uploads and calls commentThreads only for changed c
   assert.equal(result.totalConfiguredChannels, 1);
   assert.equal(result.authenticatedChannels, 1);
   assert.deepEqual(result.missingOAuthChannels, []);
-  assert.equal(result.videos, 3);
-  assert.equal(result.due, 1);
+  assert.equal(result.videos, 4);
+  assert.equal(result.due, 2);
+  assert.equal(result.deepDue, 1);
+  assert.equal(result.paginationDeepDue, 1);
   assert.equal(result.unchanged, 1);
   assert.equal(result.zeroBaseline, 1);
-  assert.equal(result.entries.length, 1);
-  assert.equal(result.stateUpdates.length, 3);
+  assert.equal(result.entries.length, 2);
+  assert.equal(result.stateUpdates.length, 4);
   assert.ok(result.stateUpdates.every((row) => Object.hasOwn(row, 'last_scanned_count') && Object.hasOwn(row, 'last_scanned_at')));
+  assert.equal(result.stateUpdates.find((row) => row.video_id === 'stale-high').last_scanned_count, 250);
   assert.equal(result.entries[0].target.source, undefined);
-  assert.equal(result.entries[0].comments[0].id, 'comment-1');
-  assert.equal(calls.filter((url) => url.pathname.endsWith('/commentThreads')).length, 1);
+  assert.deepEqual(result.entries.map((entry) => entry.comments[0].id).sort(), ['comment-changed', 'comment-stale-high']);
+  assert.equal(calls.filter((url) => url.pathname.endsWith('/commentThreads')).length, 2);
 });
 
 test('collector isolates one owner OAuth failure and continues another owner', async () => {

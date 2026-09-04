@@ -1,5 +1,5 @@
 import { loadMetaAdsConfig } from './meta-ads.js';
-import { fetchYouTubeVideoComments } from './youtube-ads.js';
+import { fetchYouTubeVideoCommentsWithMeta } from './youtube-ads.js';
 import { loadYouTubeOwnerTokens, refreshAndVerifyOwner } from './youtube-owner-moderation.js';
 import { YOUTUBE_SATELLITE_CHANNELS } from './youtube-satellite-oauth.js';
 import { extractPostKey } from './delta.js';
@@ -84,10 +84,12 @@ export function loadYouTubeOwnerChannelConfig(env = process.env, now = Date.now(
     youtubeApiBase: String(env.YOUTUBE_API_BASE || 'https://www.googleapis.com/youtube/v3').trim().replace(/\/$/, ''),
     youtubeAdsMaxThreadPages: positiveInt(env.YOUTUBE_OWNER_MAX_THREAD_PAGES, 10, 100),
     youtubeAdsMaxReplyPages: positiveInt(env.YOUTUBE_OWNER_MAX_REPLY_PAGES, 100, 100),
-    youtubeOwnerQuickMaxThreadPages: positiveInt(env.YOUTUBE_OWNER_QUICK_MAX_THREAD_PAGES, 2, 10),
+    youtubeOwnerQuickMaxThreadPages: positiveInt(env.YOUTUBE_OWNER_QUICK_MAX_THREAD_PAGES, 4, 10),
     youtubeOwnerDeepMaxThreadPages: positiveInt(env.YOUTUBE_OWNER_DEEP_MAX_THREAD_PAGES, 100, 100),
     youtubeOwnerHighCommentThreshold: positiveInt(env.YOUTUBE_OWNER_HIGH_COMMENT_THRESHOLD, 200, 100_000),
     youtubeOwnerHighCommentRescanHours: positiveInt(env.YOUTUBE_OWNER_HIGH_COMMENT_RESCAN_HOURS, 24, 168),
+    // 통계상 댓글수가 이만큼 급증하면 24시간 cadence를 기다리지 않고 즉시 전수 딥스캔한다.
+    youtubeOwnerSpikeCommentDelta: positiveInt(env.YOUTUBE_OWNER_SPIKE_COMMENT_DELTA, 25, 100_000),
     // 숨김으로 공개 commentCount가 내려가면 신규 댓글 유입과 상쇄돼 델타가 0이 될 수 있다.
     // 최근 악플 영상은 3시간, 과거 악플 누적 영상은 하루 주기로만 재확인해 이 구멍을
     // 막되 전체 소유 영상을 매번 읽는 비용은 피한다.
@@ -244,12 +246,15 @@ export function shouldScanOwnerVideo(video, previous, options = {}) {
   const cadenceMs = Number(options.highCommentRescanHours || 24) * 60 * 60 * 1000;
   const now = Number(options.now || Date.now());
   const deepDue = highComment && (!Number.isFinite(lastScanned) || now - lastScanned >= cadenceMs);
+  const increase = Number.isFinite(last) ? current - last : 0;
+  const spike = increase >= Number(options.spikeCommentDelta || Number.MAX_SAFE_INTEGER);
   if (!Number.isFinite(last) || last !== current) return {
     due: true,
-    reason: 'changed',
+    reason: spike ? 'comment-spike' : 'changed',
     current,
     ...(highComment ? { highComment: true } : {}),
-    ...(deepDue ? { deepScan: true } : {}),
+    ...(spike ? { spike: true, increase } : {}),
+    ...(deepDue || spike ? { deepScan: true } : {}),
   };
   if (highComment) {
     if (deepDue) return { due: true, reason: 'high-comment-cadence', current, highComment: true, deepScan: true };
@@ -277,6 +282,31 @@ export function shouldScanOwnerVideo(video, previous, options = {}) {
     }
   }
   return { due: false, reason: 'unchanged', current };
+}
+
+// 워크플로 제한이나 개별 API 실패가 생겨도 중요한 영상을 먼저 처리하도록 한다.
+// 강제 검사 → 댓글 급증 → 정기 딥 → 위험영상 → 일반 변화 순이며, 같은 등급은 댓글수가 큰 순서다.
+export function prioritizeOwnerVideoPlans(plans) {
+  const rank = (decision) => {
+    if (!decision?.due) return 9;
+    if (decision.reason === 'forced-deep-scan') return 0;
+    if (decision.spike) return 1;
+    if (decision.deepScan) return 2;
+    if (decision.riskScan) return 3;
+    return 4;
+  };
+  return [...(plans || [])].sort((a, b) => (
+    rank(a.decision) - rank(b.decision)
+    || Number(b.decision?.current || 0) - Number(a.decision?.current || 0)
+    || String(a.video?.id || '').localeCompare(String(b.video?.id || ''))
+  ));
+}
+
+export function ownerCommentEvidence(reportedCount, scan = {}) {
+  const candidates = [reportedCount, scan.reportedThreadCount, scan.threadCount, scan.comments?.length]
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  return candidates.length ? Math.max(...candidates) : null;
 }
 
 export async function fetchRecentOwnerUploads(config, channel, accessToken, fetchImpl = fetch, now = Date.now()) {
@@ -330,7 +360,7 @@ function stateRow(channel, video, current, now, scanned, previous = null, preser
     // PostgREST bulk upsert는 배열 행들의 키 집합이 다르면 400을 낼 수 있다. 변화 없음 행도
     // 직전 스캔 값을 명시해 모든 행을 동일한 완전 스키마로 보낸다.
     last_scanned_count: scanned ? current : Number(previous?.last_scanned_count),
-    // 고댓글 영상의 빠른 변화 스캔은 최신 200개만 보므로 일일 전수검사 기준시각을
+    // 고댓글 영상의 빠른 변화 스캔은 제한된 최신 페이지만 보므로 일일 전수검사 기준시각을
     // 전진시키지 않는다. last_scanned_at은 이 경우 마지막 전수검사 시각으로 유지한다.
     last_scanned_at: scanned
       ? (preserveScanMarker ? (previous?.last_scanned_at || null) : new Date(now).toISOString())
@@ -375,6 +405,8 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
     videos: 0,
     due: 0,
     deepDue: 0,
+    spikeDue: 0,
+    paginationDeepDue: 0,
     riskDue: 0,
     unchanged: 0,
     zeroBaseline: 0,
@@ -389,10 +421,8 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
       const collected = await fetchRecentOwnerUploads(config, channel, accessToken, fetchImpl, now);
       counts.channels += 1;
       counts.videos += collected.videos.length;
-      for (const video of collected.videos) {
+      const plans = prioritizeOwnerVideoPlans(collected.videos.map((video) => {
         const videoId = String(video.id || '');
-        if (!videoId) continue;
-        allowedVideoIds.add(videoId);
         const previous = states.get(videoId);
         const decision = shouldScanOwnerVideo(video, previous, {
           now,
@@ -400,12 +430,19 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
           forceReclassify: config.youtubeOwnerForceReclassify,
           highCommentThreshold: config.youtubeOwnerHighCommentThreshold,
           highCommentRescanHours: config.youtubeOwnerHighCommentRescanHours,
+          spikeCommentDelta: config.youtubeOwnerSpikeCommentDelta,
           riskSignals,
           recentNegativeDays: config.youtubeOwnerRecentNegativeDays,
           recentNegativeRescanHours: config.youtubeOwnerRecentNegativeRescanHours,
           historicalNegativeThreshold: config.youtubeOwnerHistoricalNegativeThreshold,
           historicalNegativeRescanHours: config.youtubeOwnerHistoricalNegativeRescanHours,
         });
+        return { video, videoId, previous, decision };
+      }));
+      for (const plan of plans) {
+        const { video, videoId, previous, decision } = plan;
+        if (!videoId) continue;
+        allowedVideoIds.add(videoId);
         if (decision.reason === 'no-signal') { counts.noSignal += 1; continue; }
         if (decision.reason === 'zero-baseline') {
           counts.zeroBaseline += 1;
@@ -418,18 +455,42 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
           continue;
         }
         counts.due += 1;
-        if (decision.deepScan) counts.deepDue += 1;
+        if (decision.spike) counts.spikeDue += 1;
         if (decision.riskScan) counts.riskDue += 1;
-        const scanConfig = decision.deepScan
+        let actualDeepScan = decision.deepScan === true;
+        const scanConfig = actualDeepScan
           ? { ...config, youtubeAdsMaxThreadPages: config.youtubeOwnerDeepMaxThreadPages }
           : decision.highComment
             ? { ...config, youtubeAdsMaxThreadPages: config.youtubeOwnerQuickMaxThreadPages }
             : config;
-        const comments = await fetchYouTubeVideoComments(scanConfig, videoId, accessToken, fetchImpl);
+        let scan = await fetchYouTubeVideoCommentsWithMeta(scanConfig, videoId, accessToken, fetchImpl);
+        const observedCount = ownerCommentEvidence(decision.current, scan);
+        const statisticsUnderstated = decision.highComment !== true
+          && Number.isFinite(observedCount)
+          && observedCount >= config.youtubeOwnerHighCommentThreshold;
+        if (!actualDeepScan && statisticsUnderstated) {
+          actualDeepScan = true;
+          counts.paginationDeepDue += 1;
+          // 기본 10페이지에서 이미 끝까지 읽었다면 재호출하지 않는다. 잘렸을 때만 100페이지로 이어간다.
+          if (scan.truncated) {
+            scan = await fetchYouTubeVideoCommentsWithMeta(
+              { ...config, youtubeAdsMaxThreadPages: config.youtubeOwnerDeepMaxThreadPages },
+              videoId,
+              accessToken,
+              fetchImpl,
+            );
+          }
+        }
+        if (actualDeepScan) counts.deepDue += 1;
+        const comments = scan.comments;
+        // statistics.commentCount가 실측보다 뒤처지면 실측치를 checkpoint로 저장한다.
+        // 통계가 따라잡기 전까지 다음 회차에도 변화로 인식되어 재확인되므로 stale 신호에
+        // 기대어 신규 댓글을 놓치는 구간을 만들지 않는다.
+        const checkpointCount = statisticsUnderstated ? observedCount : decision.current;
         counts.comments += comments.length;
         stateUpdates.push(stateRow(
-          channel, video, decision.current, now, true, previous,
-          decision.highComment === true && decision.deepScan !== true,
+          channel, video, checkpointCount, now, true, previous,
+          decision.highComment === true && actualDeepScan !== true,
         ));
         if (!comments.length) continue;
         const productName = inferOwnerVideoProduct(video, config.youtubeOwnerDefaultProductName);
@@ -452,7 +513,7 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
             ownedChannelBrandHostilityScope,
             fullContextReview: ownedChannelBrandHostilityScope
               || decision.highComment === true
-              || decision.deepScan === true,
+              || actualDeepScan,
             bypassClassificationCache: decision.forceReclassify === true,
           },
           comments,

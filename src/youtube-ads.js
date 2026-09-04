@@ -352,15 +352,25 @@ async function fetchAllReplies(config, parentId, videoId, accessToken, fetchImpl
   return replies;
 }
 
-export async function fetchYouTubeVideoComments(config, videoId, accessToken, fetchImpl = fetch) {
+export async function fetchYouTubeVideoCommentsWithMeta(config, videoId, accessToken, fetchImpl = fetch) {
   const comments = [];
   let pageToken = '';
+  let pagesFetched = 0;
+  let threadCount = 0;
+  let reportedThreadCount = null;
+  let truncated = false;
   try {
     for (let page = 0; page < config.youtubeAdsMaxThreadPages; page += 1) {
       const payload = await youtubeJson(config, 'commentThreads', {
         part: 'id,snippet,replies', videoId, order: 'time', maxResults: 100,
         textFormat: 'plainText', pageToken,
       }, accessToken, fetchImpl);
+      pagesFetched += 1;
+      const pageTotal = Number(payload.pageInfo?.totalResults);
+      if (Number.isFinite(pageTotal) && pageTotal >= 0) {
+        reportedThreadCount = Math.max(reportedThreadCount ?? 0, pageTotal);
+      }
+      threadCount += (payload.items || []).length;
       for (const thread of payload.items || []) {
         const top = thread.snippet?.topLevelComment;
         if (!top?.id) continue;
@@ -375,13 +385,26 @@ export async function fetchYouTubeVideoComments(config, videoId, accessToken, fe
       }
       pageToken = String(payload.nextPageToken || '');
       if (!pageToken) break;
+      if (page + 1 >= config.youtubeAdsMaxThreadPages) truncated = true;
     }
   } catch (error) {
-    if (error.reasons?.includes('commentsDisabled') || error.reasons?.includes('videoNotFound')) return [];
+    if (error.reasons?.includes('commentsDisabled') || error.reasons?.includes('videoNotFound')) {
+      return { comments: [], pagesFetched, threadCount, reportedThreadCount, truncated: false };
+    }
     throw error;
   }
   const byId = new Map(comments.filter((comment) => comment.id).map((comment) => [comment.id, comment]));
-  return [...byId.values()];
+  return {
+    comments: [...byId.values()],
+    pagesFetched,
+    threadCount,
+    reportedThreadCount,
+    truncated,
+  };
+}
+
+export async function fetchYouTubeVideoComments(config, videoId, accessToken, fetchImpl = fetch) {
+  return (await fetchYouTubeVideoCommentsWithMeta(config, videoId, accessToken, fetchImpl)).comments;
 }
 
 function commentAfter(comment, cutoffMs) {
