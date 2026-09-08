@@ -62,6 +62,11 @@ export function loadMetaAdsConfig(env = process.env, now = Date.now()) {
         sponsorship: String(env.SLACK_ASSIGNEE_P_SPONSORSHIP || '').trim(),
         viralVideo: String(env.SLACK_ASSIGNEE_P_VIRAL_VIDEO || '').trim(),
       },
+      jg: {
+        primary: String(env.SLACK_ASSIGNEE_JG_PRIMARY || '').trim(),
+        additional: String(env.SLACK_ASSIGNEE_JG_ADDITIONAL || '')
+          .split(',').map((value) => value.trim()).filter(Boolean),
+      },
     },
     managedChannelCategories: [],
     brandContext: String(env.BRAND_CONTEXT || '라라스윗 쫀득바').trim(),

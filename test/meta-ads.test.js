@@ -39,9 +39,12 @@ test('loadMetaAdsConfig only requires Supabase and Slack secrets', () => {
     SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc',
     SLACK_BOT_TOKEN: 'xoxb-test', SLACK_ASSIGNEE_JDBOK: 'U_JDBOK',
     SLACK_ASSIGNEE_P_SPONSORSHIP: 'U_P_SPON', SLACK_ASSIGNEE_P_VIRAL_VIDEO: 'U_P_VIDEO',
+    SLACK_ASSIGNEE_JG_PRIMARY: 'U_JG',
+    SLACK_ASSIGNEE_JG_ADDITIONAL: 'U_JG_2,U_JG_3,U_JG_4',
   }).slackAssignees, {
     other: 'U0B2Y0ZC8QZ', awareness: '', jdBok: 'U_JDBOK',
     p: { sponsorship: 'U_P_SPON', viralVideo: 'U_P_VIDEO' },
+    jg: { primary: 'U_JG', additional: ['U_JG_2', 'U_JG_3', 'U_JG_4'] },
   });
   assert.equal(loadMetaAdsConfig({
     SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc',

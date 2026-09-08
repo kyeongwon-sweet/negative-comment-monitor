@@ -33,10 +33,12 @@ export function assigneeForChannelCategory(channelCategory, assignees = {}) {
 // 상품 코드(sponsored_posts.product_name)로 상품군 판정.
 //   - 'jd 들어간 상품'(JD멜/JD망/JD혼=쫀득바) → 'jd'
 //   - 'p로 시작하는 상품'(P혼/P망=파인트) → 'p'
+//   - 'JG/제과/블트하'(블루베리 트리플 하트 등 제과) → 'jg'
 //   - 그 외(듬뿍바 DB·C·ZB·BA 등) → 'other'(기존 카테고리 담당자 유지)
 export function productGroup(productName) {
   const p = String(productName || '').trim().toLowerCase();
   if (!p) return 'other';
+  if (p.startsWith('jg') || p.includes('제과') || p.includes('블트하')) return 'jg';
   if (p.includes('jd')) return 'jd';
   if (p.startsWith('p')) return 'p';
   return 'other';
@@ -60,10 +62,11 @@ export function videoAssigneeFromAdTitle(adTitle, videoAssignees = {}) {
   return suffix.length === 1 ? videoAssignees[suffix[0]] : '';         // 유일 접미 일치만(요한→정요한)
 }
 
-// 상품군 → 스레드 라벨(표시명). jd=쫀득바, p=파인트, 그 외=기타.
+// 상품군 → 스레드 라벨(표시명). jd=쫀득바, p=파인트, jg=제과, 그 외=기타.
 export function productLabel(group) {
   if (group === 'jd') return '쫀득바';
   if (group === 'p') return '파인트';
+  if (group === 'jg') return '제과';
   return '기타';
 }
 
@@ -99,6 +102,9 @@ export function assigneeForTarget(target, assignees = {}) {
     if (isSponsorship && assignees.p?.sponsorship) return assignees.p.sponsorship;     // 파인트 협찬(인플루언서)=손유곤
     if (isBanner && assignees.p?.viralBanner) return assignees.p.viralBanner;
     if (isVideo && assignees.p?.viralVideo) return assignees.p.viralVideo;
+  } else if (group === 'jg') {
+    // 제과는 카테고리 구분 없이 모현진을 부모 스레드 대표 담당자로 쓴다.
+    if (assignees.jg?.primary) return assignees.jg.primary;
   }
   // 온드미디어는 상품군 무관 전담(김바다). 위성채널은 상품군 무관 이세진(base satellite).
   if (isOwned && assignees.owned) return assignees.owned;
@@ -185,14 +191,22 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   const pintAwarenessAssignees = isPintAwareness
     ? [...new Set([assignees.p?.sponsorship, assignees.p?.viralVideo].filter(Boolean))]
     : [];
+  // 제과 카드는 카테고리 구분 없이 모현진·김해솔·장수영·이선민을 함께 태그한다.
+  // 부모 스레드는 assigneeForTarget의 주담당(모현진) 1명만 사용한다.
+  const isJg = productGroup(target.productName) === 'jg';
+  const jgAssignees = isJg
+    ? [...new Set([baseAssignee, ...(assignees.jg?.additional || [])].filter(Boolean))]
+    : [];
   const isCreatorCard = isAdCommentSource(target) || isViral;
   const assigneeIds = jdBok
     ? [jdBok]
     : pintAwarenessAssignees.length
       ? pintAwarenessAssignees
-      : isCreatorCard
-        ? [...new Set((extras.length ? extras : (baseAssignee ? [baseAssignee] : [])))]
-        : [...new Set([baseAssignee, ...extras].filter(Boolean))];
+      : jgAssignees.length
+        ? jgAssignees
+        : isCreatorCard
+          ? [...new Set((extras.length ? extras : (baseAssignee ? [baseAssignee] : [])))]
+          : [...new Set([baseAssignee, ...extras].filter(Boolean))];
   return [
     { type: 'header', text: { type: 'plain_text', text: `🚨 부정댓글 감지 — ${comment.platform}` } },
     { type: 'section', text: { type: 'mrkdwn', text: `*[${esc(productLabel(productGroup(target.productName)))}] ${esc(target.channelCategory || '-')}*` } },

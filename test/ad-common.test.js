@@ -15,6 +15,12 @@ test('인지 광고 캠페인명 파인트는 P로, 그 외와 JD복은 기존 �
   assert.equal(awarenessProductName('JD복', '[빙과] 파인트 인지', '소재'), 'JD복');
 });
 
+test('인지 광고 캠페인명·소재명 블트하/제과는 JG로 분류하고 JD복은 최우선 보호한다', () => {
+  assert.equal(awarenessProductName('JD', '[제과] 블트하 인지', '소재'), 'JG');
+  assert.equal(awarenessProductName('JD', '', '[26.09] 블트하 소재'), 'JG');
+  assert.equal(awarenessProductName('JD복', '[제과] 블트하 인지', 'JD복 소재'), 'JD복');
+});
+
 test('inAdMorningWindow: prefix별 FORCE·KST 창 판정', () => {
   const kst9 = Date.parse('2026-08-14T00:10:00Z'); // KST 09
   const kst12 = Date.parse('2026-08-14T03:10:00Z'); // KST 12

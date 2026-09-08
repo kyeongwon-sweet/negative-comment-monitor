@@ -14,6 +14,7 @@ const assignees = {
   sponsorship: 'U_SPONSORSHIP',
   jd: { powerChannel: 'U_JD_POWER', sponsorship: 'U_JD_SPON', viralBanner: 'U_JD_BANNER', viralVideo: 'U_JD_VIDEO', satellite: 'U_JD_SAT' },
   p: { viralBanner: 'U_P_BANNER', viralVideo: 'U_P_VIDEO', powerChannel: 'U_P_POWER', sponsorship: 'U_P_SPON' },
+  jg: { primary: 'U_JG', additional: ['U_JG_2', 'U_JG_3', 'U_JG_4'] },
 };
 
 test('owned media and satellite channels get moderation buttons', () => {
@@ -191,9 +192,10 @@ test('buildViralCopyMessage: 업체별 링크/닉네임/댓글내용 + 중복 �
   ]);
   assert.equal(msg, '```\n[루나앤코코]\n\n담당자님 하기 게시물에 광고의심 및 부정댓글 관리 부탁 드립니다!\nhttps://insta/p/A/ / user1 / 광고 별로\nhttps://insta/p/B/ / user2 / 맛없어요\n```');
 });
-test('productLabel: jd=쫀득바, p=파인트, 그 외=기타', () => {
+test('productLabel: jd=쫀득바, p=파인트, jg=제과, 그 외=기타', () => {
   assert.equal(productLabel('jd'), '쫀득바');
   assert.equal(productLabel('p'), '파인트');
+  assert.equal(productLabel('jg'), '제과');
   assert.equal(productLabel('other'), '기타');
 });
 test('assigneeForTarget: 상품×카테고리 라우팅 + 미지정은 카테고리 기본값 폴백', () => {
@@ -209,6 +211,10 @@ test('assigneeForTarget: 상품×카테고리 라우팅 + 미지정은 카테고
   // 파인트 파워채널/매거진 = 이도경(p.powerChannel, 협찬 인플루언서보다 우선)
   assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '협찬 (파워채널/매거진)' }, assignees), 'U_P_POWER');
   assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '협찬 (매거진)' }, assignees), 'U_P_POWER');
+  // 제과: 모든 카테고리의 부모 스레드 대표 담당자는 모현진.
+  assert.equal(assigneeForTarget({ productName: 'JG', channelCategory: '인지 광고' }, assignees), 'U_JG');
+  assert.equal(assigneeForTarget({ productName: '블트하', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_JG');
+  assert.equal(assigneeForTarget({ productName: '제과', channelCategory: '협찬 (파워채널/매거진)' }, assignees), 'U_JG');
   // 쫀득바 협찬(인플루언서)=김바다(jd.sponsorship), 파워채널/매거진=이재원(jd.powerChannel)
   assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_JD_SPON');
   assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (파워채널/먹스타)' }, assignees), 'U_JD_POWER');
@@ -230,6 +236,24 @@ test('assigneeForTarget: 상품×카테고리 라우팅 + 미지정은 카테고
   assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '인지 광고' }, assignees), 'U_AWARENESS');
   assert.equal(assigneeForTarget({ channelCategory: '인지 광고' }, assignees), 'U_AWARENESS');
   assert.equal(assigneeForTarget({ channelCategory: '인지 광고' }, { other: 'U_OTHER' }), 'U_OTHER');
+});
+
+test('alert card: 제과는 모든 카테고리에서 모현진·김해솔·장수영·이선민을 함께 태그한다', () => {
+  for (const channelCategory of ['인지 광고', '협찬 (인플루언서)', '협찬 (파워채널/매거진)']) {
+    const blocks = buildAlertBlocks({
+      url: 'https://x', channelCategory, productName: 'JG', source: channelCategory === '인지 광고' ? 'youtube_ads' : '',
+      campaignName: '[제과] 블트하 인지', extraAssignees: ['U_VIDEO'],
+    }, { id: 'c1', platform: 'youtube', text: '별로', risk: {} }, undefined, assignees);
+    assert.ok(blocks.some((x) => x.text?.text === `*[제과] ${channelCategory}*`));
+    assert.ok(blocks.some((x) => x.text?.text === '*담당자*\n<@U_JG> <@U_JG_2> <@U_JG_3> <@U_JG_4>'));
+  }
+});
+
+test('productGroup: JG·제과·블트하는 jg 상품군으로 분류한다', () => {
+  assert.equal(productGroup('JG'), 'jg');
+  assert.equal(productGroup('JG블트하'), 'jg');
+  assert.equal(productGroup('제과'), 'jg');
+  assert.equal(productGroup('블트하'), 'jg');
 });
 test('alert card category line shows product label (상품 × 카테고리)', () => {
   const blocks = buildAlertBlocks(
