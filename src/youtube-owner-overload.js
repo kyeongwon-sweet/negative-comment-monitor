@@ -73,7 +73,11 @@ function cumulativeAssessment(totalValue, negativeValue, config) {
 
 export function buildCumulativeOwnerOverloadAssessments(targets, rows, config) {
   const targetByVideo = new Map((targets || [])
-    .filter((target) => target?.ownedChannelBrandHostilityScope === true && safeVideoId(target))
+    .filter((target) => (
+      target?.ownedChannelBrandHostilityScope === true
+      && target?.commentsDisabled !== true
+      && safeVideoId(target)
+    ))
     .map((target) => [safeVideoId(target), target]));
   const negativesByVideo = new Map();
   for (const row of rows || []) {

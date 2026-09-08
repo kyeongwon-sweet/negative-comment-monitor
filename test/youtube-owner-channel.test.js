@@ -203,12 +203,14 @@ test('collector lists recent uploads and calls commentThreads only for changed c
       { contentDetails: { videoId: 'changed', videoPublishedAt: '2026-08-19T00:00:00Z' } },
       { contentDetails: { videoId: 'stale-high', videoPublishedAt: '2026-08-19T00:00:00Z' } },
       { contentDetails: { videoId: 'zero', videoPublishedAt: '2026-08-19T00:00:00Z' } },
+      { contentDetails: { videoId: 'disabled', videoPublishedAt: '2026-08-19T00:00:00Z' } },
     ] });
     if (url.pathname.endsWith('/videos')) return json({ items: [
       { id: 'same', snippet: { channelId: 'owner-1', channelTitle: '먹짱언니', title: '쫀득바', publishedAt: '2026-08-19T00:00:00Z' }, statistics: { commentCount: '2' } },
       { id: 'changed', snippet: { channelId: 'owner-1', channelTitle: '먹짱언니', title: '멜론바', publishedAt: '2026-08-19T00:00:00Z' }, statistics: { commentCount: '1' } },
       { id: 'stale-high', snippet: { channelId: 'owner-1', channelTitle: '먹짱언니', title: '쫀득바', publishedAt: '2026-08-19T00:00:00Z' }, statistics: { commentCount: '150' } },
       { id: 'zero', snippet: { channelId: 'owner-1', channelTitle: '먹짱언니', title: '쫀득바', publishedAt: '2026-08-19T00:00:00Z' }, statistics: { commentCount: '0' } },
+      { id: 'disabled', snippet: { channelId: 'owner-1', channelTitle: '먹짱언니', title: '댓글 꺼진 영상', publishedAt: '2026-08-19T00:00:00Z' }, statistics: { viewCount: '10' } },
     ] });
     if (url.pathname.endsWith('/commentThreads')) {
       const videoId = url.searchParams.get('videoId');
@@ -233,14 +235,17 @@ test('collector lists recent uploads and calls commentThreads only for changed c
   assert.equal(result.totalConfiguredChannels, 1);
   assert.equal(result.authenticatedChannels, 1);
   assert.deepEqual(result.missingOAuthChannels, []);
-  assert.equal(result.videos, 4);
+  assert.equal(result.videos, 5);
   assert.equal(result.due, 2);
   assert.equal(result.deepDue, 1);
   assert.equal(result.paginationDeepDue, 1);
   assert.equal(result.unchanged, 1);
   assert.equal(result.zeroBaseline, 1);
+  assert.equal(result.noSignal, 1);
   assert.equal(result.entries.length, 2);
-  assert.equal(result.trackedTargets.length, 4);
+  assert.equal(result.trackedTargets.length, 5);
+  assert.equal(result.trackedTargets.find((row) => row.youtubeVideoId === 'disabled').commentsDisabled, true);
+  assert.equal(result.trackedTargets.find((row) => row.youtubeVideoId === 'zero').commentsDisabled, false);
   assert.equal(result.trackedTargets.find((row) => row.youtubeVideoId === 'stale-high').youtubeCommentCount, 250);
   assert.equal(result.stateUpdates.length, 4);
   assert.ok(result.stateUpdates.every((row) => Object.hasOwn(row, 'last_scanned_count') && Object.hasOwn(row, 'last_scanned_at')));

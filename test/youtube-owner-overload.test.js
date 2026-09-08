@@ -105,6 +105,25 @@ test('누적 과부하는 사람의 유지 결정과 과민 LLM 오탐을 제외
   ]);
 });
 
+test('댓글이 이미 꺼진 소유 영상은 누적 악플이 임계 초과여도 과부하 후보에서 제외한다', () => {
+  const disabled = {
+    ...target,
+    youtubeVideoId: '2RLPOLnrbts',
+    caption: '편의점 알바생이 빵터진 이유',
+    youtubeCommentCount: 30,
+    commentsDisabled: true,
+  };
+  const rows = Array.from({ length: 21 }, (_, index) => ({
+    comment_id: `disabled-${index}`,
+    comment_text: '쫀득바 맛없으니 사지마',
+    category: '제품 불만',
+    post_url: 'https://www.youtube.com/watch?v=2RLPOLnrbts',
+    review_decision: 'hidden',
+  }));
+
+  assert.deepEqual(buildCumulativeOwnerOverloadAssessments([disabled], rows, config), []);
+});
+
 test('소유채널 개별 알림도 동일 고신뢰 게이트를 쓰고 일반 채널은 건드리지 않는다', () => {
   const comments = [
     { text: '광고 참신하다 잘 만들었네' },

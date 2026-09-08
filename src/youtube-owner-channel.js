@@ -227,6 +227,12 @@ export function inferOwnerVideoProduct(video, fallback = 'JD') {
 
 function ownerChannelTarget(config, channel, channelName, video, videoId, decision) {
   const ownedChannelBrandHostilityScope = YOUTUBE_BRAND_HOSTILITY_CHANNEL_IDS.has(channel.channelId);
+  // videos.list(part=statistics)는 댓글이 켜진 0댓글 영상에도 commentCount: "0"을 준다.
+  // statistics 응답은 왔지만 그 속성만 없으면 댓글 사용 중지 상태다. statistics 자체가
+  // 없으면 부분 응답/조회 이상일 수 있으므로 사용 중지로 단정하지 않는다.
+  const commentsDisabled = video?.statistics
+    ? !Object.prototype.hasOwnProperty.call(video.statistics, 'commentCount')
+    : false;
   return {
     platform: 'youtube',
     url: `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`,
@@ -238,6 +244,7 @@ function ownerChannelTarget(config, channel, channelName, video, videoId, decisi
     caption: [video.snippet?.title, video.snippet?.description].filter(Boolean).join(' / '),
     youtubeVideoId: videoId,
     youtubeCommentCount: Number.isFinite(Number(decision?.current)) ? Number(decision.current) : null,
+    commentsDisabled,
     ownerChannelId: channel.channelId,
     isManagedAccount: true,
     // 대표님 승인 B 정책은 먹짱언니·썰푸는앵무새에만 적용한다. 위성·협찬·제3자
