@@ -6,19 +6,20 @@ import { classificationCacheFingerprint } from '../src/cache.js';
 
 const CACHE_CFG = { anthropicKey: 'key', supabaseUrl: 'https://db.example', supabaseKey: 'svc' };
 
-test('calls the LLM only for ambiguous comments and keeps immediate rules local', async () => {
+test('브랜드 컨텍스트가 없으면 키워드 즉시판정은 로컬, 애매한 것만 LLM에 보낸다', async () => {
+  // 게시물 컨텍스트에 브랜드가 없어 reviewAll(브랜드 게시물 전 댓글 검토)이 아닌 경로.
   const comments = [
-    { text: 'ㅅㅂ 진짜 노맛' },
-    { text: '이거 광고인가요?' },
-    { text: '라라스윗 맛있어요' },
+    { text: '라라스윗 ㅅㅂ 진짜 노맛' }, // 브랜드+하드불만 → 키워드 즉시 부정
+    { text: '라라스윗 이거 광고인가요?' }, // 애매 → LLM
+    { text: '라라스윗 맛있어요' }, // 긍정 → 키워드 정상
   ];
   let received;
   const llmClassifier = async (items) => {
     received = items;
     return [{ alert: false, category: '정상댓글', reason: '', priority: 'normal' }];
   };
-  const results = await classifyCommentsHybrid(comments, { brandName: '라라스윗' }, { anthropicKey: 'key' }, llmClassifier);
-  assert.deepEqual(received.map((item) => item.text), ['이거 광고인가요?']);
+  const results = await classifyCommentsHybrid(comments, {}, { anthropicKey: 'key' }, llmClassifier);
+  assert.deepEqual(received.map((item) => item.text), ['라라스윗 이거 광고인가요?']);
   assert.equal(results[0].engine, 'keyword');
   assert.equal(results[0].alert, true);
   assert.equal(results[1].engine, 'llm');
@@ -27,11 +28,16 @@ test('calls the LLM only for ambiguous comments and keeps immediate rules local'
 
 test('광고 source(meta/tiktok/youtube)는 전 댓글을 LLM 문맥판정으로 보낸다(reviewAll 일반화)', async () => {
   const comments = [{ text: '라라스윗 맛있어요' }, { text: '잘 먹었습니다' }]; // 키워드로는 둘 다 정상
-  // 일반 target: 정상 댓글은 LLM에 안 보냄(키워드로 종결)
+  // 브랜드 컨텍스트 없는 target + 정상 댓글: LLM에 안 보냄(키워드로 종결)
   let plainCalled = false;
-  await classifyCommentsHybrid(comments, { brandName: '라라스윗' }, { anthropicKey: 'key' },
+  await classifyCommentsHybrid(comments, {}, { anthropicKey: 'key' },
     async (items) => { plainCalled = true; return items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' })); });
   assert.equal(plainCalled, false);
+  // 브랜드 게시물(협찬)도 전 댓글을 LLM 문맥판정으로 보낸다(브랜드 무관 부정도 잡기 위한 확대).
+  let brandReceived = null;
+  await classifyCommentsHybrid(comments, { brandName: '라라스윗' }, { anthropicKey: 'key' },
+    async (items) => { brandReceived = items; return items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' })); });
+  assert.equal(brandReceived?.length, 2, '브랜드 게시물은 전 댓글(2개)을 LLM으로 보내야 함');
   // 광고 source: 제품 문맥 확정 지면이라 전 댓글을 LLM 문맥판정으로
   for (const source of ['meta_ads', 'tiktok_ads', 'youtube_ads']) {
     let received = null;
@@ -77,14 +83,16 @@ test('B 정책 소유채널만 정상 키워드 댓글도 LLM에 보내고 컨�
   assert.equal(ownedInput.length, 1);
   assert.equal(ownedInput[0].ownedChannelBrandHostilityScope, true);
 
-  let thirdPartyCalled = false;
+  // 소유채널 스코프가 없어도 브랜드 게시물이면 검토는 되지만(전 댓글 확대), [소유채널] 확대 정책·플래그는 아님.
+  let thirdPartyInput = null;
   await classifyCommentsHybrid(
     [{ text: '인플루언서 왤케 비호감' }],
     { brandName: '라라스윗' },
     { anthropicKey: 'key' },
-    async () => { thirdPartyCalled = true; return []; },
+    async (items) => { thirdPartyInput = items; return items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' })); },
   );
-  assert.equal(thirdPartyCalled, false);
+  assert.equal(thirdPartyInput.length, 1);
+  assert.equal(thirdPartyInput[0].ownedChannelBrandHostilityScope, false);
 });
 
 test('스코프 지면 하드 적대 안전망: LLM이 정상으로 봐도 하드 토큰은 부정 확정', async () => {

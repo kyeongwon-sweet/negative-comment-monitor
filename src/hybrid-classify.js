@@ -1,4 +1,4 @@
-import { classifyNegativeComment, matchesOwnedHardHostility, needsContextualReview } from './classify.js';
+import { classifyNegativeComment, findEntityContext, matchesOwnedHardHostility, needsContextualReview } from './classify.js';
 import { classifyCommentsLLM, hasConfiguredLlmProvider } from './llm.js';
 import { commentFingerprint } from './dedup.js';
 import {
@@ -51,9 +51,15 @@ async function prepareLocal(comments, target, config, stats, fetchImpl) {
   const reviewIndexes = [];
   // 광고 지면(메타·틱톡·유튜브)은 '모든 댓글이 그 제품 얘기'다. 브랜드명 미언급·신종 표현(예: "수돗물 향")도
   // 놓치지 않게 키워드 게이트를 건너뛰고 전 댓글을 LLM 문맥 판정으로 보낸다(볼륨 적음, 리콜 우선).
+  // 감시 대상은 전부 라라스윗 협찬/광고 게시물이므로(게시물 컨텍스트에 브랜드·제품이 매칭됨), 브랜드
+  // 무관 욕설·발연기·댓글싸움·정치/연예 언급 같은 '키워드 없는' 부정도 잡도록 브랜드 게시물의 전 댓글을
+  // LLM 판정으로 보낸다. 재분류 비용은 캐시가 흡수해 정상 운영에서는 신규 댓글만 실제 호출한다.
+  const brandPost = comments.length > 0
+    && findEntityContext(comments[0], target).postMatches.length > 0;
   const reviewAll = isAdCommentSource(target)
     || target?.fullContextReview === true
-    || target?.ownedChannelBrandHostilityScope === true;
+    || target?.ownedChannelBrandHostilityScope === true
+    || brandPost;
   for (let index = 0; index < comments.length; index += 1) {
     if (reviewAll || needsContextualReview(comments[index], target)) reviewIndexes.push(index);
   }

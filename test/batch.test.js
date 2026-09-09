@@ -22,13 +22,15 @@ test('여러 게시물의 후보가 원 게시물·댓글 인덱스로 정확히
     return items.map((i) => ({ alert: /A번/.test(i.text), category: /A번/.test(i.text) ? '광고/바이럴 의심' : '정상댓글', reason: /A번/.test(i.text) ? '광고 의심' : '', priority: 'normal' }));
   };
   const out = await classifyTargetsBatched(entries, CFG, llm);
-  assert.deepEqual(receivedTexts, ['A번 이거 광고인가요?', 'B번 이거 광고인가요?']); // 두 게시물 후보 통합
-  assert.equal(out[0][0].engine, 'keyword'); // '맛있어요'
+  // 브랜드 게시물이라 전 댓글이 LLM 검토 대상(순서대로 통합)
+  assert.deepEqual(receivedTexts, ['맛있어요', 'A번 이거 광고인가요?', 'B번 이거 광고인가요?', '👍']);
+  assert.equal(out[0][0].engine, 'llm'); // '맛있어요' → LLM 정상
+  assert.equal(out[0][0].alert, false);
   assert.equal(out[0][1].engine, 'llm');
   assert.equal(out[0][1].alert, true);        // A → 부정, 첫 게시물 idx1에 정확히
   assert.equal(out[1][0].engine, 'llm');
   assert.equal(out[1][0].alert, false);       // B → 정상, 둘째 게시물 idx0에
-  assert.equal(out[2][0].engine, 'keyword');
+  assert.equal(out[2][0].engine, 'llm');       // '👍' → LLM 정상
 });
 
 test('후보 25개 초과 시 25개 단위로 여러 번 호출하고 전부 매핑', async () => {

@@ -145,8 +145,8 @@ test('소유채널 확대 정책은 표시된 댓글이 있을 때만 프롬프�
   // 감도 상향: 지면(브랜드 영상·광고)에 남긴 문맥 없는 적대 한두 마디와 광고 거부·피로도 부정.
   assert.match(prompts[0], /지목하지 않은 채 남긴 적대·거부·조롱 한두 마디는 이 영상·광고·브랜드를 향한 것으로 보고 부정/);
   assert.match(prompts[0], /광고 그 자체에 대한 피로·거부·냉소도 부정/);
-  // 단, 다른 댓글러 지목 말다툼·모델 개인 평가·오프토픽은 여전히 정상(과탐 방지 가드 유지).
-  assert.match(prompts[0], /다른 댓글러를 명시적으로 지목한 말다툼[^\n]*정상/);
+  // 모델 외모·호감 긍정은 정상이나 연기·연출 비판(발연기)은 부정으로 강화됨.
+  assert.match(prompts[0], /연기·연출에 대한 비판·조롱[^\n]*부정/);
   assert.match(prompts[0], /발연기/);
   assert.doesNotMatch(prompts[1], /소유 YouTube 채널 확대 정책/);
 });
@@ -160,7 +160,7 @@ test('LLM 프롬프트가 긍정 광고언급·잡담·가용성을 정상 예�
   await classifyCommentsLLM([{ text: '광고 언급' }], { anthropicKey: 'k' }, fetchImpl);
   assert.match(prompt, /팬이 호감·기대·구매의향을 표현하면 정상/);
   assert.match(prompt, /터후님 광고 너무 잘찍으세요 아자스/);
-  assert.match(prompt, /제품\/브랜드를 직접 깎아내리지 않는 잡담·가용성 관찰은 정상/);
+  assert.match(prompt, /제품\/브랜드를 직접 깎아내리지 않는 가용성·사실 관찰은 정상/);
 });
 
 test('Gemini 구조화 JSON 응답을 분류하고 공급자별 무료 사용량을 기록한다', async () => {
