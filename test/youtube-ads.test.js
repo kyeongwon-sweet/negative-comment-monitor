@@ -194,6 +194,8 @@ test('buildYouTubeAdEntries discovers manager child, ad video, top comment and a
   assert.deepEqual(result.entries[0].comments.map((comment) => comment.id), ['top1', 'reply1', 'reply2']);
   assert.equal(result.entries[0].comments[0].authorChannelId, 'UC_AUTHOR_1');
   assert.equal(result.entries[0].comments[0].authorDisplayName, 'u1');
+  // 소유 채널 광고 영상은 소유채널 브랜드 적대 확대 정책([소유채널] 프롬프트) 대상.
+  assert.equal(result.entries[0].target.ownedChannelBrandHostilityScope, true);
   assert.equal(calls.filter((call) => call.url.hostname === 'oauth2.googleapis.com').length, 2);
 });
 
@@ -225,6 +227,8 @@ test('Google Ads campaign videos remain collectible when the ad upload channel d
   assert.equal(result.externalVideos, 1);
   assert.equal(result.entries.length, 1);
   assert.equal(result.entries[0].target.isManagedAccount, false);
+  // 비소유(제3자 업로드) 광고 영상은 확대 정책 대상이 아니다.
+  assert.equal(result.entries[0].target.ownedChannelBrandHostilityScope, false);
 });
 
 test('inYouTubeAdsWindow and daily ledger key follow the shared resilient morning policy', () => {

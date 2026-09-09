@@ -479,6 +479,9 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
         brandName: config.brandContext,
         caption: [title, ...adNames, ...campaignNames].filter(Boolean).join(' / '),
         isManagedAccount: Boolean(video.isOwnedChannel),
+        // 소유 채널에 올린 브랜드 광고 영상은 지면 전체가 이 광고/브랜드 얘기다. 문맥 없는 적대·광고 거부까지
+        // 부정으로 잡도록 소유채널 브랜드 적대 확대 정책([소유채널] 프롬프트)을 광고 지면에도 적용한다.
+        ownedChannelBrandHostilityScope: Boolean(video.isOwnedChannel),
         // 카드 링크명과 제작자 태그 모두 실제 광고 소재명(ad_group_ad.ad.name)을 우선한다.
         // 구형/무명 광고만 캠페인명·영상 제목으로 폴백한다.
         adTitle,

@@ -142,9 +142,12 @@ test('소유채널 확대 정책은 표시된 댓글이 있을 때만 프롬프�
   await classifyCommentsLLM([{ text: '인플루언서 왤케 비호감' }], { anthropicKey: 'k' }, fetchImpl);
   assert.match(prompts[0], /소유 YouTube 채널 확대 정책/);
   assert.match(prompts[0], /\[소유채널\] 라라스윗 왤케 비호감/);
-  assert.match(prompts[0], /댓글러끼리의 다툼·욕설·신고 언급/);
-  assert.match(prompts[0], /광고 배우의 연기·연출만 평가하는 '발연기'/);
-  assert.match(prompts[0], /부정적인 말투만으로 브랜드 공격이라고 추측하지 마세요/);
+  // 감도 상향: 지면(브랜드 영상·광고)에 남긴 문맥 없는 적대 한두 마디와 광고 거부·피로도 부정.
+  assert.match(prompts[0], /지목하지 않은 채 남긴 적대·거부·조롱 한두 마디는 이 영상·광고·브랜드를 향한 것으로 보고 부정/);
+  assert.match(prompts[0], /광고 그 자체에 대한 피로·거부·냉소도 부정/);
+  // 단, 다른 댓글러 지목 말다툼·모델 개인 평가·오프토픽은 여전히 정상(과탐 방지 가드 유지).
+  assert.match(prompts[0], /다른 댓글러를 명시적으로 지목한 말다툼[^\n]*정상/);
+  assert.match(prompts[0], /발연기/);
   assert.doesNotMatch(prompts[1], /소유 YouTube 채널 확대 정책/);
 });
 
