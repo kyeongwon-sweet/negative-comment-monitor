@@ -80,6 +80,7 @@ jobs:
           YOUTUBE_ADS_ALERT_DELAY_MS: '1200'
           YOUTUBE_ADS_SLACK_RETRIES: '6'
           YOUTUBE_ADS_FORCE: 'true'
+          YOUTUBE_ADS_BYPASS_CACHE: 'true'
           YOUTUBE_OWNER_AUTO_HIDE: ${{ inputs.auto_hide }}
           DRY_RUN: 'false'
       - name: Notify Slack on failure

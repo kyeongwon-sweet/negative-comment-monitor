@@ -77,6 +77,8 @@ export function loadYouTubeAdsConfig(env = process.env) {
     youtubeAdsSlackRetries: positiveInt(env.YOUTUBE_ADS_SLACK_RETRIES, 5, 10),
     // 사용자가 확정한 운영정책: 부정 판정 카드를 먼저 Slack에 보낸 뒤 소유 채널 OAuth로 자동 숨김.
     youtubeOwnerAutoHide: String(env.YOUTUBE_OWNER_AUTO_HIDE || 'false').toLowerCase() === 'true',
+    // 분류기·정책 변경 후 특정 영상을 재스캔할 때, 이전 분류 캐시를 무시하고 새 프롬프트로 다시 판정한다.
+    youtubeAdsBypassCache: String(env.YOUTUBE_ADS_BYPASS_CACHE || 'false').toLowerCase() === 'true',
   };
 }
 
@@ -479,9 +481,12 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
         brandName: config.brandContext,
         caption: [title, ...adNames, ...campaignNames].filter(Boolean).join(' / '),
         isManagedAccount: Boolean(video.isOwnedChannel),
-        // 소유 채널에 올린 브랜드 광고 영상은 지면 전체가 이 광고/브랜드 얘기다. 문맥 없는 적대·광고 거부까지
-        // 부정으로 잡도록 소유채널 브랜드 적대 확대 정책([소유채널] 프롬프트)을 광고 지면에도 적용한다.
-        ownedChannelBrandHostilityScope: Boolean(video.isOwnedChannel),
+        // 광고 지면은 (어느 채널에 업로드됐든) 전부 라라스윗 브랜드 광고다 — 캠페인명 필터로 브랜드
+        // 캠페인만 수집하기 때문이다. 지면 전체가 이 광고/브랜드 얘기이므로, 문맥 없는 적대·광고 거부까지
+        // 부정으로 잡도록 소유채널 브랜드 적대 확대 정책([소유채널] 프롬프트)을 모든 광고 댓글에 적용한다.
+        // (isOwnedChannel은 Google Ads 업로드 채널이 OAuth 주채널과 달라 false여도 브랜드 광고임.)
+        ownedChannelBrandHostilityScope: true,
+        bypassClassificationCache: config.youtubeAdsBypassCache === true,
         // 카드 링크명과 제작자 태그 모두 실제 광고 소재명(ad_group_ad.ad.name)을 우선한다.
         // 구형/무명 광고만 캠페인명·영상 제목으로 폴백한다.
         adTitle,
