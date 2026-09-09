@@ -1,4 +1,4 @@
-import { classifyNegativeComment, needsContextualReview } from './classify.js';
+import { classifyNegativeComment, matchesOwnedHardHostility, needsContextualReview } from './classify.js';
 import { classifyCommentsLLM, hasConfiguredLlmProvider } from './llm.js';
 import { commentFingerprint } from './dedup.js';
 import {
@@ -235,6 +235,26 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
   // 감사/진단 실행은 기존 FP·캐시를 읽되 운영 캐시는 변경하지 않는 진짜 read-only 모드다.
   if (classifierHash && toStore.length && config.classificationCacheReadOnly !== true) {
     await storeCache(config, toStore, classifierHash, fetchImpl);
+  }
+
+  // 하드 적대 안전망: 소유/광고 지면(스코프) 댓글 중 하드 적대·광고거부 토큰이 든 것은 LLM/캐시가
+  // 정상으로 봤어도 부정 확정한다(작은 LLM이 저신호 적대를 놓치는 구조적 누락 방지). 사람 오탐(human-fp)과
+  // LLM 보류(llm_deferred)는 건드리지 않는다. 캐시 히트·키워드·LLM 결과 모두에 일관 적용되도록 최종 pass로 둔다.
+  for (let e = 0; e < prepared.length; e += 1) {
+    if (entries[e]?.target?.ownedChannelBrandHostilityScope !== true) continue;
+    const comments = Array.isArray(entries[e].comments) ? entries[e].comments : [];
+    prepared[e].out.forEach((risk, index) => {
+      if (!risk || risk.alert === true || risk.engine === 'human-fp' || isLlmDeferred(risk)) return;
+      if (!matchesOwnedHardHostility(comments[index]?.text || '')) return;
+      prepared[e].out[index] = {
+        alert: true,
+        category: '브랜드 적대/조롱',
+        reason: '광고 지면 적대·광고거부 표현(하드 확정)',
+        priority: 'high',
+        entity: { matched: true },
+        engine: 'keyword-hard-owned',
+      };
+    });
   }
 
   return prepared.map((p) => p.out);

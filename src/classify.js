@@ -2,6 +2,7 @@ import {
   DISCOVERY_KEYWORDS,
   ENTITY_KEYWORDS,
   OWNED_BRAND_HOSTILITY_KEYWORDS,
+  OWNED_HARD_HOSTILITY_KEYWORDS,
   PROFANITY_KEYWORDS,
 } from './keywords.js';
 
@@ -25,6 +26,12 @@ function findMatches(text, keywords) {
 
 function flattenGroups(groups) {
   return Object.values(groups).flat();
+}
+
+// 소유/광고 지면(ownedChannelBrandHostilityScope) 전용 '하드' 적대·광고거부 확정 매처.
+// 매칭되면 문맥과 무관하게 이 광고·브랜드를 향한 부정으로 확정한다(호출부가 LLM 정상 판정을 덮는 안전망).
+export function matchesOwnedHardHostility(text) {
+  return findMatches(text, OWNED_HARD_HOSTILITY_KEYWORDS).length > 0;
 }
 
 const POSITIVE_CONTEXT = [

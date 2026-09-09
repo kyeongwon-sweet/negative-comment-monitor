@@ -87,6 +87,42 @@ test('B 정책 소유채널만 정상 키워드 댓글도 LLM에 보내고 컨�
   assert.equal(thirdPartyCalled, false);
 });
 
+test('스코프 지면 하드 적대 안전망: LLM이 정상으로 봐도 하드 토큰은 부정 확정', async () => {
+  const normalLlm = async (items) => items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' }));
+  // 소유/광고 지면 + 하드 적대 토큰 → LLM 정상 판정을 덮어 부정 확정(작은 LLM 저신호 적대 누락 방지).
+  const [scoped] = await classifyCommentsHybrid(
+    [{ text: '차단' }],
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true },
+    { anthropicKey: 'key' }, normalLlm,
+  );
+  assert.equal(scoped.alert, true);
+  assert.equal(scoped.engine, 'keyword-hard-owned');
+
+  // 광고 거부/피로 표현도 확정.
+  const [adFatigue] = await classifyCommentsHybrid(
+    [{ text: '왜 자꾸 뜨나 했더니 이거 광고였구나' }],
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true },
+    { anthropicKey: 'key' }, normalLlm,
+  );
+  assert.equal(adFatigue.alert, true);
+
+  // 스코프가 없으면(일반 협찬·제3자) 안전망을 적용하지 않는다 → 정상 유지(댓글러 간 다툼 오탐 방지).
+  const [nonScoped] = await classifyCommentsHybrid(
+    [{ text: '차단' }],
+    { brandName: '라라스윗' },
+    { anthropicKey: 'key' }, normalLlm,
+  );
+  assert.equal(nonScoped.alert, false);
+
+  // 스코프여도 하드 토큰이 없으면 오작동하지 않는다(LLM 정상 판정 존중).
+  const [scopedClean] = await classifyCommentsHybrid(
+    [{ text: '트러플맛 궁금하네요' }],
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true },
+    { anthropicKey: 'key' }, normalLlm,
+  );
+  assert.equal(scopedClean.alert, false);
+});
+
 test('threads the usage stats accumulator through to the LLM classifier', async () => {
   let receivedStats;
   const stats = { calls: 0 };
