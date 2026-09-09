@@ -15,13 +15,15 @@ function json(payload, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => payload, text: async () => JSON.stringify(payload) };
 }
 
-test('owner channel config includes the two existing owners and eight satellites', () => {
+test('owner channel config includes the two existing owners and nine satellites', () => {
   const config = loadYouTubeOwnerChannelConfig({
     SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'db',
     SLACK_BOT_TOKEN: 'slack', GOOGLE_ADS_CLIENT_ID: 'client', GOOGLE_ADS_CLIENT_SECRET: 'secret',
     SLACK_ASSIGNEE_SATELLITE: 'U_SAT', SLACK_ASSIGNEE_JD_SATELLITE: 'U_JD_SAT',
   });
-  assert.equal(config.youtubeOwnerChannels.length, 10);
+  assert.equal(config.youtubeOwnerChannels.length, 11);
+  assert.equal(config.youtubeOwnerChannels.find((row) => row.channelId === 'UCwd2ygf9KoW7t0HLSUBN-Zg').name, '잼얘박스');
+  assert.equal(config.youtubeOwnerChannels.find((row) => row.name === '잼얘박스').channelCategory, '위성채널');
   assert.equal(config.youtubeOwnerChannels.find((row) => row.channelId === 'UCxfjcCvRPOPzo6PeAttO4Dg').name, '먹짱언니');
   assert.equal(config.youtubeOwnerChannels.find((row) => row.channelId === 'UCxfjcCvRPOPzo6PeAttO4Dg').lookbackDays, 60);
   assert.equal(config.youtubeOwnerChannels.find((row) => row.name === '썰박스').channelCategory, '위성채널');

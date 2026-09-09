@@ -5,6 +5,7 @@ export const YOUTUBE_SATELLITE_CHANNELS = Object.freeze([
   { name: '이슈박스', handle: '@issuebox_x', channelId: 'UC9PyxanftI-l-j3I9vvb9Nw' },
   { name: '유머박스', handle: '@humorrbox', channelId: 'UC6oZw_I2oO_nKjIEfBt1l0A' },
   { name: '정리해드림', handle: '@allkill_2424', channelId: 'UC_rgT8r47YzIE7lXia03Nmg' },
+  { name: '잼얘박스', handle: '@jaemyebox', channelId: 'UCwd2ygf9KoW7t0HLSUBN-Zg' },
   { name: '매일1분', handle: '@just1min_2424', channelId: 'UC_rLu8ulIc3pQ0zoq36Jxow' },
   { name: '이걸몰라?', handle: '@whydontuknow2424', channelId: 'UCQRxcMlnRXUHP5lHRmhcjdA' },
 ]);

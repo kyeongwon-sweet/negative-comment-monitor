@@ -6,11 +6,12 @@ import {
   YOUTUBE_SATELLITE_CHANNELS,
 } from '../src/youtube-satellite-oauth.js';
 
-test('위성 YouTube 8채널의 이름·핸들·공개 channel ID가 고유하다', () => {
-  assert.equal(YOUTUBE_SATELLITE_CHANNELS.length, 8);
-  assert.equal(new Set(YOUTUBE_SATELLITE_CHANNELS.map((row) => row.channelId)).size, 8);
+test('위성 YouTube 9채널의 이름·핸들·공개 channel ID가 고유하다', () => {
+  assert.equal(YOUTUBE_SATELLITE_CHANNELS.length, 9);
+  assert.equal(new Set(YOUTUBE_SATELLITE_CHANNELS.map((row) => row.channelId)).size, 9);
   assert.equal(resolveSatelliteChannel('썰박스')?.handle, '@ssulbox-1');
   assert.equal(resolveSatelliteChannel('@whydontuknow2424')?.name, '이걸몰라?');
+  assert.equal(resolveSatelliteChannel('잼얘박스')?.channelId, 'UCwd2ygf9KoW7t0HLSUBN-Zg');
 });
 
 test('OAuth URL은 offline consent·youtube.force-ssl·state를 고정한다', () => {
