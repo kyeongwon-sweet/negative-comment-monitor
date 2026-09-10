@@ -5,6 +5,7 @@ import {
   buildCumulativeOwnerOverloadAssessments,
   buildOwnerOverloadBlocks,
   buildOwnerOverloadWarning,
+  isYouTubeCommentsDisabled,
   maybeWarnOwnerCommentOverload,
 } from '../src/youtube-owner-overload.js';
 import { suppressLowConfidenceOwnerRisks } from '../src/youtube-owner-risk.js';
@@ -282,5 +283,39 @@ test('소유 영상도 과부하가 아니면 기존 경고 쿨다운을 지우�
   );
   assert.equal(result.checked, true);
   assert.equal(result.alerted, false);
+  assert.equal(called, false);
+});
+
+test('commentThreads 프로브: 403 commentsDisabled면 사용중지(true)로 확정한다', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    return response(403, { error: { errors: [{ reason: 'commentsDisabled' }] } });
+  };
+  const disabled = await isYouTubeCommentsDisabled(
+    { youtubeApiBase: 'https://yt.test/v3' }, '2RLPOLnrbts', 'tok', fetchImpl,
+  );
+  assert.equal(disabled, true);
+  assert.match(calls[0], /commentThreads\?.*videoId=2RLPOLnrbts/);
+  assert.match(calls[0], /maxResults=1/);
+});
+
+test('commentThreads 프로브: 조회 성공이면 사용가능(false)이다', async () => {
+  const fetchImpl = async () => response(200, { items: [] });
+  assert.equal(await isYouTubeCommentsDisabled({}, 'vid00000001', 'tok', fetchImpl), false);
+});
+
+test('commentThreads 프로브: 다른 오류·미상은 null로 두어 억제하지 않는다', async () => {
+  const forbidden = async () => response(403, { error: { errors: [{ reason: 'forbidden' }] } });
+  assert.equal(await isYouTubeCommentsDisabled({}, 'vid00000001', 'tok', forbidden), null);
+  const threw = async () => { throw new Error('network'); };
+  assert.equal(await isYouTubeCommentsDisabled({}, 'vid00000001', 'tok', threw), null);
+});
+
+test('commentThreads 프로브: videoId·token 없으면 호출 없이 null', async () => {
+  let called = false;
+  const fetchImpl = async () => { called = true; return response(200, {}); };
+  assert.equal(await isYouTubeCommentsDisabled({}, '', 'tok', fetchImpl), null);
+  assert.equal(await isYouTubeCommentsDisabled({}, 'vid00000001', '', fetchImpl), null);
   assert.equal(called, false);
 });

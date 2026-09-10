@@ -19,6 +19,32 @@ function overloadHealthKey(videoId) {
   return `youtube-owner-overload:${createHash('sha256').update(videoId).digest('hex').slice(0, 20)}`;
 }
 
+// videos.list의 statistics.commentCount는 사용 중지 영상에 대해 신뢰할 수 없다
+// (속성을 생략하기도, "0"으로 주기도 한다). commentThreads.list는 사용 중지 시
+// 403 commentsDisabled를 확정적으로 반환하므로, 과부하 후보(누적 20건↑ 소수)에만
+// 1건 프로브로 실제 상태를 확인해 이미 닫힌 영상에 재알림이 나가지 않게 한다.
+// true=사용중지, false=사용가능, null=미상(권한/네트워크 오류 등 → 억제하지 않음).
+export async function isYouTubeCommentsDisabled(config, videoId, accessToken, fetchImpl = fetch) {
+  const id = String(videoId || '').trim();
+  if (!id || !accessToken) return null;
+  const base = String(config?.youtubeApiBase || 'https://www.googleapis.com/youtube/v3').replace(/\/$/, '');
+  const url = new URL(`${base}/commentThreads`);
+  url.searchParams.set('part', 'id');
+  url.searchParams.set('videoId', id);
+  url.searchParams.set('maxResults', '1');
+  let response;
+  try {
+    response = await fetchImpl(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  } catch {
+    return null;
+  }
+  if (response.ok) return false;
+  const payload = await response.json().catch(() => ({}));
+  const reasons = (payload?.error?.errors || []).map((item) => item.reason).filter(Boolean);
+  if (reasons.includes('commentsDisabled')) return true;
+  return null;
+}
+
 export function assessOwnerCommentOverload(comments, risks, config, target = {}) {
   const total = Array.isArray(comments) ? comments.length : 0;
   const safeComments = Array.isArray(comments) ? comments : [];

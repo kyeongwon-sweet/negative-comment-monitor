@@ -424,6 +424,9 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
   const trackedTargets = [];
   const stateUpdates = [];
   const allowedVideoIds = new Set();
+  // 과부하 후보의 댓글 사용중지 여부를 확정 프로브하려면 소유 채널별 access token이
+  // 필요하다. 갱신·검증에 성공한 토큰만 모아 상위 실행부(과부하 루프)에 넘긴다.
+  const ownerAccessTokens = new Map();
   const channelFailures = [];
   const counts = {
     ownerTokens: storedOwners.length,
@@ -449,6 +452,7 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
     const channel = configured.get(owner.channelId);
     try {
       const accessToken = await refreshAndVerifyOwner(config, owner, fetchImpl);
+      ownerAccessTokens.set(owner.channelId, accessToken);
       const collected = await fetchRecentOwnerUploads(config, channel, accessToken, fetchImpl, now);
       counts.channels += 1;
       counts.videos += collected.videos.length;
@@ -550,6 +554,7 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
     trackedTargets,
     stateUpdates,
     allowedVideoIds,
+    ownerAccessTokens,
     channelFailures,
     riskSignals: riskSignals.size,
     riskSignalFailure,

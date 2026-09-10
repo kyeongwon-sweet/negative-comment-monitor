@@ -16,6 +16,7 @@ import {
   saveOwnerVideoStates,
 } from './youtube-owner-channel.js';
 import {
+  isYouTubeCommentsDisabled,
   loadCumulativeOwnerOverloadAssessments,
   maybeWarnOwnerCommentOverload,
 } from './youtube-owner-overload.js';
@@ -111,6 +112,7 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
     sentAlerts: 0,
     overloadCandidates: 0,
     overloadWarnings: 0,
+    overloadSuppressedDisabled: 0,
     overloadWarningFailures: 0,
     channelFailures: collected.channelFailures,
     degraded: [],
@@ -193,6 +195,19 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
     summary.overloadCandidates = overloads.length;
     if (!config.dryRun) {
       for (const { target, assessment } of overloads) {
+        // 방탄: videos.list 통계로 disabled를 놓친 후보라도, 실제 commentThreads
+        // 프로브가 사용 중지를 확정하면 이미 닫힌 영상이므로 재알림하지 않는다.
+        // (accessToken 없거나 미상이면 기존대로 경고 — 억제는 확정된 경우만.)
+        const token = collected.ownerAccessTokens?.get(target.ownerChannelId);
+        if (token) {
+          const disabled = await isYouTubeCommentsDisabled(
+            config, target.youtubeVideoId, token, fetchImpl,
+          );
+          if (disabled === true) {
+            summary.overloadSuppressedDisabled += 1;
+            continue;
+          }
+        }
         const route = threadRouteForOwnerTarget(target);
         const overload = await maybeWarnOwnerCommentOverload(
           config,
@@ -274,7 +289,7 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
       kstDate: kstDateKey(now), apifyUsd: 0, anthropicUsd: estimatedUsd,
     }, fetchImpl);
   }
-  console.error(`[youtube-owner-channel] channels=${summary.channels}/${summary.totalConfiguredChannels} authenticated=${summary.authenticatedChannels} missingOAuth=${summary.oauthCoverage.missing} videos=${summary.videos} due=${summary.due} deepDue=${summary.deepDue} spikeDue=${summary.spikeDue} paginationDeepDue=${summary.paginationDeepDue} riskDue=${summary.riskDue} riskSignals=${summary.riskSignals} unchanged=${summary.unchanged} noSignal=${summary.noSignal} comments=${summary.comments} alerts=${summary.sentAlerts} overloadCandidates=${summary.overloadCandidates} overloadWarnings=${summary.overloadWarnings} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} fallback=${llmStats.keywordFallbackComments || 0} deferred=${llmStats.llmDeferredComments || 0} failures=${summary.channelFailures.length} softDegraded=${summary.softDegraded.length} est=$${estimatedUsd.toFixed(5)}`);
+  console.error(`[youtube-owner-channel] channels=${summary.channels}/${summary.totalConfiguredChannels} authenticated=${summary.authenticatedChannels} missingOAuth=${summary.oauthCoverage.missing} videos=${summary.videos} due=${summary.due} deepDue=${summary.deepDue} spikeDue=${summary.spikeDue} paginationDeepDue=${summary.paginationDeepDue} riskDue=${summary.riskDue} riskSignals=${summary.riskSignals} unchanged=${summary.unchanged} noSignal=${summary.noSignal} comments=${summary.comments} alerts=${summary.sentAlerts} overloadCandidates=${summary.overloadCandidates} overloadWarnings=${summary.overloadWarnings} overloadSuppressed=${summary.overloadSuppressedDisabled} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} fallback=${llmStats.keywordFallbackComments || 0} deferred=${llmStats.llmDeferredComments || 0} failures=${summary.channelFailures.length} softDegraded=${summary.softDegraded.length} est=$${estimatedUsd.toFixed(5)}`);
   if (summary.channelFailures.length) {
     summary.degraded.push({
       stage: 'collection',
