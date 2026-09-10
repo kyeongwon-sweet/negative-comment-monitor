@@ -179,8 +179,23 @@ test('인지광고 정책은 [인지광고] 표시 댓글에만 추가되고 소
   assert.match(prompts[0], /\[인지광고\] 또 광고냐/);
   assert.doesNotMatch(prompts[0], /\[소유채널\]/);
   assert.match(prompts[0], /유료 인지광고 정책/);
-  assert.match(prompts[0], /광고 그 자체에 대한 피로·거부·냉소는 부정/);
+  // 인지광고 전용 블록에는 타 인물 언급·발연기·댓글싸움만 남는다(광고 냉소·피로는 base로 이동).
+  assert.match(prompts[0], /타 인물·연예인·지인 언급·비교·드립으로 광고 흐름을 흐리면 부정/);
   assert.doesNotMatch(prompts[1], /유료 인지광고 정책/);
+});
+
+test('광고 냉소·피로·경쟁품 비교절하는 마커 없는 위성/협찬(base)에서도 부정으로 잡는다', async () => {
+  let prompt = '';
+  const fetchImpl = async (url, init) => {
+    prompt = JSON.parse(init.body).messages[0].content;
+    return { ok: true, json: async () => ({ content: [{ text: '[]' }] }) };
+  };
+  // 마커 없는 위성 게시물 댓글 → base만 적용되지만 광고 냉소·피로·비교절하는 여전히 부정.
+  await classifyCommentsLLM([{ text: '저놈의 멜론쫀득바를 몇번이나 보는거여' }], { anthropicKey: 'k' }, fetchImpl);
+  assert.doesNotMatch(prompt, /유료 인지광고 정책/);
+  assert.match(prompt, /광고 노출 피로·거부/);
+  assert.match(prompt, /슈기 홍보임/);
+  assert.match(prompt, /뭔 메로나를 제쳐/);
 });
 
 test('기본 프롬프트는 타 인물 언급·캐주얼 욕설·외국어 잡담을 정상으로 명시한다(인지광고 외 완화)', async () => {
