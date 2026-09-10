@@ -124,6 +124,49 @@ test('댓글이 이미 꺼진 소유 영상은 누적 악플이 임계 초과여
   assert.deepEqual(buildCumulativeOwnerOverloadAssessments([disabled], rows, config), []);
 });
 
+test('YouTube가 꺼진 영상에 commentCount 0을 줘 commentsDisabled 미검출이어도 라이브 0댓글이면 재알림하지 않는다', () => {
+  // 실제 2RLPOLnrbts 사례: 댓글창을 껐지만 videos.list가 statistics.commentCount를
+  // 생략하지 않고 "0"으로 반환 → commentsDisabled=false로 오검출. 누적 21건이 전부
+  // 이미 숨김이라 조치할 게 없는데도 과부하 카드가 유령처럼 재발했다.
+  const zeroLive = {
+    ...target,
+    youtubeVideoId: '2RLPOLnrbts',
+    caption: '편의점 알바생이 빵터진 이유',
+    youtubeCommentCount: 0,
+    commentsDisabled: false,
+  };
+  const rows = Array.from({ length: 21 }, (_, index) => ({
+    comment_id: `zero-${index}`,
+    comment_text: '쫀득바 맛없으니 사지마',
+    category: '제품 불만',
+    post_url: 'https://www.youtube.com/watch?v=2RLPOLnrbts',
+    review_decision: 'hidden',
+  }));
+
+  assert.deepEqual(buildCumulativeOwnerOverloadAssessments([zeroLive], rows, config), []);
+});
+
+test('공개 댓글수 미상(null)인 소유 영상은 누적 임계 초과 시 계속 과부하로 잡는다', () => {
+  // null은 부분 응답 등으로 카운트를 모르는 상태다. 0과 달리 정상 알림을 죽이면 안 된다.
+  const unknownCount = {
+    ...target,
+    youtubeVideoId: 'video-null-count',
+    youtubeCommentCount: null,
+    commentsDisabled: false,
+  };
+  const rows = Array.from({ length: 21 }, (_, index) => ({
+    comment_id: `null-${index}`,
+    comment_text: '쫀득바 맛없으니 사지마',
+    category: '제품 불만',
+    post_url: 'https://www.youtube.com/watch?v=video-null-count',
+    review_decision: '',
+  }));
+
+  const result = buildCumulativeOwnerOverloadAssessments([unknownCount], rows, config);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].assessment.negatives, 21);
+});
+
 test('소유채널 개별 알림도 동일 고신뢰 게이트를 쓰고 일반 채널은 건드리지 않는다', () => {
   const comments = [
     { text: '광고 참신하다 잘 만들었네' },

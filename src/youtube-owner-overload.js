@@ -76,6 +76,12 @@ export function buildCumulativeOwnerOverloadAssessments(targets, rows, config) {
     .filter((target) => (
       target?.ownedChannelBrandHostilityScope === true
       && target?.commentsDisabled !== true
+      // 라이브 공개 댓글수가 명시적으로 0이면 댓글창을 껐거나 표시할 댓글이 없는
+      // 상태다. YouTube videos.list는 사용 중지 영상에 statistics.commentCount를
+      // 생략하기도 하지만(→ commentsDisabled=true) "0"으로 주기도 한다(→ 여기서 차단).
+      // 두 반환 형태 모두 커버해 이미 닫힌 영상에 과부하 재알림이 나가지 않게 한다.
+      // null(부분 응답=미상)은 유지해 정상 알림을 죽이지 않는다.
+      && target?.youtubeCommentCount !== 0
       && safeVideoId(target)
     ))
     .map((target) => [safeVideoId(target), target]));
