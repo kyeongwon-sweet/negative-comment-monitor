@@ -219,6 +219,8 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
         ...s.comment,
         ownedChannelBrandHostilityScope:
           entries[s.entry]?.target?.ownedChannelBrandHostilityScope === true,
+        awarenessAdScope:
+          entries[s.entry]?.target?.awarenessAdScope === true,
       })), config, undefined, stats);
     } catch {
       reviewed = null; // 호출 실패 → 이 배치는 키워드 유지

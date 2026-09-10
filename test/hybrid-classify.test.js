@@ -95,6 +95,22 @@ test('B 정책 소유채널만 정상 키워드 댓글도 LLM에 보내고 컨�
   assert.equal(thirdPartyInput[0].ownedChannelBrandHostilityScope, false);
 });
 
+test('인지광고 타겟은 awarenessAdScope 플래그를 LLM 입력에 전달한다', async () => {
+  let adInput = null;
+  await classifyCommentsHybrid(
+    [{ text: '또 광고냐' }],
+    { brandName: '라라스윗', source: 'youtube_ads', ownedChannelBrandHostilityScope: true, awarenessAdScope: true },
+    { anthropicKey: 'key' },
+    async (items) => {
+      adInput = items;
+      return [{ alert: true, category: '광고/바이럴 의심', reason: '광고 피로', priority: 'normal' }];
+    },
+  );
+  assert.equal(adInput.length, 1);
+  assert.equal(adInput[0].awarenessAdScope, true);
+  assert.equal(adInput[0].ownedChannelBrandHostilityScope, true);
+});
+
 test('스코프 지면 하드 적대 안전망: LLM이 정상으로 봐도 하드 토큰은 부정 확정', async () => {
   const normalLlm = async (items) => items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' }));
   // 소유/광고 지면 + 하드 적대 토큰 → LLM 정상 판정을 덮어 부정 확정(작은 LLM 저신호 적대 누락 방지).

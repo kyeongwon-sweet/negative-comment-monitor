@@ -205,6 +205,7 @@ export async function buildMetaAdEntries(config, events, fetchImpl = fetch) {
           brandName: config.brandContext,
           caption: String(media.caption || event.ad_title || ''),
           isManagedAccount: true,
+          awarenessAdScope: true,
           metaMediaId: mediaId === 'unknown' ? '' : mediaId,
           metaAdId: adId,
           adTitle,

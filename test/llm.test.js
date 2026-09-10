@@ -163,6 +163,42 @@ test('LLM 프롬프트가 긍정 광고언급·잡담·가용성을 정상 예�
   assert.match(prompt, /제품\/브랜드를 직접 깎아내리지 않는 가용성·사실 관찰은 정상/);
 });
 
+test('인지광고 정책은 [인지광고] 표시 댓글에만 추가되고 소유채널 마커보다 우선한다', async () => {
+  const prompts = [];
+  const fetchImpl = async (url, init) => {
+    prompts.push(JSON.parse(init.body).messages[0].content);
+    return { ok: true, json: async () => ({ content: [{ text: '[]' }] }) };
+  };
+  // 유튜브 광고는 두 플래그를 모두 가질 수 있다 → [인지광고]가 우선하고 인지광고 정책이 붙는다.
+  await classifyCommentsLLM(
+    [{ text: '또 광고냐', awarenessAdScope: true, ownedChannelBrandHostilityScope: true }],
+    { anthropicKey: 'k' }, fetchImpl,
+  );
+  // 위성/협찬(마커 없음)에는 인지광고 정책이 붙지 않는다.
+  await classifyCommentsLLM([{ text: '슈기님은 신전이 레전드긴 함' }], { anthropicKey: 'k' }, fetchImpl);
+  assert.match(prompts[0], /\[인지광고\] 또 광고냐/);
+  assert.doesNotMatch(prompts[0], /\[소유채널\]/);
+  assert.match(prompts[0], /유료 인지광고 정책/);
+  assert.match(prompts[0], /광고 그 자체에 대한 피로·거부·냉소는 부정/);
+  assert.doesNotMatch(prompts[1], /유료 인지광고 정책/);
+});
+
+test('기본 프롬프트는 타 인물 언급·캐주얼 욕설·외국어 잡담을 정상으로 명시한다(인지광고 외 완화)', async () => {
+  let prompt = '';
+  const fetchImpl = async (url, init) => {
+    prompt = JSON.parse(init.body).messages[0].content;
+    return { ok: true, json: async () => ({ content: [{ text: '[]' }] }) };
+  };
+  await classifyCommentsLLM([{ text: '잠뜰은 박슬기' }], { anthropicKey: 'k' }, fetchImpl);
+  assert.match(prompt, /타 인물·연예인·지인 언급[^\n]*정상/);
+  assert.match(prompt, /댓글러끼리의 캐주얼한 욕설·강조어·티키타카는 정상/);
+  assert.match(prompt, /외국어로 된 잡담은 명확한 제품·브랜드 비방이 아니면 정상/);
+  // 정치는 여전히 부정 항목으로 유지된다.
+  assert.match(prompt, /정치적 비하·조롱·드립/);
+  assert.doesNotMatch(prompt, /유료 인지광고 정책/);
+  assert.doesNotMatch(prompt, /소유 YouTube 채널 확대 정책/);
+});
+
 test('Gemini 구조화 JSON 응답을 분류하고 공급자별 무료 사용량을 기록한다', async () => {
   const requests = [];
   const stats = {};

@@ -204,6 +204,7 @@ export function buildTikTokAdEntriesFromComments(config, comments, allowedAdIds 
           brandName: config.brandContext,
           caption: String(raw.ad_text || raw.ad_name || ''),
           isManagedAccount: true,
+          awarenessAdScope: true,
           adTitle,
           campaignName,
           extraAssignees: videoAssigneeId ? [videoAssigneeId] : [],

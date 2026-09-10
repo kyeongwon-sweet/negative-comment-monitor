@@ -486,6 +486,7 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
         // 부정으로 잡도록 소유채널 브랜드 적대 확대 정책([소유채널] 프롬프트)을 모든 광고 댓글에 적용한다.
         // (isOwnedChannel은 Google Ads 업로드 채널이 OAuth 주채널과 달라 false여도 브랜드 광고임.)
         ownedChannelBrandHostilityScope: true,
+        awarenessAdScope: true,
         bypassClassificationCache: config.youtubeAdsBypassCache === true,
         // 카드 링크명과 제작자 태그 모두 실제 광고 소재명(ad_group_ad.ad.name)을 우선한다.
         // 구형/무명 광고만 캠페인명·영상 제목으로 폴백한다.
