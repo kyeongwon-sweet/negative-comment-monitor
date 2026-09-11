@@ -20,7 +20,19 @@ function sourceHash() {
   const h = createHash('sha256');
   for (const name of SOURCE_FILES) {
     const path = fileURLToPath(new URL(`./${name}`, import.meta.url));
-    h.update(name).update('\0').update(normalize(readFileSync(path, 'utf8'))).update('\0');
+    const text = normalize(readFileSync(path, 'utf8'));
+    // 생성일·조회기간 같은 메타데이터 변경은 판정 프롬프트를 바꾸지 않는다.
+    // 실제 주입되는 정상·부정 예시 내용만 해시에 넣어 불필요한 전량 재분류를 막는다.
+    const hashInput = name === 'classifier-exemplars.json'
+      ? (() => {
+          const parsed = JSON.parse(text);
+          return JSON.stringify({
+            normal: Array.isArray(parsed?.normal) ? parsed.normal : [],
+            negative: Array.isArray(parsed?.negative) ? parsed.negative : [],
+          });
+        })()
+      : text;
+    h.update(name).update('\0').update(hashInput).update('\0');
   }
   cachedSourceHash = h.digest('hex');
   return cachedSourceHash;

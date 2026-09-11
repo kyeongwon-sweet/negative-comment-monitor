@@ -3,6 +3,7 @@
 // src/classifier-exemplars.json에 쓴다. 이 파일이 바뀌면 classifier_hash가 달라져
 // 캐시가 무효화되고 다음 회차부터 새 예시로 분류가 보정된다(주간 잡이 커밋).
 // ⚠️ 미탐(진짜 악플 놓침)이 최악이므로 정상·부정을 균형 있게 담는다.
+import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -61,7 +62,41 @@ export function curate(rows, cap) {
     }
     if (i > cap + 5) break;
   }
-  return out.sort((a, b) => a.localeCompare(b));
+  // localeCompare는 runner OS/ICU에 따라 한글·외국어 순서가 달라져, 내용이 같은데도
+  // 주간 잡이 불필요한 커밋을 만들 수 있다. 코드포인트 순서로 고정한다.
+  return out.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+function exemplarVersion(normal, negative) {
+  return createHash('sha256')
+    .update(JSON.stringify({ normal, negative }))
+    .digest('hex');
+}
+
+export function buildExemplarPayload(normalRows, negativeRows, {
+  cap = 25,
+  lookbackDays = 120,
+  generatedAt = new Date().toISOString().slice(0, 10),
+  previous = null,
+} = {}) {
+  const normalCandidates = curate(normalRows, cap);
+  const negativeCandidates = curate(negativeRows, cap);
+  // 정상·부정 균형은 권고가 아니라 불변식이다. 한쪽 표본이 적으면 많은 쪽도
+  // 같은 수로 줄여, 오탐 완화 예시가 부정 recall을 압도하지 않게 한다.
+  const balancedCount = Math.min(normalCandidates.length, negativeCandidates.length);
+  const normal = normalCandidates.slice(0, balancedCount);
+  const negative = negativeCandidates.slice(0, balancedCount);
+  const version = exemplarVersion(normal, negative);
+  const previousVersion = clean(previous?.version);
+  const previousGeneratedAt = clean(previous?.generatedAt);
+  return {
+    version,
+    // 실제 예시가 그대로면 생성일도 보존해 매주 무의미한 커밋을 만들지 않는다.
+    generatedAt: previousVersion === version && previousGeneratedAt ? previousGeneratedAt : generatedAt,
+    lookbackDays,
+    normal,
+    negative,
+  };
 }
 
 async function loadLabeled(env, decisions, sinceIso) {
@@ -90,13 +125,10 @@ async function main() {
   const sinceIso = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
   const normalRows = await loadLabeled(env, NORMAL_DECISIONS, sinceIso);
   const negativeRows = await loadLabeled(env, NEGATIVE_DECISIONS, sinceIso);
-  const normal = curate(normalRows, cap);
-  const negative = curate(negativeRows, cap);
-  // 미탐 방지: 정상만 있고 부정이 없으면 예시 주입을 비활성(빈 셋)한다.
-  const payload = (normal.length && negative.length)
-    ? { generatedAt: new Date().toISOString().slice(0, 10), lookbackDays, normal, negative }
-    : { generatedAt: new Date().toISOString().slice(0, 10), lookbackDays, normal: [], negative: [] };
   const outPath = fileURLToPath(new URL('../src/classifier-exemplars.json', import.meta.url));
+  let previous = null;
+  try { previous = JSON.parse(readFileSync(outPath, 'utf8')); } catch { /* first snapshot */ }
+  const payload = buildExemplarPayload(normalRows, negativeRows, { cap, lookbackDays, previous });
   writeFileSync(outPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
   console.log(JSON.stringify({
     normalCandidates: normalRows.length,
