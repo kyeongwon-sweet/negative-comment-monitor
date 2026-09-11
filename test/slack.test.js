@@ -13,7 +13,7 @@ const assignees = {
   awareness: 'U_AWARENESS',
   sponsorship: 'U_SPONSORSHIP',
   jd: { powerChannel: 'U_JD_POWER', sponsorship: 'U_JD_SPON', viralBanner: 'U_JD_BANNER', viralVideo: 'U_JD_VIDEO', satellite: 'U_JD_SAT' },
-  p: { viralBanner: 'U_P_BANNER', viralVideo: 'U_P_VIDEO', powerChannel: 'U_P_POWER', sponsorship: 'U_P_SPON' },
+  p: { viralBanner: 'U_P_BANNER', viralVideo: 'U_P_VIDEO', powerChannel: 'U_P_POWER', sponsorship: 'U_P_SPON', awareness: 'U_P_AWARENESS' },
   jg: { primary: 'U_JG', additional: ['U_JG_2', 'U_JG_3', 'U_JG_4'] },
 };
 
@@ -105,6 +105,16 @@ test('alert card(메타 광고): 제작자 매핑 없으면 인지 광고 담당
   // awareness 미지정이면 기존대로 other(황경원)로 폴백
   const noAwareness = buildAlertBlocks(target, comment, undefined, { other: 'U_OTHER' });
   assert.ok(noAwareness.some((b) => b.text?.text === '*담당자*\n<@U_OTHER>'));
+});
+test('인지광고 라우팅: 파인트(P)는 p.awareness(손유곤), 그 외 상품군은 기존 awareness 유지', () => {
+  // 파인트 인지광고 → 파인트 전용 인지광고 담당자
+  assert.equal(assigneeForTarget({ channelCategory: '인지 광고', productName: 'P혼멜' }, assignees), 'U_P_AWARENESS');
+  // 쫀득바(JD) 인지광고 → 기존 상품군 무관 awareness 유지(영향 없음)
+  assert.equal(assigneeForTarget({ channelCategory: '인지 광고', productName: 'JD' }, assignees), 'U_AWARENESS');
+  // 파인트라도 인지광고가 아니면 기존 협찬 담당자 유지
+  assert.equal(assigneeForTarget({ channelCategory: '협찬 (인플루언서)', productName: 'P혼멜' }, assignees), 'U_P_SPON');
+  // p.awareness 미지정이면 기존대로 상품군 무관 awareness로 폴백
+  assert.equal(assigneeForTarget({ channelCategory: '인지 광고', productName: 'P혼멜' }, { ...assignees, p: { sponsorship: 'U_P_SPON' } }), 'U_AWARENESS');
 });
 test('alert card(바이럴): 소재명 제작자(extraAssignees)만 태그, 없으면 base 폴백', () => {
   const comment = { id: 'c1', platform: 'instagram', text: '별로', risk: {} };

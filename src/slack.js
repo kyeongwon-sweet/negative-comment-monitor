@@ -98,6 +98,7 @@ export function assigneeForTarget(target, assignees = {}) {
     if (isVideo && assignees.jd?.viralVideo) return assignees.jd.viralVideo;
     if (isSatellite && assignees.jd?.satellite) return assignees.jd.satellite;
   } else if (group === 'p') {
+    if (isAwareness && assignees.p?.awareness) return assignees.p.awareness;           // 파인트 인지광고=손유곤
     if (isPowerChannel && assignees.p?.powerChannel) return assignees.p.powerChannel; // 파인트 파워채널=이도경
     if (isSponsorship && assignees.p?.sponsorship) return assignees.p.sponsorship;     // 파인트 협찬(인플루언서)=손유곤
     if (isBanner && assignees.p?.viralBanner) return assignees.p.viralBanner;

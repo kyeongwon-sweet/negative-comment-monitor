@@ -56,6 +56,7 @@ export function loadConfig(env = process.env, now = Date.now()) {
         viralVideo: String(env.SLACK_ASSIGNEE_P_VIRAL_VIDEO || '').trim(),
         powerChannel: String(env.SLACK_ASSIGNEE_P_POWER_CHANNEL || '').trim(), // 파인트 협찬(파워채널/매거진)=이도경
         sponsorship: String(env.SLACK_ASSIGNEE_P_SPONSORSHIP || '').trim(),   // 파인트 협찬(인플루언서)=손유곤
+        awareness: String(env.SLACK_ASSIGNEE_P_AWARENESS || '').trim(),       // 파인트 인지광고=손유곤
       },
       jg: {
         primary: String(env.SLACK_ASSIGNEE_JG_PRIMARY || '').trim(),
