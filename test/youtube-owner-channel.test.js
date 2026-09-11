@@ -10,6 +10,7 @@ import {
   shouldScanOwnerVideo,
   YOUTUBE_BRAND_HOSTILITY_CHANNEL_IDS,
 } from '../src/youtube-owner-channel.js';
+import { productGroup } from '../src/slack.js';
 
 function json(payload, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => payload, text: async () => JSON.stringify(payload) };
@@ -177,6 +178,16 @@ test('product inference keeps organic routing useful without changing posted_at'
   assert.equal(inferOwnerVideoProduct({ snippet: { title: '부모님도 홀딱 빠진 멜론바' } }), 'JD');
   assert.equal(inferOwnerVideoProduct({ snippet: { title: '라라스윗 파인트 신상' } }), 'P');
   assert.equal(inferOwnerVideoProduct({ snippet: { title: '듬뿍바 리뷰' } }), 'DB');
+});
+
+test('영상ID 상품군 override는 제목 키워드보다 우선한다(제과 라우팅)', () => {
+  // 제목에 제품 키워드가 없어 원래 JD로 떨어지지만, 지정 영상은 제과로 고정된다.
+  const video = { id: 'm08ivgAEkYY', snippet: { title: '쓰형 맛피아 건물주3 0904' } };
+  assert.equal(inferOwnerVideoProduct(video), '제과');
+  assert.equal(productGroup(inferOwnerVideoProduct(video)), 'jg');
+  assert.equal(inferOwnerVideoProduct({ id: 'W2PR9iMlfYw', snippet: { title: '쓰형 맛피아 건물주4 0904' } }), '제과');
+  // 지정되지 않은 영상은 기존 추론(기본값 JD) 유지.
+  assert.equal(inferOwnerVideoProduct({ id: 'zzzOther', snippet: { title: '쓰형 맛피아 건물주5 0904' } }), 'JD');
 });
 
 test('collector lists recent uploads and calls commentThreads only for changed counts', async () => {

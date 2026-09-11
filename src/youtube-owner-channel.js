@@ -22,6 +22,15 @@ export const YOUTUBE_BRAND_HOSTILITY_CHANNEL_IDS = new Set([
   'UCQKpvEBNiMBrGzI2f2tAFeA', // 썰푸는앵무새
 ]);
 
+// 특정 소유 영상은 제목에 제품 키워드가 없어 기본값(JD)로 떨어진다. 대표님이 담당을 지정한
+// 영상은 여기서 상품군을 고정해 담당자(assigneeForTarget)와 데일리 스레드(productLabel)를
+// 함께 옮긴다. 예: 제과 → productGroup 'jg' → 담당 모현진 + [제과] 인지 광고 스레드.
+// 2026-09-11 대표님 지정: 썰푸는앵무새 '쓰형 맛피아 건물주3/4 0904' 2건 → 제과.
+export const YOUTUBE_OWNER_VIDEO_PRODUCT_OVERRIDES = Object.freeze({
+  m08ivgAEkYY: '제과', // 쓰형 맛피아 건물주3 0904
+  W2PR9iMlfYw: '제과', // 쓰형 맛피아 건물주4 0904
+});
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RISK_EXCLUDED_DECISIONS = new Set(['false_positive', 'ignore', 'unhide', 'approve']);
 
@@ -218,6 +227,11 @@ export async function loadOwnerVideoRiskSignals(config, fetchImpl = fetch, now =
 }
 
 export function inferOwnerVideoProduct(video, fallback = 'JD') {
+  // 영상별 지정 상품군이 있으면 제목 키워드 추론보다 우선한다(대표님 담당 지정 라우팅).
+  const videoId = String(video?.id || '').trim();
+  if (videoId && YOUTUBE_OWNER_VIDEO_PRODUCT_OVERRIDES[videoId]) {
+    return YOUTUBE_OWNER_VIDEO_PRODUCT_OVERRIDES[videoId];
+  }
   const text = `${video?.snippet?.title || ''} ${video?.snippet?.description || ''}`.toLowerCase();
   if (/파인트|p(?:혼|망|딸|애)/i.test(text)) return 'P';
   if (/듬뿍|db(?:혼|망|딸|애)/i.test(text)) return 'DB';
