@@ -28,6 +28,7 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
           SLACK_ASSIGNEE_AWARENESS: ${{ vars.SLACK_ASSIGNEE_AWARENESS }}
+          SLACK_ASSIGNEE_P_AWARENESS: ${{ vars.SLACK_ASSIGNEE_P_AWARENESS }}
           META_GRAPH_BASE: https://graph.facebook.com/v26.0
           META_TOKEN_KIND: ig_ads
           META_AUTO_HIDE_EXCLUDED_IG_USER_IDS: ${{ vars.META_AUTO_HIDE_EXCLUDED_IG_USER_IDS }}
