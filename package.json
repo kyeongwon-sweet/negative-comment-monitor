@@ -19,6 +19,7 @@
     "audit:youtube-owner-coverage": "node src/youtube-owner-coverage-audit.js",
     "report:youtube-repeat-offenders": "node src/youtube-repeat-offender-report.js",
     "audit:false-positive": "node src/false-positive-audit.js",
+    "suggest:classifier-tuning": "node src/classifier-tuning-suggest.js",
     "ban:youtube-repeat-offender": "node src/youtube-repeat-offender-ban.js",
     "oauth:youtube-satellite": "node scripts/youtube-satellite-owner-oauth.mjs",
     "oauth:youtube-satellite:submit": "node scripts/youtube-satellite-owner-oauth-submit.mjs",

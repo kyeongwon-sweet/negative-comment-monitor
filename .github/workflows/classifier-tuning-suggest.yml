@@ -1,0 +1,47 @@
+name: Classifier tuning suggestion
+
+on:
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: Days of human labels ([무시]=정상 / [숨김·차단]=부정) to analyze
+        required: false
+        default: '30'
+      notify_slack:
+        description: Post the LLM tuning draft to Slack
+        required: false
+        type: boolean
+        default: true
+  schedule:
+    # 매주 월 10:37 KST(01:37 UTC). FP 감사(01:23) 직후, 정각 드롭 구간을 피한다.
+    # 라벨을 LLM이 분석해 llm.js 개선안 '초안'만 올린다(자동 반영 없음, 사람 승인 필수).
+    - cron: '37 1 * * 1'
+
+concurrency:
+  group: classifier-tuning-suggest
+  cancel-in-progress: false
+
+jobs:
+  suggest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts
+      - name: Draft classifier tuning from human labels
+        run: npm run suggest:classifier-tuning
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_ASSIGNEE_AWARENESS: ${{ vars.SLACK_ASSIGNEE_AWARENESS }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLASSIFIER_TUNING_LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '30' }}
+          CLASSIFIER_TUNING_NOTIFY_SLACK: ${{ github.event_name == 'schedule' && 'true' || inputs.notify_slack && 'true' || 'false' }}
