@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url';
 // classifier_hash = 분류에 영향을 주는 소스 파일들의 내용 해시 + 모델 ID.
 // keywords.js / classify.js / llm.js(LLM 프롬프트·출력 스키마 포함) 중 하나라도 바뀌면
 // 해시가 달라져 기존 캐시(정상 판정 포함)가 자동 무효화된다. 수동 버전 번호를 쓰지 않는다.
-const SOURCE_FILES = ['keywords.js', 'classify.js', 'llm.js'];
+// classifier-exemplars.json(내부 DB 라벨 few-shot 예시)도 프롬프트에 주입되므로 해시에 포함한다.
+// 주간 잡이 이 파일을 갱신·커밋하면 해시가 달라져 캐시가 무효화되고 새 예시로 재분류된다.
+const SOURCE_FILES = ['keywords.js', 'classify.js', 'llm.js', 'classifier-exemplars.json'];
 
 // 줄바꿈(LF/CRLF) 차이만으로 캐시가 갈리지 않도록 정규화 — 로직이 같으면 해시도 같다.
 function normalize(text) {

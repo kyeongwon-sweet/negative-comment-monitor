@@ -184,6 +184,24 @@ test('인지광고 정책은 [인지광고] 표시 댓글에만 추가되고 소
   assert.doesNotMatch(prompts[1], /유료 인지광고 정책/);
 });
 
+test('내부 DB few-shot 예시가 있으면 프롬프트에 정상·부정 예시 블록을 주입한다', async () => {
+  let prompt = '';
+  const fetchImpl = async (url, init) => {
+    prompt = JSON.parse(init.body).messages[0].content;
+    return { ok: true, json: async () => ({ content: [{ text: '[]' }] }) };
+  };
+  await classifyCommentsLLM([{ text: '테스트 댓글' }], { anthropicKey: 'k' }, fetchImpl);
+  // classifier-exemplars.json에 정상·부정이 모두 있으면 참고 예시 블록이 붙는다(없으면 빈 문자열).
+  const fs = await import('node:fs');
+  const url = new URL('../src/classifier-exemplars.json', import.meta.url);
+  const ex = JSON.parse(fs.readFileSync(url, 'utf8'));
+  if ((ex.normal || []).length && (ex.negative || []).length) {
+    assert.match(prompt, /사람이 실제로 판정한 예시/);
+    assert.match(prompt, /\[정상\(부정 아님\)으로 판정된 예시\]/);
+    assert.match(prompt, /\[부정\(관리 대상\)으로 판정된 예시\]/);
+  }
+});
+
 test('광고 냉소·피로·경쟁품 비교절하는 마커 없는 위성/협찬(base)에서도 부정으로 잡는다', async () => {
   let prompt = '';
   const fetchImpl = async (url, init) => {

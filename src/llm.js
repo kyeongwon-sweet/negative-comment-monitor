@@ -1,5 +1,26 @@
 // 공급자 독립 LLM 분류기. 기본 체인은 Gemini 무료 티어 → Anthropic → 키워드다.
 // 어떤 공급자도 사용할 수 없거나 모두 실패하면 null을 반환하고 호출부가 키워드로 폴백한다.
+import { readFileSync } from 'node:fs';
+
+// 내부 DB 라벨에서 뽑은 few-shot 예시(정상=[무시], 부정=숨김/차단). 주간 잡이
+// src/classifier-exemplars.json을 갱신·커밋하면 여기서 읽어 프롬프트에 주입한다.
+// 파일 내용은 classifier-hash.js가 해시에 포함하므로, 바뀔 때만 캐시가 무효화된다.
+// ⚠️ 미탐 방지: 정상·부정이 모두 있을 때만 주입(스크립트가 불균형이면 빈 셋으로 둠).
+let EXEMPLAR_BLOCK = '';
+try {
+  const raw = JSON.parse(readFileSync(new URL('./classifier-exemplars.json', import.meta.url), 'utf8'));
+  const normal = Array.isArray(raw?.normal) ? raw.normal : [];
+  const negative = Array.isArray(raw?.negative) ? raw.negative : [];
+  if (normal.length && negative.length) {
+    EXEMPLAR_BLOCK = '\n우리 서비스에서 사람이 실제로 판정한 예시입니다(참고용 — 위 규칙과 충돌하면 규칙이 우선, 애매할 때만 경향 참고):\n'
+      + '[정상(부정 아님)으로 판정된 예시]\n'
+      + normal.map((text) => `- ${String(text).slice(0, 80)}`).join('\n') + '\n'
+      + '[부정(관리 대상)으로 판정된 예시]\n'
+      + negative.map((text) => `- ${String(text).slice(0, 80)}`).join('\n') + '\n';
+  }
+} catch {
+  EXEMPLAR_BLOCK = '';
+}
 
 const CHUNK = 25;
 const TRANSIENT_HTTP_STATUSES = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
@@ -190,7 +211,8 @@ function buildPrompt(chunk) {
   return PROMPT_HEAD
     + (hasOwnedChannelContext ? OWNED_CHANNEL_POLICY : '')
     + (hasAwarenessContext ? AWARENESS_AD_POLICY : '')
-    + '댓글 목록:\n' + numbered + PROMPT_TAIL;
+    + EXEMPLAR_BLOCK
+    + '\n댓글 목록:\n' + numbered + PROMPT_TAIL;
 }
 
 function parseResults(text, chunkLength) {

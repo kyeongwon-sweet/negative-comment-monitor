@@ -1,0 +1,49 @@
+name: Refresh classifier exemplars
+
+on:
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: Days of human labels to draw few-shot exemplars from
+        required: false
+        default: '120'
+  schedule:
+    # 매주 월 02:47 KST(17:47 UTC 일). 정각(UTC0) 드롭 구간을 피한다.
+    # 내부 DB 라벨([무시]=정상 / 숨김·차단=부정)에서 균형 예시셋을 뽑아
+    # src/classifier-exemplars.json을 갱신·커밋한다. 파일이 바뀌면 classifier_hash가
+    # 달라져 다음 회차부터 새 예시로 분류가 보정된다(사람 개입 없음).
+    - cron: '47 17 * * 0'
+
+concurrency:
+  group: refresh-classifier-exemplars
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts
+      - name: Rebuild few-shot exemplars from DB labels
+        run: npm run refresh:classifier-exemplars
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CLASSIFIER_EXEMPLAR_LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '120' }}
+      - name: Commit refreshed exemplars if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src/classifier-exemplars.json
+          if git diff --cached --quiet; then
+            echo "No exemplar changes."
+          else
+            git commit -m "chore(classifier): refresh few-shot exemplars from DB labels"
+            git push
+          fi
