@@ -13,7 +13,7 @@ import {
 } from './youtube-owner-moderation.js';
 
 export const YOUTUBE_HIDDEN_AUDIT_CONFIRMATION = 'REHIDE_VISIBLE_YOUTUBE_AD_ALERTS';
-const EXPECTED_HIDDEN_DECISIONS = new Set(['hidden', 'hide', 'complete']);
+const EXPECTED_HIDDEN_DECISIONS = new Set(['hidden', 'hide', 'complete', 'author_banned']);
 
 function required(env, name) {
   const value = String(env[name] || '').trim();

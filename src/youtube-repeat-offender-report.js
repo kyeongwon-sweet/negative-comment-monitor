@@ -8,6 +8,10 @@ import {
 } from './youtube-owner-moderation.js';
 
 const HUMAN_KEEP_DECISIONS = new Set(['false_positive', 'ignore', 'approve', 'unhide']);
+// 이미 작성자 차단(밴)된 알림은 리포트에서 제외한다. 자동숨김('hidden')은 여전히
+// 후보로 노출해 사람이 작성자 밴으로 에스컬레이션할 수 있게 남기지만, 밴이 끝난
+// 작성자는 다시 올라오면 노이즈일 뿐이고 재-밴 시도는 이미 rejected라 실패한다.
+const OFFENDER_REPORT_EXCLUDED_DECISIONS = new Set([...HUMAN_KEEP_DECISIONS, 'author_banned']);
 
 function required(env, name) {
   const value = String(env[name] || '').trim();
@@ -56,7 +60,7 @@ export function loadYouTubeRepeatOffenderConfig(env = process.env) {
 }
 
 export function isNegativeAlertForOffenderReport(alert) {
-  return !HUMAN_KEEP_DECISIONS.has(clean(alert?.review_decision).toLowerCase());
+  return !OFFENDER_REPORT_EXCLUDED_DECISIONS.has(clean(alert?.review_decision).toLowerCase());
 }
 
 export function buildRepeatOffenderCandidates(alerts, options = {}) {

@@ -19,13 +19,23 @@ function row(id, author, video, decision = 'hidden', name = '악플러', owner =
   };
 }
 
-test('사람이 오탐·유지한 댓글은 상습 악플러 집계에서 제외한다', () => {
-  for (const decision of ['false_positive', 'ignore', 'approve', 'unhide']) {
+test('사람이 오탐·유지한 댓글과 이미 밴된 작성자는 상습 악플러 집계에서 제외한다', () => {
+  // author_banned = 이미 밴 완료 → 다시 후보로 올리지 않는다.
+  for (const decision of ['false_positive', 'ignore', 'approve', 'unhide', 'author_banned']) {
     assert.equal(isNegativeAlertForOffenderReport({ review_decision: decision }), false);
   }
+  // 'hidden'(자동숨김)은 여전히 후보로 노출 → 사람이 작성자 밴으로 에스컬레이션할 수 있게.
   for (const decision of [null, 'hidden', 'complete', 'hold']) {
     assert.equal(isNegativeAlertForOffenderReport({ review_decision: decision }), true);
   }
+});
+
+test('이미 author_banned인 작성자는 후보에서 빠지고 hidden 작성자는 남는다', () => {
+  const candidates = buildRepeatOffenderCandidates([
+    row(1, 'UC_BANNED', 'video1', 'author_banned'), row(2, 'UC_BANNED', 'video2', 'author_banned'),
+    row(3, 'UC_HIDDEN', 'video1', 'hidden'), row(4, 'UC_HIDDEN', 'video2', 'hidden'),
+  ], { minComments: 3, minVideos: 2 });
+  assert.deepEqual(candidates.map((r) => r.authorChannelId), ['UC_HIDDEN']);
 });
 
 test('작성자별 3건 이상 또는 서로 다른 영상 2개 이상을 후보로 집계한다', () => {

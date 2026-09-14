@@ -96,8 +96,9 @@ async function commentIdsByAlert(config, alertIds, fetchImpl) {
 }
 
 // banAuthor는 이미 그 작성자의 모든 댓글을 숨긴다. DB도 후보의 모든 미결 alert 행을
-// hidden으로 맞춰, 다음 리포트가 같은 작성자를 다시 후보로 올리지 않게 한다.
-async function persistAuthorAlertsHidden(config, alertIds, fetchImpl, now) {
+// author_banned로 맞춰, 다음 리포트가 같은 작성자를 다시 후보로 올리지 않게 한다.
+// 'hidden'(자동숨김, 밴 에스컬레이션 대상)과 구분되는 종결 상태다.
+async function persistAuthorBanned(config, alertIds, fetchImpl, now) {
   const ids = [...new Set((alertIds || []).map(Number).filter(Number.isSafeInteger))];
   if (!ids.length) return;
   const response = await fetchImpl(
@@ -106,7 +107,7 @@ async function persistAuthorAlertsHidden(config, alertIds, fetchImpl, now) {
       method: 'PATCH',
       headers: headers(config, { 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
       body: JSON.stringify({
-        review_decision: 'hidden',
+        review_decision: 'author_banned',
         reviewed_by: config.actor,
         reviewed_at: new Date(now).toISOString(),
       }),
@@ -149,7 +150,7 @@ export async function executeBulkBan(config, prepared, fetchImpl = fetch, now = 
         failed.push({ authorChannelId: candidate.authorChannelId, status: response.status });
         continue;
       }
-      await persistAuthorAlertsHidden(config, candidate.alertIds, fetchImpl, now);
+      await persistAuthorBanned(config, candidate.alertIds, fetchImpl, now);
       banned += 1;
       if (config.banDelayMs > 0) await wait(config.banDelayMs);
     } catch (error) {

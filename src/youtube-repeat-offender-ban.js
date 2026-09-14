@@ -43,14 +43,15 @@ export function buildYouTubeAuthorBanUrl(youtubeApiBase, commentId) {
 
 export async function persistBanEvidence(config, alertId, fetchImpl, now) {
   // 사람이 이미 남긴 완료/오탐 등의 결정을 덮지 않는다. 미결 행만 서비스 계정의
-  // 실제 API 성공 결과로 hidden 처리한다.
+  // 실제 API 성공 결과로 author_banned 처리한다. 'hidden'(자동숨김)과 구분해,
+  // 밴 끝난 작성자가 상습 악플러 리포트에 다시 오르지 않게 한다.
   const response = await fetchImpl(
     `${config.supabaseUrl}/rest/v1/negative_comment_alerts?id=eq.${alertId}&review_decision=is.null`,
     {
       method: 'PATCH',
       headers: headers(config, { 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
       body: JSON.stringify({
-        review_decision: 'hidden',
+        review_decision: 'author_banned',
         reviewed_by: config.actor,
         reviewed_at: new Date(now).toISOString(),
       }),

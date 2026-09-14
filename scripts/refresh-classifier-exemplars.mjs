@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const NORMAL_DECISIONS = ['false_positive', 'ignore', 'unhide'];
-const NEGATIVE_DECISIONS = ['hidden', 'hide', 'complete'];
+const NEGATIVE_DECISIONS = ['hidden', 'hide', 'complete', 'author_banned'];
 
 function envFrom(text) {
   const env = {};

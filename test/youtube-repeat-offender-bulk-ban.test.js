@@ -65,10 +65,12 @@ test('executeBulkBan dryRun: 밴하지 않고 인벤토리만 반환', async () 
 test('executeBulkBan live: 후보를 밴하고 모든 alert 행을 hidden 처리', async () => {
   const banUrls = [];
   const patched = [];
+  const patchedBodies = [];
   const fetchImpl = async (input, init = {}) => {
     const url = String(input);
     if (url.includes('/rest/v1/negative_comment_alerts') && init.method === 'PATCH') {
       patched.push(url);
+      patchedBodies.push(JSON.parse(init.body));
       return { ok: true, status: 204, json: async () => [] };
     }
     if (url.includes('/rest/v1/negative_comment_alerts') && url.includes('select=id,comment_id')) {
@@ -91,8 +93,9 @@ test('executeBulkBan live: 후보를 밴하고 모든 alert 행을 hidden 처리
   assert.match(banUrls[0], /banAuthor=true/);
   assert.match(banUrls[0], /moderationStatus=rejected/);
   assert.match(banUrls[0], /id=CMT10/);
-  // alert 10,11 모두 hidden PATCH 대상
+  // alert 10,11 모두 PATCH 대상이며, 종결 상태는 author_banned(자동숨김 'hidden'과 구분)
   assert.match(patched[0], /id=in\.\(10,11\)/);
+  assert.equal(patchedBodies[0].review_decision, 'author_banned');
 });
 
 test('executeBulkBan live: 토큰/댓글ID 없으면 밴하지 않고 skip', async () => {

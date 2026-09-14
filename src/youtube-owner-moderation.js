@@ -232,7 +232,8 @@ const KEEP_REVIEW_DECISIONS = new Set([
 
 function alertDisposition(alert, { singleAlert = false, autoHideAllNegatives = false } = {}) {
   const decision = String(alert.review_decision || '').trim().toLowerCase();
-  if (decision === 'hidden') return 'hidden';
+  // author_banned = 작성자 밴으로 이미 플랫폼에서 숨겨진 종결 상태 → 재처리 대상 아님.
+  if (decision === 'hidden' || decision === 'author_banned') return 'hidden';
   // 인지 광고 상시 자동 숨김은 [완료]로 카드가 정리된 댓글도 실제 플랫폼에서 숨긴다.
   // persistHiddenRows는 사람의 결정/행위자를 덮지 않으므로 감사 이력은 그대로 남는다.
   if (autoHideAllNegatives && ['complete', 'hide'].includes(decision)) return 'eligible';

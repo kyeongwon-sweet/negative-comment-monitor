@@ -11,7 +11,7 @@ export async function runHiddenYouTubeSlackSync(config = loadYouTubeOwnerModerat
     throw new Error(`Slack sync requires YOUTUBE_HIDDEN_SLACK_SYNC_CONFIRM=${YOUTUBE_HIDDEN_SLACK_SYNC_CONFIRMATION}`);
   }
   const rows = (await loadYouTubeAdAlerts(config, fetchImpl))
-    .filter((row) => row.review_decision === 'hidden');
+    .filter((row) => row.review_decision === 'hidden' || row.review_decision === 'author_banned');
   const result = await syncHiddenYouTubeSlackCards(config, rows, fetchImpl);
   return { hiddenRows: rows.length, ...result };
 }
