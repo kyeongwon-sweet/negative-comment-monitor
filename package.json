@@ -20,6 +20,7 @@
     "report:youtube-repeat-offenders": "node src/youtube-repeat-offender-report.js",
     "refresh:classifier-exemplars": "node scripts/refresh-classifier-exemplars.mjs",
     "ban:youtube-repeat-offender": "node src/youtube-repeat-offender-ban.js",
+    "ban:youtube-repeat-offenders-bulk": "node src/youtube-repeat-offender-bulk-ban.js",
     "oauth:youtube-satellite": "node scripts/youtube-satellite-owner-oauth.mjs",
     "oauth:youtube-satellite:submit": "node scripts/youtube-satellite-owner-oauth-submit.mjs",
     "sync:youtube-hidden-slack": "node src/youtube-hidden-slack-sync.js",

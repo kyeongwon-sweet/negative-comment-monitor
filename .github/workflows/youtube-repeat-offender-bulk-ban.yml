@@ -1,0 +1,46 @@
+name: Bulk ban YouTube repeat offenders
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Read-only inventory; set false only after explicit approval
+        required: true
+        default: true
+        type: boolean
+      confirmation:
+        description: For live mode enter BAN_ALL_YOUTUBE_REPEAT_OFFENDERS
+        required: false
+        type: string
+      alert_ids:
+        description: Optional CSV of approved evidence alert IDs; empty = all current candidates
+        required: false
+        type: string
+
+concurrency:
+  group: youtube-repeat-offender-bulk-ban
+  cancel-in-progress: false
+
+jobs:
+  bulk-ban:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts
+      - name: Ban repeat offenders in bulk (dry-run by default)
+        run: npm run ban:youtube-repeat-offenders-bulk
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          YOUTUBE_REPEAT_OFFENDER_BULK_BAN_DRY_RUN: ${{ inputs.dry_run }}
+          YOUTUBE_REPEAT_OFFENDER_BULK_BAN_CONFIRM: ${{ inputs.confirmation }}
+          YOUTUBE_REPEAT_OFFENDER_ALERT_IDS: ${{ inputs.alert_ids }}
+          YOUTUBE_REPEAT_OFFENDER_BULK_BAN_ACTOR: claude-repeat-offender-bulk-ban

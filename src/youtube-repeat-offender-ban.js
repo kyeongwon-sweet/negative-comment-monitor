@@ -41,7 +41,7 @@ export function buildYouTubeAuthorBanUrl(youtubeApiBase, commentId) {
   return url;
 }
 
-async function persistBanEvidence(config, alertId, fetchImpl, now) {
+export async function persistBanEvidence(config, alertId, fetchImpl, now) {
   // 사람이 이미 남긴 완료/오탐 등의 결정을 덮지 않는다. 미결 행만 서비스 계정의
   // 실제 API 성공 결과로 hidden 처리한다.
   const response = await fetchImpl(
