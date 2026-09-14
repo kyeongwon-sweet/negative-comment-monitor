@@ -18,10 +18,14 @@ function clean(value) {
 }
 
 function alertIdSet(value) {
+  // 빈 문자열은 반드시 Number 변환 전에 걸러야 한다. Number('')는 0이라,
+  // 빈 입력이 Set([0])이 되어 "0번 alert 포함 후보만" = 전부 제외로 오작동한다.
   return new Set(
     String(value || '')
       .split(',')
-      .map((item) => Number(item.trim()))
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map(Number)
       .filter(Number.isSafeInteger),
   );
 }

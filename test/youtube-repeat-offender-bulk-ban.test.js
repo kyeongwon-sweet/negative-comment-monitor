@@ -122,3 +122,11 @@ test('loadConfig: 라이브 모드는 확인 문자열 필수', () => {
   // dry-run 기본값은 true(안전)
   assert.equal(loadYouTubeRepeatOffenderBulkBanConfig(baseEnv).dryRun, true);
 });
+
+test('loadConfig: 빈 alert_ids는 allowlist 없음(전원) — Number("")=0 함정 방지', () => {
+  // 미지정/빈 문자열은 빈 Set이어야 selectBulkBanCandidates가 전원을 반환한다.
+  assert.equal(loadYouTubeRepeatOffenderBulkBanConfig(baseEnv).allowedAlertIds.size, 0);
+  assert.equal(loadYouTubeRepeatOffenderBulkBanConfig({ ...baseEnv, YOUTUBE_REPEAT_OFFENDER_ALERT_IDS: '' }).allowedAlertIds.size, 0);
+  const two = loadYouTubeRepeatOffenderBulkBanConfig({ ...baseEnv, YOUTUBE_REPEAT_OFFENDER_ALERT_IDS: '10, 11' }).allowedAlertIds;
+  assert.deepEqual([...two].sort((a, b) => a - b), [10, 11]);
+});
