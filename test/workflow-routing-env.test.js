@@ -11,6 +11,10 @@ const ownerChannelWorkflow = readFileSync(
   new URL('../.github/workflows/youtube-owner-channel.yml', import.meta.url),
   'utf8',
 );
+const repeatOffenderWorkflow = readFileSync(
+  new URL('../.github/workflows/youtube-repeat-offender-report.yml', import.meta.url),
+  'utf8',
+);
 
 test('협찬 파워채널 담당자 변수를 메인 감시 런타임에 전달한다', () => {
   assert.match(
@@ -21,6 +25,18 @@ test('협찬 파워채널 담당자 변수를 메인 감시 런타임에 전달�
     monitorWorkflow,
     /SLACK_ASSIGNEE_P_POWER_CHANNEL:\s*\$\{\{\s*vars\.SLACK_ASSIGNEE_P_POWER_CHANNEL\s*\}\}/,
   );
+});
+
+test('상습 악플러 리포트가 제품별 인지광고 담당자 변수를 전달받는다', () => {
+  for (const variable of [
+    'SLACK_ASSIGNEE_OTHER',
+    'SLACK_ASSIGNEE_AWARENESS',
+    'SLACK_ASSIGNEE_P_AWARENESS',
+    'SLACK_ASSIGNEE_JG_PRIMARY',
+  ]) {
+    const pattern = new RegExp(`${variable}:\\s*\\$\\{\\{\\s*vars\\.${variable}\\s*\\}\\}`);
+    assert.match(repeatOffenderWorkflow, pattern);
+  }
 });
 
 test('제과 담당자 변수를 일반·광고 알림 런타임 모두에 전달한다', () => {

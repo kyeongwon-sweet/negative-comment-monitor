@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildRepeatOffenderCandidates,
+  buildRepeatOffenderRoutes,
   buildRepeatOffenderSlackText,
   isNegativeAlertForOffenderReport,
 } from '../src/youtube-repeat-offender-report.js';
 
-function row(id, author, video, decision = 'hidden', name = '악플러', owner = 'UC_OWNER') {
+function row(id, author, video, decision = 'hidden', name = '악플러', owner = 'UC_OWNER', product = 'JD') {
   return {
     id,
     comment_id: `c${id}`,
@@ -16,6 +17,7 @@ function row(id, author, video, decision = 'hidden', name = '악플러', owner =
     author_channel_id: author,
     author_display_name: name,
     owner_channel_id: owner,
+    product_name: product,
   };
 }
 
@@ -69,4 +71,25 @@ test('Slack 후보 리포트는 채널 링크·건수·영상수·예시를 포�
   assert.match(text, /썰푸는앵무새/);
   assert.match(text, /악플 4건 · 영상 2개/);
   assert.match(text, /작성자 확인 불가 1건/);
+  assert.match(text, /차단·댓글 숨김은 실행하지 않았습니다/);
+  assert.doesNotMatch(text, /차단 승인용 alert ID/);
+});
+
+test('자격은 작성자 전체 이력으로 판정하되 제품별 인지광고 스레드로 나눈다', () => {
+  const candidates = buildRepeatOffenderCandidates([
+    row(1, 'UC_A', 'video1', 'hidden', '악플러', 'UC_OWNER', 'JG'),
+    row(2, 'UC_A', 'video2', 'hidden', '악플러', 'UC_OWNER', 'JD멜'),
+  ], { minComments: 3, minVideos: 2, maxExamples: 2 });
+  assert.equal(candidates.length, 1, '두 제품에 걸친 2개 영상이면 반복 후보 자격을 유지');
+
+  const routes = buildRepeatOffenderRoutes(candidates, {
+    other: 'U_HWANG', awareness: 'U_HWANG',
+    jg: { primary: 'U0BBTQLRYR2' },
+  });
+  assert.deepEqual(routes.map((route) => [route.scopeKey, route.assignee]), [
+    ['제과|인지 광고', 'U0BBTQLRYR2'],
+    ['쫀득바|인지 광고', 'U_HWANG'],
+  ]);
+  assert.equal(routes[0].candidates[0].commentCount, 1);
+  assert.equal(routes[1].candidates[0].commentCount, 1);
 });

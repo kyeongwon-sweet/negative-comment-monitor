@@ -6,6 +6,10 @@ import {
   refreshAndVerifyOwner,
   videoIdFromAlert,
 } from './youtube-owner-moderation.js';
+import { loadSlackAssignees } from './config.js';
+import { assigneeForTarget, productGroup, productLabel } from './slack.js';
+import { kstDateKey } from './schedule.js';
+import { ensureDailyThread } from './threads.js';
 
 const HUMAN_KEEP_DECISIONS = new Set(['false_positive', 'ignore', 'approve', 'unhide']);
 // 이미 작성자 차단(밴)된 알림은 리포트에서 제외한다. 자동숨김('hidden')은 여전히
@@ -34,6 +38,10 @@ function chunk(values, size) {
   return out;
 }
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function clean(value) {
   return String(value ?? '').trim();
 }
@@ -55,7 +63,9 @@ export function loadYouTubeRepeatOffenderConfig(env = process.env) {
     minComments: positiveInt(env.YOUTUBE_REPEAT_OFFENDER_MIN_COMMENTS, 3, 10_000),
     minVideos: positiveInt(env.YOUTUBE_REPEAT_OFFENDER_MIN_VIDEOS, 2, 10_000),
     maxExamples: positiveInt(env.YOUTUBE_REPEAT_OFFENDER_MAX_EXAMPLES, 2, 5),
+    slackDelayMs: Math.max(0, Number(env.YOUTUBE_REPEAT_OFFENDER_SLACK_DELAY_MS || 1100)),
     notifySlack: clean(env.YOUTUBE_REPEAT_OFFENDER_NOTIFY_SLACK || 'true').toLowerCase() !== 'false',
+    slackAssignees: loadSlackAssignees(env),
   };
 }
 
@@ -87,6 +97,7 @@ export function buildRepeatOffenderCandidates(alerts, options = {}) {
       commentIds: new Set(),
       videoIds: new Set(),
       examples: [],
+      productBuckets: new Map(),
     };
     if (current.commentIds.has(commentId)) continue;
     current.alertIds.push(Number(alert.id));
@@ -96,6 +107,25 @@ export function buildRepeatOffenderCandidates(alerts, options = {}) {
     if (current.examples.length < maxExamples) {
       current.examples.push({ text: clean(alert.comment_text), postUrl: clean(alert.post_url) });
     }
+    const productName = clean(alert.product_name || alert.productName);
+    const group = productGroup(productName);
+    const bucket = current.productBuckets.get(group) || {
+      group,
+      label: productLabel(group),
+      productName,
+      alertIds: [],
+      commentIds: new Set(),
+      videoIds: new Set(),
+      examples: [],
+    };
+    bucket.productName ||= productName;
+    bucket.alertIds.push(Number(alert.id));
+    bucket.commentIds.add(commentId);
+    bucket.videoIds.add(videoId);
+    if (bucket.examples.length < maxExamples) {
+      bucket.examples.push({ text: clean(alert.comment_text), postUrl: clean(alert.post_url) });
+    }
+    current.productBuckets.set(group, bucket);
     byAuthor.set(key, current);
   }
   return [...byAuthor.values()]
@@ -108,6 +138,15 @@ export function buildRepeatOffenderCandidates(alerts, options = {}) {
       commentCount: row.commentIds.size,
       videoCount: row.videoIds.size,
       examples: row.examples,
+      productBuckets: [...row.productBuckets.values()].map((bucket) => ({
+        group: bucket.group,
+        label: bucket.label,
+        productName: bucket.productName,
+        alertIds: bucket.alertIds.filter(Number.isFinite),
+        commentCount: bucket.commentIds.size,
+        videoCount: bucket.videoIds.size,
+        examples: bucket.examples,
+      })),
     }))
     .filter((row) => row.commentCount >= minComments || row.videoCount >= minVideos)
     .sort((a, b) => b.commentCount - a.commentCount || b.videoCount - a.videoCount
@@ -121,6 +160,7 @@ async function loadYouTubeAlerts(config, fetchImpl) {
     const url = new URL(`${config.supabaseUrl}/rest/v1/negative_comment_alerts`);
     const baseColumns = [
       'id', 'source', 'platform', 'comment_id', 'comment_text', 'post_url', 'review_decision',
+      'product_name', 'channel_category', 'category', 'reason',
     ];
     url.searchParams.set('select', [...baseColumns, 'author_channel_id', 'author_display_name'].join(','));
     url.searchParams.set('platform', 'eq.youtube');
@@ -276,36 +316,77 @@ function slackEscape(value) {
   return clean(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export function buildRepeatOffenderSlackText(candidates, summary) {
+export function buildRepeatOffenderRoutes(candidates, assignees = {}) {
+  const routes = new Map();
+  for (const candidate of candidates || []) {
+    for (const bucket of candidate.productBuckets || []) {
+      const group = bucket.group || productGroup(bucket.productName);
+      const label = bucket.label || productLabel(group);
+      const route = routes.get(group) || {
+        group,
+        label,
+        scopeKey: `${label}|인지 광고`,
+        assignee: assigneeForTarget(
+          { productName: bucket.productName || label, channelCategory: '인지 광고' },
+          assignees,
+        ),
+        candidates: [],
+      };
+      route.candidates.push({
+        ...candidate,
+        alertIds: bucket.alertIds,
+        evidenceAlertId: bucket.alertIds?.[0] || null,
+        commentCount: bucket.commentCount,
+        videoCount: bucket.videoCount,
+        examples: bucket.examples,
+        productBuckets: undefined,
+      });
+      routes.set(group, route);
+    }
+  }
+  return [...routes.values()].sort((a, b) => a.label.localeCompare(b.label, 'ko'));
+}
+
+export function buildRepeatOffenderSlackText(candidates, summary, route = {}) {
+  const categoryLabel = route.label ? `[${route.label}] 인지 광고 · ` : '';
+  const assigneeLine = route.assignee ? `<@${route.assignee}> 검토 부탁드립니다.` : '담당자 확인이 필요합니다.';
   const lines = [
-    '🚨 *YouTube 소유채널 상습 악플러 후보*',
-    `기준: 악플 ${summary.minComments}건+ 또는 ${summary.minVideos}개+ 영상 · 후보 ${candidates.length}명`,
+    `🚨 *${categoryLabel}YouTube 소유채널 상습 악플러 후보*`,
+    assigneeLine,
+    `기준: 소유 채널 전체 이력에서 악플 ${summary.minComments}건+ 또는 ${summary.minVideos}개+ 영상 · 이 제품 관련 후보 ${candidates.length}명`,
   ];
   candidates.forEach((row, index) => {
     const label = slackEscape(row.handle || row.authorDisplayName || '작성자');
     const owner = slackEscape(row.ownerChannelName || row.ownerChannelId || '소유 채널');
     lines.push('', `${index + 1}. *${owner}* · <https://www.youtube.com/channel/${encodeURIComponent(row.authorChannelId)}|${label}> — 악플 ${row.commentCount}건 · 영상 ${row.videoCount}개`);
-    if (row.evidenceAlertId) lines.push(`   • 차단 승인용 alert ID: ${row.evidenceAlertId}`);
     for (const example of row.examples || []) {
       const text = slackEscape(example.text).slice(0, 180);
       lines.push(`   • “${text}”${example.postUrl ? ` — <${example.postUrl}|영상>` : ''}`);
     }
   });
   if (summary.unresolvedAuthorAlerts) lines.push('', `작성자 확인 불가 ${summary.unresolvedAuthorAlerts}건은 후보 집계에서 제외했습니다.`);
-  lines.push('', '차단은 후보 확인 후 Studio에서 수동 처리하거나, 위 alert ID로 보호된 차단 워크플로를 실행하세요.');
+  lines.push('', '검토 후보만 안내했습니다. 작성자 차단·댓글 숨김은 실행하지 않았습니다.');
   return lines.join('\n').slice(0, 39_000);
 }
 
-async function postSlack(config, text, fetchImpl) {
+async function postSlack(config, text, threadTs, fetchImpl) {
   if (!config.notifySlack || !config.slackBotToken || !config.slackChannelId) return false;
-  const response = await fetchImpl('https://slack.com/api/chat.postMessage', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${config.slackBotToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ channel: config.slackChannelId, text }),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || !payload.ok) throw new Error(`Slack repeat-offender report failed (${response.status})`);
-  return true;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const response = await fetchImpl('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.slackBotToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel: config.slackChannelId, text, thread_ts: threadTs }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (response.ok && payload.ok) return true;
+    if ((response.status === 429 || payload.error === 'ratelimited') && attempt < 5) {
+      const retrySeconds = Number(response.headers?.get?.('retry-after') || 0);
+      await wait(Math.max(1000, retrySeconds * 1000, config.slackDelayMs));
+      continue;
+    }
+    throw new Error(`Slack repeat-offender report failed (${response.status}): ${payload.error || 'unknown_error'}`);
+  }
+  return false;
 }
 
 export async function prepareYouTubeRepeatOffenderReport(
@@ -363,6 +444,8 @@ export async function prepareYouTubeRepeatOffenderReport(
     minComments: config.minComments,
     minVideos: config.minVideos,
     candidates: candidates.length,
+    categoryRoutes: 0,
+    slackMessages: 0,
     slackSent: false,
   };
   return { summary, candidates, accessTokens };
@@ -373,11 +456,35 @@ export async function runYouTubeRepeatOffenderReport(
 ) {
   const prepared = await prepareYouTubeRepeatOffenderReport(config, fetchImpl);
   if (prepared.candidates.length) {
-    prepared.summary.slackSent = await postSlack(
-      config,
-      buildRepeatOffenderSlackText(prepared.candidates, prepared.summary),
-      fetchImpl,
-    );
+    const routes = buildRepeatOffenderRoutes(prepared.candidates, config.slackAssignees);
+    prepared.summary.categoryRoutes = routes.length;
+    // 수동 dry/report 실행(notify_slack=false)은 부모 스레드조차 만들지 않는다.
+    // 알림 활성 회차만 카테고리별 부모를 보장한 뒤 반드시 답글로 발송한다.
+    if (config.notifySlack && config.slackBotToken && config.slackChannelId) {
+      for (const route of routes) {
+        const threadTs = await ensureDailyThread(config, {
+          kstDate: kstDateKey(Date.now()),
+          scopeKey: route.scopeKey,
+          productLabel: route.label,
+          category: '인지 광고',
+          assignee: route.assignee,
+        }, fetchImpl);
+        if (!threadTs) throw new Error(`Unable to ensure repeat-offender thread: ${route.scopeKey}`);
+        // 후보를 한 덩어리 리포트로 다시 합치지 않는다. 담당자가 각 후보를
+        // 독립된 스레드 답글로 검토할 수 있게 제품 버킷별 한 명씩 발송한다.
+        for (const candidate of route.candidates) {
+          const sent = await postSlack(
+            config,
+            buildRepeatOffenderSlackText([candidate], prepared.summary, route),
+            threadTs,
+            fetchImpl,
+          );
+          if (sent) prepared.summary.slackMessages += 1;
+          if (config.slackDelayMs > 0) await wait(config.slackDelayMs);
+        }
+      }
+    }
+    prepared.summary.slackSent = prepared.summary.slackMessages > 0;
   }
   return { summary: prepared.summary, candidates: prepared.candidates };
 }

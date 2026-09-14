@@ -25,8 +25,43 @@ function scheduledAssignee(env, currentName, nextName, active) {
   return active && next ? next : current;
 }
 
-export function loadConfig(env = process.env, now = Date.now()) {
+// Slack 라우팅만 필요한 보조 작업도 메인 감시와 완전히 같은 정본을 쓴다.
+// loadConfig를 직접 부르면 GAS/Apify 등 무관한 필수 환경변수까지 요구하므로,
+// 담당자 설정을 독립 로더로 분리한다.
+export function loadSlackAssignees(env = process.env, now = Date.now()) {
   const nextRoutingActive = scheduledRoutingActive(env.SLACK_ROUTING_EFFECTIVE_DATE_KST, now);
+  return {
+    satellite: String(env.SLACK_ASSIGNEE_SATELLITE || '').trim(),
+    viralBanner: String(env.SLACK_ASSIGNEE_VIRAL_BANNER || '').trim(),
+    viralVideoOwned: String(env.SLACK_ASSIGNEE_VIRAL_VIDEO_OWNED || '').trim(),
+    other: String(env.SLACK_ASSIGNEE_OTHER || '').trim(),
+    owned: String(env.SLACK_ASSIGNEE_OWNED || '').trim(),
+    jdBok: String(env.SLACK_ASSIGNEE_JDBOK || '').trim(),
+    awareness: scheduledAssignee(env, 'SLACK_ASSIGNEE_AWARENESS', 'SLACK_ASSIGNEE_AWARENESS_NEXT', nextRoutingActive),
+    sponsorship: String(env.SLACK_ASSIGNEE_SPONSORSHIP || '').trim(),
+    jd: {
+      powerChannel: String(env.SLACK_ASSIGNEE_JD_POWER_CHANNEL || '').trim(),
+      sponsorship: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_SPONSORSHIP', 'SLACK_ASSIGNEE_JD_SPONSORSHIP_NEXT', nextRoutingActive),
+      viralBanner: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_VIRAL_BANNER', 'SLACK_ASSIGNEE_JD_VIRAL_BANNER_NEXT', nextRoutingActive),
+      viralVideo: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_VIRAL_VIDEO', 'SLACK_ASSIGNEE_JD_VIRAL_VIDEO_NEXT', nextRoutingActive),
+      satellite: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_SATELLITE', 'SLACK_ASSIGNEE_JD_SATELLITE_NEXT', nextRoutingActive),
+    },
+    p: {
+      viralBanner: String(env.SLACK_ASSIGNEE_P_VIRAL_BANNER || '').trim(),
+      viralVideo: String(env.SLACK_ASSIGNEE_P_VIRAL_VIDEO || '').trim(),
+      powerChannel: String(env.SLACK_ASSIGNEE_P_POWER_CHANNEL || '').trim(),
+      sponsorship: String(env.SLACK_ASSIGNEE_P_SPONSORSHIP || '').trim(),
+      awareness: String(env.SLACK_ASSIGNEE_P_AWARENESS || '').trim(),
+    },
+    jg: {
+      primary: String(env.SLACK_ASSIGNEE_JG_PRIMARY || '').trim(),
+      additional: String(env.SLACK_ASSIGNEE_JG_ADDITIONAL || '')
+        .split(',').map((value) => value.trim()).filter(Boolean),
+    },
+  };
+}
+
+export function loadConfig(env = process.env, now = Date.now()) {
   return {
     gasWebAppUrl: required(env, 'GAS_WEB_APP_URL'),
     gasVerifyToken: required(env, 'GAS_VERIFY_TOKEN'),
@@ -34,36 +69,7 @@ export function loadConfig(env = process.env, now = Date.now()) {
     slackChannelId: String(env.SLACK_CHANNEL_ID || 'C0BHD9S69JA').trim(),
     slackBotToken: String(env.SLACK_BOT_TOKEN || '').trim(),
     slackSigningSecret: String(env.SLACK_SIGNING_SECRET || '').trim(),
-    slackAssignees: {
-      satellite: String(env.SLACK_ASSIGNEE_SATELLITE || '').trim(),
-      viralBanner: String(env.SLACK_ASSIGNEE_VIRAL_BANNER || '').trim(),
-      viralVideoOwned: String(env.SLACK_ASSIGNEE_VIRAL_VIDEO_OWNED || '').trim(),
-      other: String(env.SLACK_ASSIGNEE_OTHER || '').trim(),
-      owned: String(env.SLACK_ASSIGNEE_OWNED || '').trim(),      // 온드미디어(상품군 무관)=김바다
-      jdBok: String(env.SLACK_ASSIGNEE_JDBOK || '').trim(),      // 소재명에 'JD복' 포함 시 최우선 담당자=이재원
-      awareness: scheduledAssignee(env, 'SLACK_ASSIGNEE_AWARENESS', 'SLACK_ASSIGNEE_AWARENESS_NEXT', nextRoutingActive),
-      sponsorship: String(env.SLACK_ASSIGNEE_SPONSORSHIP || '').trim(),
-      // 상품별 담당자(상품 코드 × 카테고리). 미지정 조합/상품은 위 카테고리 기본값으로 폴백.
-      jd: {
-        powerChannel: String(env.SLACK_ASSIGNEE_JD_POWER_CHANNEL || '').trim(), // 쫀득바 협찬(파워채널/매거진)=이재원
-        sponsorship: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_SPONSORSHIP', 'SLACK_ASSIGNEE_JD_SPONSORSHIP_NEXT', nextRoutingActive),
-        viralBanner: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_VIRAL_BANNER', 'SLACK_ASSIGNEE_JD_VIRAL_BANNER_NEXT', nextRoutingActive),
-        viralVideo: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_VIRAL_VIDEO', 'SLACK_ASSIGNEE_JD_VIRAL_VIDEO_NEXT', nextRoutingActive),
-        satellite: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_SATELLITE', 'SLACK_ASSIGNEE_JD_SATELLITE_NEXT', nextRoutingActive),
-      },
-      p: {
-        viralBanner: String(env.SLACK_ASSIGNEE_P_VIRAL_BANNER || '').trim(),
-        viralVideo: String(env.SLACK_ASSIGNEE_P_VIRAL_VIDEO || '').trim(),
-        powerChannel: String(env.SLACK_ASSIGNEE_P_POWER_CHANNEL || '').trim(), // 파인트 협찬(파워채널/매거진)=이도경
-        sponsorship: String(env.SLACK_ASSIGNEE_P_SPONSORSHIP || '').trim(),   // 파인트 협찬(인플루언서)=손유곤
-        awareness: String(env.SLACK_ASSIGNEE_P_AWARENESS || '').trim(),       // 파인트 인지광고=손유곤
-      },
-      jg: {
-        primary: String(env.SLACK_ASSIGNEE_JG_PRIMARY || '').trim(),
-        additional: String(env.SLACK_ASSIGNEE_JG_ADDITIONAL || '')
-          .split(',').map((value) => value.trim()).filter(Boolean),
-      },
-    },
+    slackAssignees: loadSlackAssignees(env, now),
     // 이름→Slack ID 맵(META_AD_VIDEO_ASSIGNEES). 바이럴 카드 소재명에서 제작자 추출·태그용. 파싱 실패=빈 맵.
     videoAssignees: (() => { try { const m = JSON.parse(env.META_AD_VIDEO_ASSIGNEES || '{}'); return (m && typeof m === 'object') ? m : {}; } catch { return {}; } })(),
     supabaseUrl: String(env.SUPABASE_URL || '').trim().replace(/\/$/, ''),

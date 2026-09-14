@@ -61,6 +61,19 @@ export function threadRouteForOwnerTarget(target) {
   };
 }
 
+// 부모 스레드와 과부하 경고가 제품·카테고리·담당자를 따로 계산하면 환경변수
+// 누락이나 분기 차이로 담당자가 갈라진다. 두 경로가 같은 결정값을 공유한다.
+export function ownerThreadRoute(target, assignees = {}) {
+  const route = threadRouteForOwnerTarget(target);
+  const label = productLabel(productGroup(target?.productName));
+  return {
+    ...route,
+    label,
+    scopeKey: `${label}|${route.category}`,
+    assignee: assigneeForTarget(route.target, assignees),
+  };
+}
+
 export function ownerRunFailure(summary = {}) {
   const hardDegraded = Array.isArray(summary.degraded) ? summary.degraded : [];
   if (!hardDegraded.length) return null;
@@ -148,14 +161,12 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
   const threads = new Map();
 
   async function threadFor(target) {
-    const label = productLabel(productGroup(target.productName));
-    const route = threadRouteForOwnerTarget(target);
-    const { category } = route;
-    const scopeKey = `${label}|${category}`;
+    const route = ownerThreadRoute(target, config.slackAssignees);
+    const { category, label, scopeKey } = route;
     if (threads.has(scopeKey)) return threads.get(scopeKey);
     const ts = await ensureDailyThread(config, {
       kstDate: kstDateKey(now), scopeKey, productLabel: label, category,
-      assignee: assigneeForTarget(route.target, config.slackAssignees),
+      assignee: route.assignee,
     }, fetchImpl);
     threads.set(scopeKey, ts);
     return ts;
@@ -208,13 +219,13 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
             continue;
           }
         }
-        const route = threadRouteForOwnerTarget(target);
+        const route = ownerThreadRoute(target, config.slackAssignees);
         const overload = await maybeWarnOwnerCommentOverload(
           config,
           target,
           assessment,
           await threadFor(target),
-          assigneeForTarget(route.target, config.slackAssignees),
+          route.assignee,
           fetchImpl,
           now,
         );

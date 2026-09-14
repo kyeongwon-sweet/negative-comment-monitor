@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ownerRunFailure,
+  ownerThreadRoute,
   recordOwnerLlmSoftDegraded,
   threadRouteForOwnerTarget,
 } from '../src/youtube-owner-channel-run.js';
@@ -19,6 +20,19 @@ test('소유 YouTube 카드는 인지 광고 부모 스레드만 공유하고 �
     actionDefinitions(target, ['위성채널', '소유 YouTube']).map((item) => item[1]),
     ['hide', 'approve', 'hold', 'unhide'],
   );
+});
+
+test('제과 소유 YouTube 스레드와 과부하 경고는 모두 모현진 라우팅을 공유한다', () => {
+  const target = { productName: 'JG', channelCategory: '소유 YouTube', platform: 'youtube' };
+  const route = ownerThreadRoute(target, {
+    other: 'U_HWANG',
+    awareness: 'U_HWANG',
+    jg: { primary: 'U0BBTQLRYR2', additional: ['U_ADDITIONAL'] },
+  });
+
+  assert.equal(route.scopeKey, '제과|인지 광고');
+  assert.equal(route.assignee, 'U0BBTQLRYR2');
+  assert.notEqual(route.assignee, 'U_HWANG');
 });
 
 test('위성 YouTube는 기존 위성 스레드 라우팅을 유지한다', () => {

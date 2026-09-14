@@ -45,6 +45,13 @@ jobs:
           GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_ROUTING_EFFECTIVE_DATE_KST: ${{ vars.SLACK_ROUTING_EFFECTIVE_DATE_KST }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_AWARENESS: ${{ vars.SLACK_ASSIGNEE_AWARENESS }}
+          SLACK_ASSIGNEE_AWARENESS_NEXT: ${{ vars.SLACK_ASSIGNEE_AWARENESS_NEXT }}
+          SLACK_ASSIGNEE_P_AWARENESS: ${{ vars.SLACK_ASSIGNEE_P_AWARENESS }}
+          SLACK_ASSIGNEE_JG_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JG_PRIMARY }}
+          SLACK_ASSIGNEE_JG_ADDITIONAL: ${{ vars.SLACK_ASSIGNEE_JG_ADDITIONAL }}
           YOUTUBE_REPEAT_OFFENDER_MIN_COMMENTS: ${{ github.event_name == 'workflow_dispatch' && inputs.min_comments || '3' }}
           YOUTUBE_REPEAT_OFFENDER_MIN_VIDEOS: ${{ github.event_name == 'workflow_dispatch' && inputs.min_videos || '2' }}
           YOUTUBE_REPEAT_OFFENDER_NOTIFY_SLACK: ${{ github.event_name == 'schedule' && 'true' || inputs.notify_slack && 'true' || 'false' }}
