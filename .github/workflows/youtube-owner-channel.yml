@@ -69,6 +69,10 @@ jobs:
           SLACK_ASSIGNEE_SATELLITE: ${{ vars.SLACK_ASSIGNEE_SATELLITE }}
           SLACK_ASSIGNEE_JD_SATELLITE: ${{ vars.SLACK_ASSIGNEE_JD_SATELLITE }}
           SLACK_ASSIGNEE_P_AWARENESS: ${{ vars.SLACK_ASSIGNEE_P_AWARENESS }}
+          # 소유 YouTube 제과 영상(예: 맛피아 건물주)은 '인지 광고' 스레드로 라우팅되며
+          # 담당자는 jg.primary(모현진). 이 변수를 안 넘기면 런타임 '' → other(황경원) 폴백.
+          SLACK_ASSIGNEE_JG_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JG_PRIMARY }}
+          SLACK_ASSIGNEE_JG_ADDITIONAL: ${{ vars.SLACK_ASSIGNEE_JG_ADDITIONAL }}
           YOUTUBE_OWNER_LOOKBACK_DAYS: '14'
           YOUTUBE_OWNER_MAX_UPLOAD_PAGES: '10'
           YOUTUBE_OWNER_MAX_THREAD_PAGES: '10'
