@@ -285,6 +285,41 @@ async function youtubeJson(config, pathname, query, accessToken, fetchImpl) {
   return payload;
 }
 
+// commentThreads.list는 사용 중지·삭제와 무관하게 간헐적으로 400 processingFailure
+// (또는 5xx backendError)를 낸다. YouTube 응답 본문도 "대개 일시적"이라고 안내한다.
+// 이 일시 오류를 그대로 던지면 소유 채널 수집 루프의 채널 단위 catch까지 전파돼
+// 영상 하나 때문에 채널 전체가 degraded로 빠지고 보조 모니터 경고가 반복된다.
+const TRANSIENT_YOUTUBE_REASONS = new Set([
+  'processingFailure', 'backendError', 'internalError', 'SERVICE_UNAVAILABLE',
+]);
+
+function isTransientYouTubeError(error) {
+  const status = Number(error?.status);
+  if (status === 500 || status === 502 || status === 503 || status === 504) return true;
+  const reasons = Array.isArray(error?.reasons) ? error.reasons : [];
+  return reasons.some((reason) => TRANSIENT_YOUTUBE_REASONS.has(reason));
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// 일시 오류만 제한적으로 재시도한다. commentsDisabled·videoNotFound 같은 확정 오류는
+// 재시도 대상이 아니므로 즉시 던져 상위의 정상 스킵 경로로 넘긴다.
+async function youtubeJsonWithRetry(config, pathname, query, accessToken, fetchImpl) {
+  const maxAttempts = Math.max(1, Number(config?.youtubeTransientRetryAttempts ?? 3));
+  const baseMs = Math.max(0, Number(config?.youtubeTransientRetryBaseMs ?? 500));
+  let lastError;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      return await youtubeJson(config, pathname, query, accessToken, fetchImpl);
+    } catch (error) {
+      lastError = error;
+      if (!isTransientYouTubeError(error) || attempt === maxAttempts - 1) throw error;
+      if (baseMs > 0) await sleep(baseMs * (attempt + 1));
+    }
+  }
+  throw lastError;
+}
+
 export async function fetchOwnedYouTubeChannel(config, accessToken, fetchImpl = fetch) {
   const payload = await youtubeJson(config, 'channels', { part: 'id,snippet,contentDetails', mine: 'true', maxResults: 50 }, accessToken, fetchImpl);
   const channels = Array.isArray(payload.items) ? payload.items : [];
@@ -344,7 +379,7 @@ async function fetchAllReplies(config, parentId, videoId, accessToken, fetchImpl
   const replies = [];
   let pageToken = '';
   for (let page = 0; page < (config.youtubeAdsMaxReplyPages || 100); page += 1) {
-    const payload = await youtubeJson(config, 'comments', {
+    const payload = await youtubeJsonWithRetry(config, 'comments', {
       part: 'id,snippet', parentId, maxResults: 100, textFormat: 'plainText', pageToken,
     }, accessToken, fetchImpl);
     replies.push(...(payload.items || []).map((comment) => normalizeYouTubeComment(comment, videoId, parentId)));
@@ -363,7 +398,7 @@ export async function fetchYouTubeVideoCommentsWithMeta(config, videoId, accessT
   let truncated = false;
   try {
     for (let page = 0; page < config.youtubeAdsMaxThreadPages; page += 1) {
-      const payload = await youtubeJson(config, 'commentThreads', {
+      const payload = await youtubeJsonWithRetry(config, 'commentThreads', {
         part: 'id,snippet,replies', videoId, order: 'time', maxResults: 100,
         textFormat: 'plainText', pageToken,
       }, accessToken, fetchImpl);

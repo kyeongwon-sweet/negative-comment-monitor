@@ -59,6 +59,54 @@ test('댓글 조회는 pageInfo 실측치와 페이지 잘림 여부를 함께 �
   assert.equal(result.comments.length, 1);
 });
 
+test('commentThreads 일시 오류(400 processingFailure)는 재시도 후 성공한다', async () => {
+  let calls = 0;
+  const result = await fetchYouTubeVideoCommentsWithMeta({
+    youtubeApiBase: 'https://youtube.test/youtube/v3',
+    youtubeAdsMaxThreadPages: 1,
+    youtubeTransientRetryBaseMs: 0,
+  }, 'video-1', 'access', async () => {
+    calls += 1;
+    if (calls === 1) return jsonResponse({ error: { errors: [{ reason: 'processingFailure' }] } }, 400);
+    return jsonResponse({
+      pageInfo: { totalResults: 1 },
+      items: [{ snippet: { totalReplyCount: 0, topLevelComment: {
+        id: 'c1', snippet: { authorDisplayName: 'u', textOriginal: 't', publishedAt: '2026-09-05T00:00:00Z' },
+      } } }],
+    });
+  });
+  assert.equal(calls, 2, '일시 오류 1회 후 재시도해 성공');
+  assert.equal(result.comments.length, 1);
+});
+
+test('commentsDisabled는 재시도 없이 빈 결과로 넘긴다', async () => {
+  let calls = 0;
+  const result = await fetchYouTubeVideoCommentsWithMeta({
+    youtubeApiBase: 'https://youtube.test/youtube/v3',
+    youtubeAdsMaxThreadPages: 3,
+    youtubeTransientRetryBaseMs: 0,
+  }, 'video-1', 'access', async () => {
+    calls += 1;
+    return jsonResponse({ error: { errors: [{ reason: 'commentsDisabled' }] } }, 403);
+  });
+  assert.equal(calls, 1, '확정 오류는 재시도하지 않는다');
+  assert.deepEqual(result.comments, []);
+});
+
+test('일시 오류가 계속되면 재시도 소진 후 예외를 던진다(채널 degraded는 진짜 지속 실패에만)', async () => {
+  let calls = 0;
+  await assert.rejects(() => fetchYouTubeVideoCommentsWithMeta({
+    youtubeApiBase: 'https://youtube.test/youtube/v3',
+    youtubeAdsMaxThreadPages: 1,
+    youtubeTransientRetryAttempts: 3,
+    youtubeTransientRetryBaseMs: 0,
+  }, 'video-1', 'access', async () => {
+    calls += 1;
+    return jsonResponse({ error: { errors: [{ reason: 'processingFailure' }] } }, 400);
+  }), /commentThreads failed \(400\)/);
+  assert.equal(calls, 3, '설정된 시도 횟수만큼만 재시도');
+});
+
 test('loadYouTubeAdsConfig separates Google Ads and channel-owner refresh tokens', () => {
   const config = loadYouTubeAdsConfig({
     SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'db', SLACK_BOT_TOKEN: 'slack',
