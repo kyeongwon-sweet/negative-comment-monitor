@@ -19,6 +19,9 @@ test('인지 광고 캠페인명·소재명 블트하/제과는 JG로 분류하�
   assert.equal(awarenessProductName('JD', '[제과] 블트하 인지', '소재'), 'JG');
   assert.equal(awarenessProductName('JD', '', '[26.09] 블트하 소재'), 'JG');
   assert.equal(awarenessProductName('JD복', '[제과] 블트하 인지', 'JD복 소재'), 'JD복');
+  // 대표님 지정: 맛피아·감자스틱도 제과(JG)다.
+  assert.equal(awarenessProductName('JD', '[제과] 맛피아 인지', '소재'), 'JG');
+  assert.equal(awarenessProductName('JD', '', '감자스틱 소재'), 'JG');
 });
 
 test('inAdMorningWindow: prefix별 FORCE·KST 창 판정', () => {

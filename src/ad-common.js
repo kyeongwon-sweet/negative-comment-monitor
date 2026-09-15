@@ -10,7 +10,7 @@ export function awarenessProductName(defaultProductName, campaignName = '', adTi
   const fallback = String(defaultProductName || '').trim();
   const identity = `${String(campaignName || '')} ${String(adTitle || '')}`;
   if (/JD복/i.test(`${fallback} ${identity}`)) return fallback;
-  if (/블트하|제과/i.test(identity)) return 'JG';
+  if (/블트하|제과|맛피아|감자스틱/i.test(identity)) return 'JG';
   return /파인트/i.test(identity) ? 'P' : fallback;
 }
 

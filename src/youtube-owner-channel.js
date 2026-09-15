@@ -233,6 +233,9 @@ export function inferOwnerVideoProduct(video, fallback = 'JD') {
     return YOUTUBE_OWNER_VIDEO_PRODUCT_OVERRIDES[videoId];
   }
   const text = `${video?.snippet?.title || ''} ${video?.snippet?.description || ''}`.toLowerCase();
+  // 대표님 지정: 맛피아·감자스틱은 제과다. 영상별 override 2건 외에도 제목/설명에
+  // 맛피아·감자스틱이 있으면 빙과(JD) 폴백으로 새지 않게 제과로 고정한다.
+  if (/맛피아|감자스틱/i.test(text)) return '제과';
   if (/파인트|p(?:혼|망|딸|애)/i.test(text)) return 'P';
   if (/듬뿍|db(?:혼|망|딸|애)/i.test(text)) return 'DB';
   if (/쫀득|멜론바|망고바|jd(?:멜|망|혼|복)/i.test(text)) return 'JD';

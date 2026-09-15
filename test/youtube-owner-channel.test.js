@@ -181,13 +181,18 @@ test('product inference keeps organic routing useful without changing posted_at'
 });
 
 test('영상ID 상품군 override는 제목 키워드보다 우선한다(제과 라우팅)', () => {
-  // 제목에 제품 키워드가 없어 원래 JD로 떨어지지만, 지정 영상은 제과로 고정된다.
-  const video = { id: 'm08ivgAEkYY', snippet: { title: '쓰형 맛피아 건물주3 0904' } };
+  // 제목 키워드로는 파인트(P)지만, 지정 영상은 override로 제과에 고정된다(우선순위 검증).
+  const video = { id: 'm08ivgAEkYY', snippet: { title: '라라스윗 파인트 팝업' } };
   assert.equal(inferOwnerVideoProduct(video), '제과');
   assert.equal(productGroup(inferOwnerVideoProduct(video)), 'jg');
   assert.equal(inferOwnerVideoProduct({ id: 'W2PR9iMlfYw', snippet: { title: '쓰형 맛피아 건물주4 0904' } }), '제과');
-  // 지정되지 않은 영상은 기존 추론(기본값 JD) 유지.
-  assert.equal(inferOwnerVideoProduct({ id: 'zzzOther', snippet: { title: '쓰형 맛피아 건물주5 0904' } }), 'JD');
+});
+
+test('맛피아·감자스틱은 영상ID override 없이도 제과로 분류한다(대표님 지정)', () => {
+  // 이전에는 override 2건 외 맛피아/감자스틱 영상이 빙과(JD)로 새어 담당자가 어긋났다.
+  assert.equal(inferOwnerVideoProduct({ id: 'zzzOther', snippet: { title: '쓰형 맛피아 건물주5 0904' } }), '제과');
+  assert.equal(inferOwnerVideoProduct({ snippet: { title: '감자스틱 솔직 리뷰' } }), '제과');
+  assert.equal(productGroup(inferOwnerVideoProduct({ snippet: { title: '감자스틱 신상' } })), 'jg');
 });
 
 test('collector lists recent uploads and calls commentThreads only for changed counts', async () => {
