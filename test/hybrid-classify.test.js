@@ -147,6 +147,30 @@ test('스코프 지면 하드 적대 안전망: LLM이 정상으로 봐도 하�
   assert.equal(scopedClean.alert, false);
 });
 
+test('미탐 스윕 반영: 소유 채널에서 봇이 놓쳤던 저신호 부정 표현을 확정한다', async () => {
+  const normalLlm = async (items) => items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' }));
+  const missed = [
+    '첨듣는데 뭔 헛소리야', '개쌉소리여', '가지가지하네', '족구하고 있네', '개맛없다',
+    '댓글알바 작작써라', '앵무새 쟤는 라라스윗 저거만 나오니깐 믿거ㄱㄱ',
+    '걍 하겐다즈 먹지 듣보 아이스크림이야 안먹음', '이딴 광고 보내지 마쇼 안 살테니까',
+    '안살테니 나오지 마쇼', '망국열차행임',
+  ];
+  const results = await classifyCommentsHybrid(
+    missed.map((text) => ({ text })),
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true },
+    { anthropicKey: 'key' }, normalLlm,
+  );
+  results.forEach((r, i) => assert.equal(r.alert, true, `미탐 확정 실패: ${missed[i]}`));
+
+  // 긍정 팬 댓글은 하드 토큰이 없어 정상 유지(오탐 방지).
+  const [positive] = await classifyCommentsHybrid(
+    [{ text: '라라스윗 맛있어.. 저당인데 고급스런 맛이다' }],
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true },
+    { anthropicKey: 'key' }, normalLlm,
+  );
+  assert.equal(positive.alert, false);
+});
+
 test('threads the usage stats accumulator through to the LLM classifier', async () => {
   let receivedStats;
   const stats = { calls: 0 };
