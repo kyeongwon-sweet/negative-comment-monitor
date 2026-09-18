@@ -64,6 +64,36 @@ export function selectLatestWebhookEvent(events, maxDeliveryLagHours = 6) {
 export function evaluateInflowPoll(pollSummary, pollError = null) {
   if (pollError) return { warn: true, reason: 'poll-failed', missing: 0 };
   if (!pollSummary || pollSummary.skipped) return { warn: true, reason: 'poll-unverified', missing: 0 };
+  const expectedPages = Math.max(0, Number(pollSummary.expectedManagedPages) || 0);
+  const expectedInstagramAccounts = Math.max(0, Number(pollSummary.expectedManagedInstagramAccounts) || 0);
+  const managedPages = Math.max(0, Number(pollSummary.managedPages) || 0);
+  const managedInstagramAccounts = Math.max(0, Number(pollSummary.managedInstagramAccounts) || 0);
+  const subscribedPages = pollSummary.subscribedPages == null
+    ? null
+    : Math.max(0, Number(pollSummary.subscribedPages) || 0);
+  const subscriptionErrors = Math.max(0, Number(pollSummary.subscriptionErrors) || 0);
+  const missingPermissions = Array.isArray(pollSummary.missingPermissions)
+    ? pollSummary.missingPermissions.map(String).filter(Boolean)
+    : [];
+  const pageCountBad = expectedPages > 0 && managedPages < expectedPages;
+  const igCountBad = expectedInstagramAccounts > 0 && managedInstagramAccounts < expectedInstagramAccounts;
+  const subscriptionBad = subscribedPages != null
+    && expectedPages > 0
+    && subscribedPages < expectedPages;
+  if (missingPermissions.length || pageCountBad || igCountBad || subscriptionBad || subscriptionErrors > 0) {
+    return {
+      warn: true,
+      reason: 'webhook-health-failed',
+      missing: 0,
+      missingPermissions,
+      managedPages,
+      expectedPages,
+      managedInstagramAccounts,
+      expectedInstagramAccounts,
+      subscribedPages,
+      subscriptionErrors,
+    };
+  }
   const missing = Math.max(0, Number(pollSummary.stored) || 0);
   const adsMedia = Math.max(0, Number(pollSummary.adsMedia) || 0);
   const comments = Math.max(0, Number(pollSummary.comments) || 0);
@@ -113,9 +143,20 @@ export function buildBacklogMessage(now, res, assigneeOther = '') {
 
 export function buildInflowMessage(res, assigneeOther = '', pollGate = null) {
   const owner = String(assigneeOther || '').trim();
-  const detail = pollGate?.reason === 'db-gap'
-    ? `보완 poll에서 DB에 없던 댓글 ${pollGate.missing}건을 찾아 적재했습니다.`
-    : '보완 poll이 실패해 정상 무댓글 상태인지 확인하지 못했습니다.';
+  let detail = '보완 poll이 실패해 정상 무댓글 상태인지 확인하지 못했습니다.';
+  if (pollGate?.reason === 'db-gap') {
+    detail = `보완 poll에서 DB에 없던 댓글 ${pollGate.missing}건을 찾아 적재했습니다.`;
+  } else if (pollGate?.reason === 'webhook-health-failed') {
+    const permissionText = pollGate.missingPermissions?.length
+      ? `누락 권한 ${pollGate.missingPermissions.join(', ')}`
+      : '필수 권한 정상';
+    const subscriptionText = pollGate.subscribedPages == null
+      ? '페이지 구독 미확인'
+      : `페이지 구독 ${pollGate.subscribedPages}/${pollGate.expectedPages}`;
+    detail = `Meta 연결 자체검사 실패: ${permissionText} · 관리 Page ${pollGate.managedPages}/${pollGate.expectedPages}`
+      + ` · IG ${pollGate.managedInstagramAccounts}/${pollGate.expectedInstagramAccounts} · ${subscriptionText}`
+      + (pollGate.subscriptionErrors ? ` · 구독 조회 오류 ${pollGate.subscriptionErrors}건` : '');
+  }
   return [
     '⚠️ *Meta 인지광고 댓글 웹훅 유입 이상*',
     `최근 유입 ${fmtKst(res.lastEventAt)} · ${res.thresholdHours}시간 이상 신규 이벤트가 없습니다.`,
@@ -234,6 +275,11 @@ export async function runMetaBatchWatchdog(env = process.env, now = Date.now(), 
     let pollError = null;
     try {
       pollSummary = await pollFn(loadMetaAdsConfig(pollEnv, now), fetchImpl, now, pollEnv);
+      pollSummary.expectedManagedPages = Math.max(0, Number(env.META_MANAGED_PAGE_MIN_COUNT || 0));
+      pollSummary.expectedManagedInstagramAccounts = Math.max(
+        0,
+        Number(env.META_MANAGED_IG_MIN_COUNT || env.META_MANAGED_PAGE_MIN_COUNT || 0),
+      );
     } catch (error) {
       pollError = error;
       console.error(`[meta-watchdog] zero-inflow 확인 poll 실패: ${error.message}`);

@@ -4,6 +4,7 @@ import {
   fetchManagedMetaActorIds,
   fetchMetaAdMedia,
   fetchMetaMediaCommentCounts,
+  fetchMetaWebhookHealth,
   fetchRecentMetaMediaComments,
   metaPollBlockKey,
 } from '../src/meta-ads-poll.js';
@@ -50,6 +51,34 @@ test('Meta poll loads connected Page and Instagram actor ids', async () => {
     return response(200, { data: [{ id: 'page-2' }] });
   });
   assert.deepEqual([...ids], ['page-1', 'ig-1', 'page-2']);
+});
+
+test('Meta webhook health verifies permissions, managed accounts, and page subscriptions', async () => {
+  const health = await fetchMetaWebhookHealth(CFG, 'TOKEN', {
+    appId: 'app-1',
+    requiredPermissions: ['instagram_basic', 'instagram_manage_comments'],
+  }, async (url, options = {}) => {
+    const href = String(url);
+    if (href.includes('/me/permissions')) return response(200, { data: [
+      { permission: 'instagram_basic', status: 'granted' },
+      { permission: 'instagram_manage_comments', status: 'granted' },
+    ] });
+    if (href.includes('/me/accounts')) return response(200, { data: [{
+      id: 'page-1',
+      access_token: 'PAGE_TOKEN',
+      instagram_business_account: { id: 'ig-1' },
+    }] });
+    assert.equal(options.headers.Authorization, 'Bearer PAGE_TOKEN');
+    if (href.includes('/page-1/subscribed_apps')) return response(200, {
+      data: [{ id: 'app-1', subscribed_fields: ['feed'] }],
+    });
+    throw new Error(`unexpected URL: ${href}`);
+  });
+  assert.deepEqual([...health.actorIds], ['page-1', 'ig-1']);
+  assert.equal(health.managedPages, 1);
+  assert.equal(health.managedInstagramAccounts, 1);
+  assert.equal(health.subscribedPages, 1);
+  assert.deepEqual(health.missingPermissions, []);
 });
 
 test('Meta poll batches media comment-count lookups before opening comment pages', async () => {

@@ -40,6 +40,9 @@ jobs:
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
           META_GRAPH_BASE: https://graph.facebook.com/v26.0
           META_TOKEN_KIND: ig_ads
+          META_APP_ID: '965303019541316'
+          META_MANAGED_PAGE_MIN_COUNT: '6'
+          META_MANAGED_IG_MIN_COUNT: '6'
           META_AD_ACCOUNT_ID: act_550617335901928
           META_ADS_POLL_LOOKBACK_HOURS: '72'
           META_ADS_POLL_MAX_PAGES: '3'

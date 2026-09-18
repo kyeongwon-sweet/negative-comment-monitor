@@ -160,6 +160,25 @@ test('evaluateInflowPoll: 연결 계정 또는 계정 미상 누락분은 계속
   });
 });
 
+test('evaluateInflowPoll: 필수 권한·페이지 구독 이탈은 댓글 누락이 없어도 경고', () => {
+  const result = evaluateInflowPoll({
+    adsMedia: 12,
+    comments: 0,
+    stored: 0,
+    managedPages: 5,
+    expectedManagedPages: 6,
+    managedInstagramAccounts: 5,
+    expectedManagedInstagramAccounts: 6,
+    subscribedPages: 4,
+    subscriptionErrors: 1,
+    missingPermissions: ['instagram_manage_comments'],
+  });
+  assert.equal(result.warn, true);
+  assert.equal(result.reason, 'webhook-health-failed');
+  assert.deepEqual(result.missingPermissions, ['instagram_manage_comments']);
+  assert.equal(result.subscribedPages, 4);
+});
+
 test('evaluateInflowPoll: 댓글이 있어도 모두 DB에 있으면 억제', () => {
   assert.equal(evaluateInflowPoll({ adsMedia: 12, comments: 3, stored: 0 }).warn, false);
 });

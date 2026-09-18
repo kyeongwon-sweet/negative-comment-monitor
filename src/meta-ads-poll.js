@@ -108,6 +108,91 @@ export async function fetchManagedMetaActorIds(config, token, fetchImpl = fetch)
   return ids;
 }
 
+const DEFAULT_WEBHOOK_PERMISSIONS = [
+  'pages_show_list',
+  'pages_read_engagement',
+  'pages_manage_metadata',
+  'instagram_basic',
+  'instagram_manage_comments',
+];
+
+// zero-inflow 진단은 Marketing API poll 성공만으로 webhook 건강을 단정하면 안 된다.
+// 토큰 권한·관리 Page/IG 수·각 Page의 앱 구독을 함께 확인해, 권한 회수나
+// subscribed_apps 이탈을 정상 무댓글로 오인하지 않게 한다.
+export async function fetchMetaWebhookHealth(config, token, {
+  appId = '',
+  requiredPermissions = DEFAULT_WEBHOOK_PERMISSIONS,
+} = {}, fetchImpl = fetch) {
+  const permissionUrl = `${config.metaGraphBase}/me/permissions?limit=100`;
+  const accountsUrl = `${config.metaGraphBase}/me/accounts`
+    + `?fields=${encodeURIComponent('id,instagram_business_account{id},access_token')}&limit=100`;
+  const [permissionResponse, accountsResponse] = await Promise.all([
+    fetchImpl(permissionUrl, { headers: graphHeaders(token) }),
+    fetchImpl(accountsUrl, { headers: graphHeaders(token) }),
+  ]);
+  const permissionPayload = await permissionResponse.json().catch(() => ({}));
+  const accountsPayload = await accountsResponse.json().catch(() => ({}));
+  if (!permissionResponse.ok) {
+    const code = Number(permissionPayload.error?.code || 0);
+    throw new Error(`Meta permission lookup failed (${permissionResponse.status}; code=${code})`);
+  }
+  if (!accountsResponse.ok) {
+    const code = Number(accountsPayload.error?.code || 0);
+    throw new Error(`Meta managed account lookup failed (${accountsResponse.status}; code=${code})`);
+  }
+
+  const grantedPermissions = new Set(
+    (permissionPayload.data || [])
+      .filter((item) => String(item.status || '').toLowerCase() === 'granted')
+      .map((item) => String(item.permission || ''))
+      .filter(Boolean),
+  );
+  const required = [...new Set((requiredPermissions || []).map(String).map((value) => value.trim()).filter(Boolean))];
+  const missingPermissions = required.filter((permission) => !grantedPermissions.has(permission));
+  const pages = (accountsPayload.data || []).map((item) => ({
+    pageId: String(item.id || ''),
+    igId: String(item.instagram_business_account?.id || ''),
+    pageToken: String(item.access_token || ''),
+  })).filter((item) => item.pageId);
+  const actorIds = new Set();
+  for (const page of pages) {
+    actorIds.add(page.pageId);
+    if (page.igId) actorIds.add(page.igId);
+  }
+
+  const normalizedAppId = String(appId || '').trim();
+  let subscribedPages = null;
+  let subscriptionErrors = 0;
+  if (normalizedAppId) {
+    const checks = await Promise.all(pages.map(async (page) => {
+      if (!page.pageToken) return { subscribed: false, error: true };
+      const url = `${config.metaGraphBase}/${encodeURIComponent(page.pageId)}/subscribed_apps`
+        + '?fields=id,subscribed_fields&limit=100';
+      try {
+        const response = await fetchImpl(url, { headers: graphHeaders(page.pageToken) });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) return { subscribed: false, error: true };
+        const app = (payload.data || []).find((item) => String(item.id || '') === normalizedAppId);
+        const fields = app?.subscribed_fields || app?.fields || [];
+        return { subscribed: Boolean(app) && fields.map(String).includes('feed'), error: false };
+      } catch {
+        return { subscribed: false, error: true };
+      }
+    }));
+    subscribedPages = checks.filter((check) => check.subscribed).length;
+    subscriptionErrors = checks.filter((check) => check.error).length;
+  }
+
+  return {
+    actorIds,
+    managedPages: pages.length,
+    managedInstagramAccounts: pages.filter((page) => page.igId).length,
+    subscribedPages,
+    subscriptionErrors,
+    missingPermissions,
+  };
+}
+
 export async function fetchMetaMediaCommentCounts(config, token, mediaIds, fetchImpl = fetch) {
   const counts = new Map();
   const ids = [...new Set(mediaIds.map(String).filter(Boolean))];
@@ -201,10 +286,17 @@ export async function pollMetaAdComments(config = loadMetaAdsConfig(), fetchImpl
   try {
     const tokenRow = await loadMetaToken(config, config.metaTokenKind || 'ig_ads', fetchImpl);
     if (!tokenRow?.token) throw new Error('Meta poll token not found');
-    const [media, managedActorIds] = await Promise.all([
+    const requiredPermissions = String(
+      env.META_REQUIRED_WEBHOOK_PERMISSIONS || DEFAULT_WEBHOOK_PERMISSIONS.join(','),
+    ).split(',').map((value) => value.trim()).filter(Boolean);
+    const [media, webhookHealth] = await Promise.all([
       fetchMetaAdMedia(config, tokenRow.token, requiredAccount(env), fetchImpl),
-      fetchManagedMetaActorIds(config, tokenRow.token, fetchImpl),
+      fetchMetaWebhookHealth(config, tokenRow.token, {
+        appId: env.META_APP_ID,
+        requiredPermissions,
+      }, fetchImpl),
     ]);
+    const managedActorIds = webhookHealth.actorIds;
     const commentCounts = await fetchMetaMediaCommentCounts(config, tokenRow.token, [...media.keys()], fetchImpl);
     const cutoffMs = now - Math.max(1, Number(env.META_ADS_POLL_LOOKBACK_HOURS || 72)) * 3600_000;
     const maxPages = Math.max(1, Math.min(10, Number(env.META_ADS_POLL_MAX_PAGES || 3)));
@@ -252,6 +344,11 @@ export async function pollMetaAdComments(config = loadMetaAdsConfig(), fetchImpl
       storedManaged,
       storedPartner,
       storedUnknownActor,
+      managedPages: webhookHealth.managedPages,
+      managedInstagramAccounts: webhookHealth.managedInstagramAccounts,
+      subscribedPages: webhookHealth.subscribedPages,
+      subscriptionErrors: webhookHealth.subscriptionErrors,
+      missingPermissions: webhookHealth.missingPermissions,
     };
   } catch (error) {
     if (!force) await releasePollBlock(config, runKey, fetchImpl);
