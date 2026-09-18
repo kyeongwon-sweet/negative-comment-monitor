@@ -102,7 +102,7 @@ async function persistAuthorBanned(config, alertIds, fetchImpl, now) {
   const ids = [...new Set((alertIds || []).map(Number).filter(Number.isSafeInteger))];
   if (!ids.length) return;
   const response = await fetchImpl(
-    `${config.supabaseUrl}/rest/v1/negative_comment_alerts?id=in.(${ids.join(',')})&review_decision=is.null`,
+    `${config.supabaseUrl}/rest/v1/negative_comment_alerts?id=in.(${ids.join(',')})`,
     {
       method: 'PATCH',
       headers: headers(config, { 'Content-Type': 'application/json', Prefer: 'return=minimal' }),

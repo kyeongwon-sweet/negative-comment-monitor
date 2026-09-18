@@ -62,7 +62,7 @@ test('executeBulkBan dryRun: 밴하지 않고 인벤토리만 반환', async () 
   assert.equal(calls, 0); // 어떤 네트워크 호출도 없어야 한다
 });
 
-test('executeBulkBan live: 후보를 밴하고 모든 alert 행을 hidden 처리', async () => {
+test('executeBulkBan live: 후보를 밴하고 모든 alert 행을 author_banned 처리', async () => {
   const banUrls = [];
   const patched = [];
   const patchedBodies = [];
@@ -95,6 +95,7 @@ test('executeBulkBan live: 후보를 밴하고 모든 alert 행을 hidden 처리
   assert.match(banUrls[0], /id=CMT10/);
   // alert 10,11 모두 PATCH 대상이며, 종결 상태는 author_banned(자동숨김 'hidden'과 구분)
   assert.match(patched[0], /id=in\.\(10,11\)/);
+  assert.doesNotMatch(patched[0], /review_decision=is\.null/);
   assert.equal(patchedBodies[0].review_decision, 'author_banned');
 });
 
