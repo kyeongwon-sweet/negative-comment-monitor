@@ -8,6 +8,7 @@ import {
   evaluateInflowPoll,
   morningStartInstant,
   runMetaBatchWatchdog,
+  selectLatestWebhookEvent,
 } from '../src/meta-batch-watchdog.js';
 
 const NOW = Date.parse('2026-08-10T04:00:00Z'); // 13:00 KST (워치독 실행 시점)
@@ -89,6 +90,22 @@ test('evaluateInflow: 역대 유입 이력이 없으면 정지로 단정하지 �
     ageHours: null,
     thresholdHours: 48,
   });
+});
+
+test('selectLatestWebhookEvent: poll·백필을 제외한 실제 전달 행을 고른다', () => {
+  const rows = [
+    {
+      ig_user_id: 'backfill-account',
+      event_time: '2026-08-20T00:00:00Z',
+      received_at: '2026-09-01T02:00:00Z',
+    },
+    {
+      ig_user_id: '17841400000000000',
+      event_time: '2026-08-19T23:57:58Z',
+      received_at: '2026-08-19T23:58:00Z',
+    },
+  ];
+  assert.equal(selectLatestWebhookEvent(rows)?.received_at, '2026-08-19T23:58:00Z');
 });
 
 test('evaluateInflowPoll: 활성 광고에 댓글이 없으면 정상 무댓글로 억제', () => {
@@ -187,6 +204,7 @@ test('runMetaBatchWatchdog: 49시간 무유입이어도 활성 광고 댓글 0�
   assert.equal(calls.some((call) => call.url.endsWith('/dispatches')), false);
   assert.equal(calls.some((call) => call.url.includes('cost_usage_ledger')), false);
   assert.equal(calls.some((call) => call.url === 'https://slack.com/api/chat.postMessage'), false);
+  assert.equal(calls.some((call) => call.url.includes('ig_user_id=neq.poll')), true);
 });
 
 test('runMetaBatchWatchdog: poll 실패 시 하루 claim 후 Slack 경고', async () => {

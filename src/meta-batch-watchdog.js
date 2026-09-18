@@ -43,6 +43,18 @@ export function evaluateInflow(lastEvent, now = Date.now(), staleHours = 48) {
   return { stale: ageHours > thresholdHours, lastEventAt, ageHours, thresholdHours };
 }
 
+// poll/backfill 적재 시각을 실제 webhook 수신 시각으로 오인하지 않는다.
+// 오래된 event_time을 한 번에 넣은 백필은 received_at과 큰 차이가 나므로 제외한다.
+export function selectLatestWebhookEvent(events, maxDeliveryLagHours = 6) {
+  const maxLagMs = Math.max(1, Number(maxDeliveryLagHours) || 6) * HOUR;
+  return (events || []).find((event) => {
+    const receivedAt = Date.parse(event?.received_at || '');
+    const eventAt = Date.parse(event?.event_time || '');
+    if (!Number.isFinite(receivedAt)) return false;
+    return !Number.isFinite(eventAt) || Math.abs(receivedAt - eventAt) <= maxLagMs;
+  }) || null;
+}
+
 // zero-inflow는 그 자체로 장애가 아니다. 활성 광고에 새 댓글이 없는 정상 저볼륨 기간과
 // 웹훅 장애를 구분하기 위해 poll 결과를 함께 본다.
 // - poll 실패/스킵: 정상 여부를 확인하지 못했으므로 경고
@@ -127,11 +139,13 @@ async function fetchLatestEvent(env, fetchImpl) {
   const base = String(env.SUPABASE_URL || '').replace(/\/$/, '');
   const key = String(env.SUPABASE_SERVICE_ROLE_KEY || '');
   if (!base || !key) throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
-  const url = `${base}/rest/v1/meta_ad_comment_events?select=event_time,received_at&order=received_at.desc&limit=1`;
+  const url = `${base}/rest/v1/meta_ad_comment_events`
+    + '?select=event_time,received_at,ig_user_id'
+    + '&ig_user_id=neq.poll&order=received_at.desc&limit=500';
   const res = await fetchImpl(url, { headers: { apikey: key, authorization: `Bearer ${key}` } });
   if (!res.ok) throw new Error(`Supabase ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const rows = await res.json();
-  return Array.isArray(rows) ? rows[0] || null : null;
+  return selectLatestWebhookEvent(rows, Number(env.META_WEBHOOK_MAX_DELIVERY_LAG_HOURS || 6));
 }
 
 // cost_usage_ledger의 run_key PK를 재사용해 KST 하루 한 번만 경고한다.
