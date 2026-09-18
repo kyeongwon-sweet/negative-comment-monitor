@@ -252,7 +252,10 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
     if (entries[e]?.target?.ownedChannelBrandHostilityScope !== true) continue;
     const comments = Array.isArray(entries[e].comments) ? entries[e].comments : [];
     prepared[e].out.forEach((risk, index) => {
-      if (!risk || risk.alert === true || risk.engine === 'human-fp' || isLlmDeferred(risk)) return;
+      // LLM이 이미 alert=true로 봤더라도 카테고리가 후속 owner-risk 허용 목록과 다르면
+      // 다시 억제될 수 있다. 하드 토큰은 판정값과 무관하게 전용 엔진으로 승격해
+      // 최종 게이트까지 결정성을 보존한다. 사람 FP와 보류만 절대 덮지 않는다.
+      if (!risk || risk.engine === 'human-fp' || isLlmDeferred(risk)) return;
       if (!matchesOwnedHardHostility(comments[index]?.text || '')) return;
       prepared[e].out[index] = {
         alert: true,

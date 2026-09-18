@@ -202,6 +202,17 @@ test('pCRMnMYe3y8 회귀: 명백한 제품 폄하·AI 광고 거부는 잡고 �
     { anthropicKey: 'key' }, normalLlm,
   );
   neutralRisks.forEach((risk, index) => assert.equal(risk.alert, false, `중립 경쟁품 선호 오탐: ${neutral[index]}`));
+
+  // LLM이 이미 부정으로 잡았지만 후속 owner-risk 게이트가 인정하지 않는 카테고리여도
+  // 하드 표현은 전용 엔진으로 승격돼 다시 억제되지 않아야 한다.
+  const [llmAlert] = await classifyCommentsHybrid(
+    [{ text: 'Ai그만좀 써라 광고가 다 뭔 Ai냐' }],
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true },
+    { anthropicKey: 'key' },
+    async () => [{ alert: true, category: '콘텐츠 비판', reason: 'AI 광고 비판', priority: 'normal' }],
+  );
+  assert.equal(llmAlert.alert, true);
+  assert.equal(llmAlert.engine, 'keyword-hard-owned');
 });
 
 test('threads the usage stats accumulator through to the LLM classifier', async () => {
