@@ -293,6 +293,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
         deferred: summary.deferred,
         pipelineMissRatePercent: summary.pipelineMissRatePercent,
         channelFailures: summary.channelFailures,
+        affectedVideos: summary.videos
+          .filter((video) => video.missing || video.deferred)
+          .map((video) => ({
+            videoId: video.videoId,
+            missing: video.missing,
+            deferred: video.deferred,
+          })),
         health: summary.health,
       }));
       await writeSummary(summary);
