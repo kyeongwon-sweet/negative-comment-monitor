@@ -187,6 +187,22 @@ test('소유채널 개별 알림도 동일 고신뢰 게이트를 쓰고 일반 
   ), risks);
 });
 
+test('소유채널 하드 안전망 판정은 후속 고신뢰 게이트가 다시 억제하지 않는다', () => {
+  const comments = [
+    { text: 'AI좀 작작 써라 그렇게 하면 그걸 누가 사먹겠냐' },
+    { text: '메로나가 짱이야' },
+  ];
+  const risks = [
+    { alert: true, category: '브랜드 적대/조롱', engine: 'keyword-hard-owned' },
+    { alert: false, category: '정상댓글', engine: 'llm' },
+  ];
+  const filtered = suppressLowConfidenceOwnerRisks(target, comments, risks);
+  assert.equal(filtered[0].alert, true);
+  assert.equal(filtered[0].engine, 'keyword-hard-owned');
+  assert.equal(filtered[0].ownerLowConfidenceSuppressed, undefined);
+  assert.equal(filtered[1].alert, false);
+});
+
 test('과부하 경고는 Studio 링크·담당자를 포함하고 Slack 성공 뒤 쿨다운 상태를 남긴다', async () => {
   const calls = [];
   const assessment = { total: 50, negatives: 25, ratioPercent: 50, overloaded: true };

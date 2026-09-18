@@ -171,6 +171,39 @@ test('미탐 스윕 반영: 소유 채널에서 봇이 놓쳤던 저신호 부�
   assert.equal(positive.alert, false);
 });
 
+test('pCRMnMYe3y8 회귀: 명백한 제품 폄하·AI 광고 거부는 잡고 단순 경쟁품 선호는 보존한다', async () => {
+  const normalLlm = async (items) => items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' }));
+  const missed = [
+    '친구가 다 먹었는데 약 맛 난다고 함',
+    '먹어봤는데 특별히 맛있진 않던데',
+    '맛도 개 없더만 메로나가 더 맛있는데',
+    '셋다 필요없고 메로나, 요맘때 맛',
+    '메로나 짭이고 GS25 망하는 소리',
+    'Ai그만좀 써라. 광고가 다 뭔 Ai냐',
+    'AI 딸깍 광고 방식을 새로 바꾸셔야할듯',
+    'AI좀 작작 써라 그렇게 하면 그걸 누가 사먹겠냐',
+    '언론에 뒷돈 주고 억지 유행 만들지 말고 광고만 그만해',
+    '앵무새야 그만해',
+  ];
+  const risks = await classifyCommentsHybrid(
+    missed.map((text) => ({ text })),
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true },
+    { anthropicKey: 'key' }, normalLlm,
+  );
+  risks.forEach((risk, index) => {
+    assert.equal(risk.alert, true, `미탐 확정 실패: ${missed[index]}`);
+    assert.equal(risk.engine, 'keyword-hard-owned');
+  });
+
+  const neutral = ['메로나가 제일인듯', '메로나가 짱이야', '난 메로나가 좋소', '그냥 메로나 맛이던데'];
+  const neutralRisks = await classifyCommentsHybrid(
+    neutral.map((text) => ({ text })),
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true },
+    { anthropicKey: 'key' }, normalLlm,
+  );
+  neutralRisks.forEach((risk, index) => assert.equal(risk.alert, false, `중립 경쟁품 선호 오탐: ${neutral[index]}`));
+});
+
 test('threads the usage stats accumulator through to the LLM classifier', async () => {
   let receivedStats;
   const stats = { calls: 0 };

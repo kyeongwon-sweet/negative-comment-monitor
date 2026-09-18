@@ -14,6 +14,10 @@ const STRONG_EXPLICIT_BRAND_OR_PRODUCT_TARGET = [
 // 겨냥한 브랜드 적대만 고신뢰로 인정한다. 커버리지 감사와 과부하 계산이 이 함수를 공유한다.
 export function isHighConfidenceOwnerRisk(target, comment, risk) {
   if (risk?.alert !== true) return false;
+  // hybrid-classify의 마지막 하드 안전망은 작은 LLM/캐시가 놓친 명백 적대를
+  // 결정적으로 복구한다. 여기서 다시 일반 키워드 규칙으로 심사하면 안전망을
+  // 무효화해 같은 댓글을 영구적으로 놓치므로 그대로 고신뢰로 인정한다.
+  if (risk.engine === 'keyword-hard-owned') return true;
   const strict = classifyNegativeComment(comment, {
     ...(target || {}),
     ownedChannelBrandHostilityScope: false,
