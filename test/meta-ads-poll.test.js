@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchMetaAdMedia, fetchMetaMediaCommentCounts, fetchRecentMetaMediaComments, metaPollBlockKey } from '../src/meta-ads-poll.js';
+import {
+  fetchManagedMetaActorIds,
+  fetchMetaAdMedia,
+  fetchMetaMediaCommentCounts,
+  fetchRecentMetaMediaComments,
+  metaPollBlockKey,
+} from '../src/meta-ads-poll.js';
 
 const CFG = { metaGraphBase: 'https://graph.test/v26.0' };
 
@@ -21,6 +27,29 @@ test('Meta poll maps active ad creatives and excludes conversion ads', async () 
     ],
   }));
   assert.deepEqual([...media], [['m1', { adId: 'a1', adTitle: '인지_소재', campaignName: '[빙과] 파인트 인지' }]]);
+});
+
+test('Meta poll keeps creative actor identity for webhook-coverage diagnosis', async () => {
+  const media = await fetchMetaAdMedia(CFG, 'TOKEN', 'act_1', async () => response(200, {
+    data: [{
+      id: 'a1', name: '인지_소재', campaign: { name: '제과 인지' },
+      creative: { effective_instagram_media_id: 'm1', actor_id: 'page-partner' },
+    }],
+  }));
+  assert.equal(media.get('m1').actorId, 'page-partner');
+});
+
+test('Meta poll loads connected Page and Instagram actor ids', async () => {
+  const calls = [];
+  const ids = await fetchManagedMetaActorIds(CFG, 'TOKEN', async (url) => {
+    calls.push(String(url));
+    if (calls.length === 1) return response(200, {
+      data: [{ id: 'page-1', instagram_business_account: { id: 'ig-1' } }],
+      paging: { next: 'https://graph.test/next' },
+    });
+    return response(200, { data: [{ id: 'page-2' }] });
+  });
+  assert.deepEqual([...ids], ['page-1', 'ig-1', 'page-2']);
 });
 
 test('Meta poll batches media comment-count lookups before opening comment pages', async () => {

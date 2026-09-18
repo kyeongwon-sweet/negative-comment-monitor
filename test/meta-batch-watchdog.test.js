@@ -109,6 +109,40 @@ test('evaluateInflowPoll: poll이 DB 누락 댓글을 적재했으면 경고', (
   });
 });
 
+test('evaluateInflowPoll: 누락분이 전부 제3자 파트너십 광고면 웹훅 장애 경고를 억제', () => {
+  assert.deepEqual(evaluateInflowPoll({
+    adsMedia: 12,
+    comments: 3,
+    stored: 2,
+    storedManaged: 0,
+    storedPartner: 2,
+    storedUnknownActor: 0,
+  }), {
+    warn: false,
+    reason: 'benign-partner-comments',
+    missing: 0,
+    partnerMissing: 2,
+    adsMedia: 12,
+    comments: 3,
+  });
+});
+
+test('evaluateInflowPoll: 연결 계정 또는 계정 미상 누락분은 계속 경고', () => {
+  assert.deepEqual(evaluateInflowPoll({
+    adsMedia: 12,
+    comments: 4,
+    stored: 4,
+    storedManaged: 1,
+    storedPartner: 2,
+    storedUnknownActor: 1,
+  }), {
+    warn: true,
+    reason: 'db-gap',
+    missing: 2,
+    partnerMissing: 2,
+  });
+});
+
 test('evaluateInflowPoll: 댓글이 있어도 모두 DB에 있으면 억제', () => {
   assert.equal(evaluateInflowPoll({ adsMedia: 12, comments: 3, stored: 0 }).warn, false);
 });

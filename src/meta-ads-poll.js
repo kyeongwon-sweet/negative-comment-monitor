@@ -45,7 +45,7 @@ async function releasePollBlock(config, runKey, fetchImpl) {
 }
 
 export async function fetchMetaAdMedia(config, token, accountId, fetchImpl = fetch) {
-  const fields = 'id,name,updated_time,campaign{name},creative{effective_instagram_media_id,source_instagram_media_id}';
+  const fields = 'id,name,updated_time,campaign{name},creative{effective_instagram_media_id,source_instagram_media_id,actor_id,instagram_actor_id}';
   let next = `${config.metaGraphBase}/${encodeURIComponent(accountId)}/ads`
     + `?fields=${encodeURIComponent(fields)}&limit=100`
     + `&effective_status=${encodeURIComponent(JSON.stringify(['ACTIVE']))}&sort=updated_time_descending`;
@@ -64,15 +64,48 @@ export async function fetchMetaAdMedia(config, token, accountId, fetchImpl = fet
       const adId = String(ad.id || '');
       const adTitle = String(ad.name || '');
       const campaignName = String(ad.campaign?.name || '');
+      const actorId = String(ad.creative?.actor_id || ad.creative?.instagram_actor_id || '');
       if (!adId || isConversionAd(adTitle)) continue;
       for (const raw of [ad.creative?.effective_instagram_media_id, ad.creative?.source_instagram_media_id]) {
         const mediaId = String(raw || '');
-        if (mediaId && !byMedia.has(mediaId)) byMedia.set(mediaId, { adId, adTitle, campaignName });
+        if (mediaId && !byMedia.has(mediaId)) {
+          byMedia.set(mediaId, {
+            adId,
+            adTitle,
+            campaignName,
+            ...(actorId ? { actorId } : {}),
+          });
+        }
       }
     }
     next = String(payload.paging?.next || '');
   }
   return byMedia;
+}
+
+// 웹훅은 앱에 연결된 Page/Instagram 프로페셔널 계정의 댓글만 전달한다.
+// 파트너십 광고처럼 제3자 계정의 미디어는 Marketing API poll로는 보이지만
+// 우리 앱의 웹훅 유입 대상이 아니므로, zero-inflow 진단에서 별도로 구분한다.
+export async function fetchManagedMetaActorIds(config, token, fetchImpl = fetch) {
+  let next = `${config.metaGraphBase}/me/accounts`
+    + `?fields=${encodeURIComponent('id,instagram_business_account{id}')}&limit=100`;
+  const ids = new Set();
+  for (let page = 0; next && page < 10; page += 1) {
+    const response = await fetchImpl(next, { headers: graphHeaders(token) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const code = Number(payload.error?.code || 0);
+      throw new Error(`Meta managed account lookup failed (${response.status}; code=${code})`);
+    }
+    for (const item of payload.data || []) {
+      const pageId = String(item.id || '');
+      const igId = String(item.instagram_business_account?.id || '');
+      if (pageId) ids.add(pageId);
+      if (igId) ids.add(igId);
+    }
+    next = String(payload.paging?.next || '');
+  }
+  return ids;
 }
 
 export async function fetchMetaMediaCommentCounts(config, token, mediaIds, fetchImpl = fetch) {
@@ -137,8 +170,9 @@ export async function fetchRecentMetaMediaComments(
 }
 
 async function storePolledEvents(config, events, fetchImpl) {
-  if (!events.length) return 0;
+  if (!events.length) return { count: 0, commentIds: [] };
   let stored = 0;
+  const commentIds = [];
   for (let index = 0; index < events.length; index += 200) {
     const response = await fetchImpl(`${config.supabaseUrl}/rest/v1/meta_ad_comment_events?on_conflict=comment_id`, {
       method: 'POST',
@@ -151,8 +185,12 @@ async function storePolledEvents(config, events, fetchImpl) {
     if (!response.ok) throw new Error(`Meta poll queue insert failed (${response.status})`);
     const rows = await response.json().catch(() => []);
     stored += Array.isArray(rows) ? rows.length : 0;
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const id = String(row?.comment_id || '');
+      if (id) commentIds.push(id);
+    }
   }
-  return stored;
+  return { count: stored, commentIds };
 }
 
 export async function pollMetaAdComments(config = loadMetaAdsConfig(), fetchImpl = fetch, now = Date.now(), env = process.env) {
@@ -163,7 +201,10 @@ export async function pollMetaAdComments(config = loadMetaAdsConfig(), fetchImpl
   try {
     const tokenRow = await loadMetaToken(config, config.metaTokenKind || 'ig_ads', fetchImpl);
     if (!tokenRow?.token) throw new Error('Meta poll token not found');
-    const media = await fetchMetaAdMedia(config, tokenRow.token, requiredAccount(env), fetchImpl);
+    const [media, managedActorIds] = await Promise.all([
+      fetchMetaAdMedia(config, tokenRow.token, requiredAccount(env), fetchImpl),
+      fetchManagedMetaActorIds(config, tokenRow.token, fetchImpl),
+    ]);
     const commentCounts = await fetchMetaMediaCommentCounts(config, tokenRow.token, [...media.keys()], fetchImpl);
     const cutoffMs = now - Math.max(1, Number(env.META_ADS_POLL_LOOKBACK_HOURS || 72)) * 3600_000;
     const maxPages = Math.max(1, Math.min(10, Number(env.META_ADS_POLL_MAX_PAGES || 3)));
@@ -189,14 +230,28 @@ export async function pollMetaAdComments(config = loadMetaAdsConfig(), fetchImpl
         })));
       }
     }));
-    const stored = await storePolledEvents(config, events, fetchImpl);
+    const storedResult = await storePolledEvents(config, events, fetchImpl);
+    const insertedIds = new Set(storedResult.commentIds);
+    let storedManaged = 0;
+    let storedPartner = 0;
+    let storedUnknownActor = Math.max(0, storedResult.count - insertedIds.size);
+    for (const event of events) {
+      if (!insertedIds.has(String(event.comment_id || ''))) continue;
+      const actorId = String(media.get(String(event.media_id || ''))?.actorId || '');
+      if (!actorId) storedUnknownActor += 1;
+      else if (managedActorIds.has(actorId)) storedManaged += 1;
+      else storedPartner += 1;
+    }
     return {
       adsMedia: media.size,
       positiveCommentMedia: [...commentCounts.values()].filter((count) => Number(count) > 0).length,
       unknownCommentMedia: [...media.keys()].filter((mediaId) => commentCounts.get(mediaId) == null).length,
       scannedMedia,
       comments: events.length,
-      stored,
+      stored: storedResult.count,
+      storedManaged,
+      storedPartner,
+      storedUnknownActor,
     };
   } catch (error) {
     if (!force) await releasePollBlock(config, runKey, fetchImpl);

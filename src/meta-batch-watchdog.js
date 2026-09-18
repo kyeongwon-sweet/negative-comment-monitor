@@ -46,15 +46,39 @@ export function evaluateInflow(lastEvent, now = Date.now(), staleHours = 48) {
 // zero-inflow는 그 자체로 장애가 아니다. 활성 광고에 새 댓글이 없는 정상 저볼륨 기간과
 // 웹훅 장애를 구분하기 위해 poll 결과를 함께 본다.
 // - poll 실패/스킵: 정상 여부를 확인하지 못했으므로 경고
-// - stored > 0: 광고 댓글이 DB에 없었다가 poll로 복구됨 = 실제 유입 갭이므로 경고
+// - stored > 0 중 앱 연결 계정/계정 미상 댓글: 실제 유입 갭이므로 경고
+// - stored > 0이 전부 제3자 파트너십 광고 계정: 웹훅 대상이 아니므로 정상 억제
 // - 그 외: 광고/댓글이 없거나 조회된 댓글이 이미 DB에 있음 = 정상 조용함
 export function evaluateInflowPoll(pollSummary, pollError = null) {
   if (pollError) return { warn: true, reason: 'poll-failed', missing: 0 };
   if (!pollSummary || pollSummary.skipped) return { warn: true, reason: 'poll-unverified', missing: 0 };
   const missing = Math.max(0, Number(pollSummary.stored) || 0);
-  if (missing > 0) return { warn: true, reason: 'db-gap', missing };
   const adsMedia = Math.max(0, Number(pollSummary.adsMedia) || 0);
   const comments = Math.max(0, Number(pollSummary.comments) || 0);
+  if (missing > 0) {
+    const hasOwnershipBreakdown = ['storedManaged', 'storedPartner', 'storedUnknownActor']
+      .some((key) => Object.prototype.hasOwnProperty.call(pollSummary, key));
+    if (!hasOwnershipBreakdown) return { warn: true, reason: 'db-gap', missing };
+    const managedMissing = Math.max(0, Number(pollSummary.storedManaged) || 0);
+    const partnerMissing = Math.max(0, Number(pollSummary.storedPartner) || 0);
+    const classified = managedMissing + partnerMissing;
+    const unknownMissing = Math.max(
+      0,
+      Number(pollSummary.storedUnknownActor) || Math.max(0, missing - classified),
+    );
+    const actionableMissing = managedMissing + unknownMissing;
+    if (actionableMissing > 0) {
+      return { warn: true, reason: 'db-gap', missing: actionableMissing, partnerMissing };
+    }
+    return {
+      warn: false,
+      reason: 'benign-partner-comments',
+      missing: 0,
+      partnerMissing,
+      adsMedia,
+      comments,
+    };
+  }
   return {
     warn: false,
     reason: adsMedia > 0 && comments === 0 ? 'benign-no-comments' : 'benign-no-missing',
