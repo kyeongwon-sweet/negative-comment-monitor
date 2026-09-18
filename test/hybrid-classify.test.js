@@ -184,6 +184,7 @@ test('pCRMnMYe3y8 회귀: 명백한 제품 폄하·AI 광고 거부는 잡고 �
     'AI좀 작작 써라 그렇게 하면 그걸 누가 사먹겠냐',
     '언론에 뒷돈 주고 억지 유행 만들지 말고 광고만 그만해',
     '앵무새야 그만해',
+    '먹을만하긴해 근데 메로나가 훨 맛있고 다른거 사먹는게 훨씬 나음',
   ];
   const risks = await classifyCommentsHybrid(
     missed.map((text) => ({ text })),
