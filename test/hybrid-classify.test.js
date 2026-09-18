@@ -171,7 +171,7 @@ test('미탐 스윕 반영: 소유 채널에서 봇이 놓쳤던 저신호 부�
   assert.equal(positive.alert, false);
 });
 
-test('pCRMnMYe3y8 회귀: 명백한 제품 폄하·AI 광고 거부는 잡고 단순 경쟁품 선호는 보존한다', async () => {
+test('pCRMnMYe3y8 회귀: 제품 폄하·AI 광고 거부와 운영 지정 경쟁품 우위 표현을 잡는다', async () => {
   const normalLlm = async (items) => items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' }));
   const missed = [
     '친구가 다 먹었는데 약 맛 난다고 함',
@@ -185,6 +185,14 @@ test('pCRMnMYe3y8 회귀: 명백한 제품 폄하·AI 광고 거부는 잡고 �
     '언론에 뒷돈 주고 억지 유행 만들지 말고 광고만 그만해',
     '앵무새야 그만해',
     '먹을만하긴해 근데 메로나가 훨 맛있고 다른거 사먹는게 훨씬 나음',
+    '"메로나": 원조는 다르다',
+    '내 지갑을 턴 그것... "메로나"',
+    '댓글이 있네..',
+    '메론맛은 메로나로 종결이다~',
+    '메로나가 제일인듯',
+    '메로나가 짱이야',
+    '난 메로나가 좋소',
+    '그냥 메로나 맛이던데',
   ];
   const risks = await classifyCommentsHybrid(
     missed.map((text) => ({ text })),
@@ -196,7 +204,7 @@ test('pCRMnMYe3y8 회귀: 명백한 제품 폄하·AI 광고 거부는 잡고 �
     assert.equal(risk.engine, 'keyword-hard-owned');
   });
 
-  const neutral = ['메로나가 제일인듯', '메로나가 짱이야', '난 메로나가 좋소', '그냥 메로나 맛이던데'];
+  const neutral = ['메로나 바나나맛 망고맛 멜론맛', '메로나랑 쫀득바 둘 다 좋아요'];
   const neutralRisks = await classifyCommentsHybrid(
     neutral.map((text) => ({ text })),
     { brandName: '라라스윗', ownedChannelBrandHostilityScope: true },
