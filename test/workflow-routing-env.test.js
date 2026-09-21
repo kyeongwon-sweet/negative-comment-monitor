@@ -81,5 +81,7 @@ test('메인 감시는 예약 run 내부 15분 간격 4회 루프를 사용한�
 test('하트비트는 하루 두 번을 유지하며 3.5시간 공백 임계를 전달한다', () => {
   assert.equal((heartbeatWorkflow.match(/- cron:/g) || []).length, 2);
   assert.match(heartbeatWorkflow, /HEARTBEAT_MAX_GAP_MINUTES:\s*\$\{\{ inputs\.max_gap_minutes \|\| '210' \}\}/);
+  assert.match(heartbeatWorkflow, /HEARTBEAT_ALERT_COOLDOWN_HOURS:\s*'24'/);
+  assert.match(heartbeatWorkflow, /SUPABASE_SERVICE_ROLE_KEY:\s*\$\{\{ secrets\.SUPABASE_SERVICE_ROLE_KEY \}\}/);
   assert.match(heartbeatWorkflow, /max_gap_minutes:/);
 });

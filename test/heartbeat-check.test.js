@@ -20,11 +20,53 @@ const ENV = {
   SLACK_ASSIGNEE_OTHER: 'U123',
 };
 
+const STATEFUL_ENV = {
+  ...ENV,
+  SUPABASE_URL: 'https://db.test',
+  SUPABASE_SERVICE_ROLE_KEY: 'service-role',
+  HEARTBEAT_ALERT_COOLDOWN_HOURS: '24',
+};
+
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+function statefulHeartbeatFetch(initialRuns) {
+  let runs = initialRuns;
+  let state = null;
+  const calls = { dispatch: 0, slack: 0, stateWrites: 0 };
+  const fetchImpl = async (url, options = {}) => {
+    const value = String(url);
+    if (value.includes('/actions/workflows/monitor.yml/runs?')) {
+      return jsonResponse({ workflow_runs: runs });
+    }
+    if (value.includes('/rest/v1/platform_collection_health?platform=eq.')) {
+      return jsonResponse(state ? [state] : []);
+    }
+    if (value.includes('/rest/v1/platform_collection_health?on_conflict=platform')) {
+      state = JSON.parse(options.body);
+      calls.stateWrites += 1;
+      return jsonResponse([state]);
+    }
+    if (value.endsWith('/actions/workflows/monitor.yml/dispatches')) {
+      calls.dispatch += 1;
+      return new Response(null, { status: 204 });
+    }
+    if (value === 'https://slack.com/api/chat.postMessage') {
+      calls.slack += 1;
+      return jsonResponse({ ok: true });
+    }
+    throw new Error(`unexpected URL: ${value}`);
+  };
+  return {
+    calls,
+    fetchImpl,
+    getState: () => state,
+    setRuns: (next) => { runs = next; },
+  };
 }
 
 test('healthy heartbeat does not dispatch or notify', async () => {
@@ -125,6 +167,80 @@ test('stale message shows the actual rolled-back threshold date before 09:10 KST
 
   assert.match(message, /기준일\(2026-08-27\) 09:10 KST/);
   assert.doesNotMatch(message, /기준일\(2026-08-28\) 09:10 KST/);
+});
+
+test('same unhealthy state alerts once within 24 hours and alerts again after cooldown', async () => {
+  const staleRuns = [{ conclusion: 'success', run_started_at: '2026-08-02T01:00:00Z' }];
+  const harness = statefulHeartbeatFetch(staleRuns);
+
+  const first = await runHeartbeatCheck(STATEFUL_ENV, NOW, harness.fetchImpl);
+  const duplicate = await runHeartbeatCheck(STATEFUL_ENV, NOW + 3 * 60 * 60 * 1000, harness.fetchImpl);
+  const nextDay = await runHeartbeatCheck(STATEFUL_ENV, NOW + 25 * 60 * 60 * 1000, harness.fetchImpl);
+
+  assert.deepEqual(first, { warned: true, dispatched: true });
+  assert.deepEqual(duplicate, { warned: false, dispatched: false, suppressed: true });
+  assert.deepEqual(nextDay, { warned: true, dispatched: true });
+  assert.equal(harness.calls.dispatch, 2);
+  assert.equal(harness.calls.slack, 2);
+  assert.equal(harness.getState().last_alerted_at, new Date(NOW + 25 * 60 * 60 * 1000).toISOString());
+});
+
+test('healthy observation resets heartbeat alert cooldown before a new incident', async () => {
+  const harness = statefulHeartbeatFetch([
+    { conclusion: 'success', run_started_at: '2026-08-02T01:00:00Z' },
+  ]);
+  await runHeartbeatCheck(STATEFUL_ENV, NOW, harness.fetchImpl);
+
+  const healthyNow = NOW + 60 * 60 * 1000;
+  harness.setRuns([
+    { conclusion: 'success', run_started_at: new Date(healthyNow - 30 * 60 * 1000).toISOString() },
+    { conclusion: 'success', run_started_at: new Date(healthyNow - 3 * 60 * 60 * 1000).toISOString() },
+    { conclusion: 'success', run_started_at: new Date(healthyNow - 6 * 60 * 60 * 1000).toISOString() },
+    { conclusion: 'success', run_started_at: new Date(healthyNow - 9 * 60 * 60 * 1000).toISOString() },
+    { conclusion: 'success', run_started_at: new Date(healthyNow - 12 * 60 * 60 * 1000).toISOString() },
+    { conclusion: 'success', run_started_at: new Date(healthyNow - 15 * 60 * 60 * 1000).toISOString() },
+    { conclusion: 'success', run_started_at: new Date(healthyNow - 18 * 60 * 60 * 1000).toISOString() },
+    { conclusion: 'success', run_started_at: new Date(healthyNow - 21 * 60 * 60 * 1000).toISOString() },
+    { conclusion: 'success', run_started_at: new Date(healthyNow - 23.5 * 60 * 60 * 1000).toISOString() },
+  ]);
+  const healthy = await runHeartbeatCheck(STATEFUL_ENV, healthyNow, harness.fetchImpl);
+  assert.deepEqual(healthy, { warned: false, dispatched: false });
+  assert.equal(harness.getState().last_alerted_at, null);
+
+  harness.setRuns([{ conclusion: 'success', run_started_at: '2026-08-02T01:00:00Z' }]);
+  const newIncident = await runHeartbeatCheck(STATEFUL_ENV, healthyNow + 60 * 60 * 1000, harness.fetchImpl);
+  assert.deepEqual(newIncident, { warned: true, dispatched: true });
+  assert.equal(harness.calls.dispatch, 2);
+  assert.equal(harness.calls.slack, 2);
+});
+
+test('heartbeat state storage failure fails open and still alerts', async () => {
+  const calls = { dispatch: 0, slack: 0 };
+  const fetchImpl = async (url) => {
+    const value = String(url);
+    if (value.includes('/actions/workflows/monitor.yml/runs?')) {
+      return jsonResponse({
+        workflow_runs: [{ conclusion: 'success', run_started_at: '2026-08-02T01:00:00Z' }],
+      });
+    }
+    if (value.includes('/rest/v1/platform_collection_health?platform=eq.')) {
+      return jsonResponse({ error: 'temporary failure' }, 500);
+    }
+    if (value.endsWith('/actions/workflows/monitor.yml/dispatches')) {
+      calls.dispatch += 1;
+      return new Response(null, { status: 204 });
+    }
+    if (value === 'https://slack.com/api/chat.postMessage') {
+      calls.slack += 1;
+      return jsonResponse({ ok: true });
+    }
+    throw new Error(`unexpected URL: ${value}`);
+  };
+
+  const result = await runHeartbeatCheck(STATEFUL_ENV, NOW, fetchImpl);
+
+  assert.deepEqual(result, { warned: true, dispatched: true });
+  assert.deepEqual(calls, { dispatch: 1, slack: 1 });
 });
 
 test('maximum gap includes the 24-hour window boundaries', () => {

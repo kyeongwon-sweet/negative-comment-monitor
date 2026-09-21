@@ -1,11 +1,16 @@
+import { clearPlatformAlertClaim, recordPlatformOutcome } from './platform-health.js';
+
 // 모니터 헬스체크(watchdog) — 별도 워크플로에서 하루 몇 번 실행.
 // "현재 운영일의 09:10 KST 이후 성공한 monitor 실행이 있었나"를 GitHub Actions API로 확인해,
-// 없으면 Slack 운영채널에 경고한다. DB 불필요. 우리가 겪은 '창 놓쳐 조용히 누락'을 잡는다.
+// 없으면 Slack 운영채널에 경고한다. 우리가 겪은 '창 놓쳐 조용히 누락'을 잡는다.
+// platform health에 마지막 경고 시각을 남겨 같은 상태의 하루 2회 중복 경고를 막는다.
 // 정상이면 조용히 종료(성공 시 알림 없음).
 
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
 export const DEFAULT_MAX_GAP_MS = 3.5 * HOUR;
+export const DEFAULT_ALERT_COOLDOWN_HOURS = 24;
+const HEARTBEAT_HEALTH_KEY = 'monitor_heartbeat';
 
 function kstDate(now) {
   return new Date(now + 9 * HOUR).toISOString().slice(0, 10);
@@ -162,6 +167,22 @@ async function dispatchMonitor(env, fetchImpl) {
   return true;
 }
 
+function heartbeatStateConfig(env) {
+  const configuredCooldown = Number(env.HEARTBEAT_ALERT_COOLDOWN_HOURS || DEFAULT_ALERT_COOLDOWN_HOURS);
+  return {
+    supabaseUrl: String(env.SUPABASE_URL || '').replace(/\/$/, ''),
+    supabaseKey: String(env.SUPABASE_SERVICE_ROLE_KEY || ''),
+    platformFailureThreshold: 1,
+    platformFailureAlertCooldownHours: Number.isFinite(configuredCooldown) && configuredCooldown > 0
+      ? configuredCooldown
+      : DEFAULT_ALERT_COOLDOWN_HOURS,
+  };
+}
+
+function healthErrorSummary(health) {
+  return `daily=${health.dailyHealthy} gap=${formatDuration(health.maximumGap.durationMs)}`;
+}
+
 export async function runHeartbeatCheck(env = process.env, now = Date.now(), fetchImpl = fetch) {
   const runs = await fetchMonitorRuns(env, fetchImpl);
   const configuredGapMinutes = Number(env.HEARTBEAT_MAX_GAP_MINUTES || 210);
@@ -169,16 +190,41 @@ export async function runHeartbeatCheck(env = process.env, now = Date.now(), fet
     ? configuredGapMinutes * 60000
     : DEFAULT_MAX_GAP_MS;
   const health = evaluateHealth(runs, now, maxGapMs);
+  const stateConfig = heartbeatStateConfig(env);
   if (health.healthy) {
+    await recordPlatformOutcome(
+      stateConfig,
+      { platform: HEARTBEAT_HEALTH_KEY, ok: true },
+      fetchImpl,
+      now,
+    );
     console.log(`[heartbeat] OK — 마지막 성공 ${fmtKst(health.lastSuccessAt)}, 최근 24h 최대 공백 ${formatDuration(health.maximumGap.durationMs)}`);
     return { warned: false, dispatched: false };
   }
-  await dispatchMonitor(env, fetchImpl);
-  await postSlack(
-    env,
-    buildHealthWarning(now, health, env.SLACK_ASSIGNEE_OTHER, true),
+
+  const state = await recordPlatformOutcome(
+    stateConfig,
+    { platform: HEARTBEAT_HEALTH_KEY, ok: false, error: healthErrorSummary(health) },
     fetchImpl,
+    now,
   );
+  if (state.persisted && !state.shouldEscalate) {
+    console.log(`[heartbeat] SUPPRESSED — 같은 unhealthy 상태를 ${stateConfig.platformFailureAlertCooldownHours}시간 내 이미 알림`);
+    return { warned: false, dispatched: false, suppressed: true };
+  }
+
+  const claimed = state.persisted && state.shouldEscalate;
+  try {
+    await dispatchMonitor(env, fetchImpl);
+    await postSlack(
+      env,
+      buildHealthWarning(now, health, env.SLACK_ASSIGNEE_OTHER, true),
+      fetchImpl,
+    );
+  } catch (error) {
+    if (claimed) await clearPlatformAlertClaim(stateConfig, HEARTBEAT_HEALTH_KEY, fetchImpl, now);
+    throw error;
+  }
   console.error(`[heartbeat] STALE — daily=${health.dailyHealthy} gap=${formatDuration(health.maximumGap.durationMs)}/${formatDuration(health.maxGapMs)} (${fmtKst(health.maximumGap.start)} → ${fmtKst(health.maximumGap.end)}) → monitor.yml 자동 실행 요청 + 경고 발송`);
   return { warned: true, dispatched: true };
 }
