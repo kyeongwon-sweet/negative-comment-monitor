@@ -240,6 +240,70 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
     // 일부 응답 누락도 정상으로 추측하지 않는다. 누락 슬롯만 보류하고 성공 슬롯은 그대로 보존한다.
     deferUnresolved(missing);
   }
+  // A안: 소유채널 브랜드 지목 승격. 약한 1차 LLM이 '정상'으로 본 '브랜드/제품 직접 언급' 소유 댓글만
+  // 강한 모델로 2차 판정한다. 대상은 이 회차에 새로 LLM 분류된 건(engine==='llm')뿐이라 캐시 히트는
+  // 재승격하지 않는다(매 회차 Anthropic/유료 호출 누수 방지). 승격 결과는 캐시에 반영해 다음 회차엔
+  // 히트로 굳고 다시 승격 대상이 되지 않는다. 모델 미설정·키 없음·강한 모델 실패는 모두 무해 통과.
+  const escalationModel = String(config.ownedBrandEscalationModel || '').trim();
+  const escalationIsAnthropic = /^claude/i.test(escalationModel);
+  const escalationKeyReady = escalationModel
+    && (escalationIsAnthropic ? Boolean(config.anthropicKey) : Boolean(config.geminiKey));
+  if (escalationKeyReady) {
+    const escRefs = [];
+    for (let e = 0; e < prepared.length; e += 1) {
+      if (entries[e]?.target?.ownedChannelBrandHostilityScope !== true) continue;
+      const comments = Array.isArray(entries[e].comments) ? entries[e].comments : [];
+      prepared[e].out.forEach((risk, index) => {
+        // 이 회차 LLM으로 새로 분류돼 '정상'이 된 건만. 사람 FP·보류·캐시 히트·키워드는 제외.
+        if (!risk || risk.engine !== 'llm' || risk.alert === true) return;
+        const comment = comments[index];
+        if (!comment) return;
+        // 댓글 본문이 라라스윗/쫀득바 등 브랜드·제품을 직접 언급한 경우만 승격 대상(고신호 협소화).
+        if (findEntityContext(comment, entries[e].target).commentMatches.length === 0) return;
+        escRefs.push({ entry: e, index, comment });
+      });
+    }
+    if (escRefs.length) {
+      const strongConfig = escalationIsAnthropic
+        ? { ...config, llmProvider: 'anthropic', geminiKey: '', anthropicModel: escalationModel }
+        : { ...config, llmProvider: 'gemini', anthropicKey: '', geminiModel: escalationModel };
+      let escResults = null;
+      try {
+        escResults = await llmClassifier(escRefs.map((r) => ({
+          ...r.comment,
+          ownedChannelBrandHostilityScope: true,
+          awarenessAdScope: entries[r.entry]?.target?.awarenessAdScope === true,
+        })), strongConfig, undefined, stats);
+      } catch {
+        escResults = null; // 강한 모델 실패 → 승격 없이 1차 결과 유지(무해).
+      }
+      if (Array.isArray(escResults)) {
+        let promotedCount = 0;
+        for (let k = 0; k < escRefs.length; k += 1) {
+          const verdict = escResults[k];
+          if (!verdict || verdict.alert !== true) continue;
+          const { entry, index } = escRefs[k];
+          const promoted = {
+            alert: true,
+            category: verdict.category && verdict.category !== '정상댓글' ? verdict.category : '브랜드 적대/조롱',
+            reason: String(verdict.reason || '브랜드 지목 부정(강한 모델 승격)'),
+            priority: verdict.priority || 'high',
+            entity: { matched: true },
+            engine: 'llm-strong-owned',
+          };
+          prepared[entry].out[index] = promoted;
+          const cfp = classificationCacheFingerprint(entries[entry].target, entries[entry].comments[index]);
+          if (classifierHash && cfp) toStore.push({ fingerprint: cfp, result: promoted });
+          promotedCount += 1;
+        }
+        if (stats) {
+          stats.ownedEscalationChecked = (stats.ownedEscalationChecked || 0) + escRefs.length;
+          stats.ownedEscalatedAlerts = (stats.ownedEscalatedAlerts || 0) + promotedCount;
+        }
+      }
+    }
+  }
+
   // 감사/진단 실행은 기존 FP·캐시를 읽되 운영 캐시는 변경하지 않는 진짜 read-only 모드다.
   if (classifierHash && toStore.length && config.classificationCacheReadOnly !== true) {
     await storeCache(config, toStore, classifierHash, fetchImpl);

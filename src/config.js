@@ -93,6 +93,10 @@ export function loadConfig(env = process.env, now = Date.now()) {
     geminiMaxAttempts: Math.max(1, Math.min(5, Number(env.GEMINI_MAX_ATTEMPTS || 4))),
     anthropicKey: String(env.ANTHROPIC_API_KEY || '').trim(),
     anthropicModel: String(env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001').trim(),
+    // A안(소유채널 브랜드 지목 승격): 1차(약한 Gemini)가 정상으로 본 '브랜드/제품 직접 언급' 소유
+    // 댓글만 이 '강한 모델'로 2차 판정한다. 비어 있으면 승격 비활성(기본). 모델명 접두어로 공급자를
+    // 추론한다(claude*→Anthropic, gemini*→Gemini). ⚠️Anthropic 모델은 계정 크레딧이 있어야 작동한다.
+    ownedBrandEscalationModel: String(env.OWNED_BRAND_ESCALATION_MODEL || '').trim(),
     llmFailureThreshold: Math.max(1, Number(env.LLM_FAILURE_THRESHOLD || 3)),
     llmFailureAlertCooldownHours: Math.max(1, Number(env.LLM_FAILURE_ALERT_COOLDOWN_HOURS || 12)),
     sourceSpreadsheetId: String(env.SOURCE_SPREADSHEET_ID || '10WpAQU9TAsi3hRZ3ELvcQYj7Z228ILXfF6BUGz495Ak').trim(),

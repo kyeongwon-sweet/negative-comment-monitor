@@ -58,6 +58,10 @@ jobs:
           GEMINI_REQUEST_INTERVAL_MS: '5000'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5-20251001
+          # A안: 소유채널에서 브랜드/제품을 직접 언급했는데 1차(flash-lite)가 정상으로 본 댓글만
+          # 이 강한 모델로 2차 판정한다. Anthropic 계정 크레딧 소진으로 무료 상위 Gemini 모델을 쓴다.
+          # 대상은 이 회차 신규 분류 건뿐이라 볼륨·비용이 작다(강제 재분류 시 백로그 일괄 승격).
+          OWNED_BRAND_ESCALATION_MODEL: gemini-3.1-pro
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}

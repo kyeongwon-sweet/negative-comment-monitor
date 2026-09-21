@@ -224,6 +224,52 @@ test('pCRMnMYe3y8 회귀: 제품 폄하·AI 광고 거부와 운영 지정 경�
   assert.equal(llmAlert.engine, 'keyword-hard-owned');
 });
 
+test('A안 소유채널 브랜드 지목 승격: 약한 1차가 정상이어도 강한 모델이 부정으로 승격한다', async () => {
+  const comments = [
+    { text: '라라스윗 나본적도 없는데?', id: 'c1' }, // 브랜드 직접 언급 → 승격 대상
+    { text: '오늘 날씨 참 좋네요', id: 'c2' },        // 브랜드 미언급 → 승격 제외
+  ];
+  const calls = [];
+  const llmClassifier = async (items, cfg) => {
+    calls.push({ provider: cfg.llmProvider, anthropicModel: cfg.anthropicModel, n: items.length });
+    // 강한 모델(승격) 호출이면 부정으로, 약한 1차 호출이면 전부 정상으로 응답한다.
+    if (cfg.anthropicModel === 'claude-strong-test') {
+      return items.map(() => ({ alert: true, category: '브랜드 적대/조롱', reason: '브랜드 비하', priority: 'high' }));
+    }
+    return items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' }));
+  };
+  const [results] = await classifyTargetsBatched(
+    [{ comments, target: { brandName: '라라스윗', ownedChannelBrandHostilityScope: true } }],
+    { anthropicKey: 'key', ownedBrandEscalationModel: 'claude-strong-test' },
+    llmClassifier,
+  );
+  assert.equal(results[0].alert, true, '브랜드 언급 댓글은 승격돼야 한다');
+  assert.equal(results[0].engine, 'llm-strong-owned');
+  assert.equal(results[1].alert, false, '브랜드 미언급 댓글은 승격 대상이 아니다');
+  // 강한 모델은 브랜드 언급 1건만 대상으로 호출된다(고신호 협소화).
+  const strongCall = calls.find((c) => c.anthropicModel === 'claude-strong-test');
+  assert.ok(strongCall, '강한 모델 승격 호출이 있어야 한다');
+  assert.equal(strongCall.n, 1);
+});
+
+test('A안 승격 비활성/미대상: 모델 미설정이면 승격하지 않고, 비소유 지면은 대상 아니다', async () => {
+  const strongAlways = async (items, cfg) => (cfg.anthropicModel === 'claude-strong-test'
+    ? items.map(() => ({ alert: true, category: '브랜드 적대/조롱', reason: 'x', priority: 'high' }))
+    : items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' })));
+  // 모델 미설정 → 승격 경로 자체가 꺼진다.
+  const [offResults] = await classifyTargetsBatched(
+    [{ comments: [{ text: '라라스윗 나본적도 없는데?' }], target: { brandName: '라라스윗', ownedChannelBrandHostilityScope: true } }],
+    { anthropicKey: 'key' }, strongAlways,
+  );
+  assert.equal(offResults[0].alert, false);
+  // 비소유(협찬/제3자) 지면은 브랜드 언급이어도 승격 대상 아님.
+  const [thirdParty] = await classifyTargetsBatched(
+    [{ comments: [{ text: '라라스윗 나본적도 없는데?' }], target: { brandName: '라라스윗' } }],
+    { anthropicKey: 'key', ownedBrandEscalationModel: 'claude-strong-test' }, strongAlways,
+  );
+  assert.equal(thirdParty[0].alert, false);
+});
+
 test('threads the usage stats accumulator through to the LLM classifier', async () => {
   let receivedStats;
   const stats = { calls: 0 };
