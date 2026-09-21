@@ -59,6 +59,9 @@ export function loadMetaAdsConfig(env = process.env, now = Date.now()) {
       jdBok: String(env.SLACK_ASSIGNEE_JDBOK || '').trim(),
       awareness,
       p: {
+        // 파인트 인지 광고 담당자(손유곤). 누락 시 assigneeForTarget이 일반 awareness(황경원)로
+        // 잘못 폴백한다. tiktok/youtube 광고 config도 이 base를 상속하므로 3개 플랫폼이 함께 고쳐진다.
+        awareness: String(env.SLACK_ASSIGNEE_P_AWARENESS || '').trim(),
         sponsorship: String(env.SLACK_ASSIGNEE_P_SPONSORSHIP || '').trim(),
         viralVideo: String(env.SLACK_ASSIGNEE_P_VIRAL_VIDEO || '').trim(),
       },

@@ -38,12 +38,13 @@ test('loadMetaAdsConfig only requires Supabase and Slack secrets', () => {
   assert.deepEqual(loadMetaAdsConfig({
     SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc',
     SLACK_BOT_TOKEN: 'xoxb-test', SLACK_ASSIGNEE_JDBOK: 'U_JDBOK',
+    SLACK_ASSIGNEE_P_AWARENESS: 'U_P_AWARE',
     SLACK_ASSIGNEE_P_SPONSORSHIP: 'U_P_SPON', SLACK_ASSIGNEE_P_VIRAL_VIDEO: 'U_P_VIDEO',
     SLACK_ASSIGNEE_JG_PRIMARY: 'U_JG',
     SLACK_ASSIGNEE_JG_ADDITIONAL: 'U_JG_2,U_JG_3,U_JG_4',
   }).slackAssignees, {
     other: 'U0B2Y0ZC8QZ', awareness: '', jdBok: 'U_JDBOK',
-    p: { sponsorship: 'U_P_SPON', viralVideo: 'U_P_VIDEO' },
+    p: { awareness: 'U_P_AWARE', sponsorship: 'U_P_SPON', viralVideo: 'U_P_VIDEO' },
     jg: { primary: 'U_JG', additional: ['U_JG_2', 'U_JG_3', 'U_JG_4'] },
   });
   assert.equal(loadMetaAdsConfig({
@@ -55,6 +56,20 @@ test('loadMetaAdsConfig only requires Supabase and Slack secrets', () => {
     SLACK_BOT_TOKEN: 'xoxb-test',
     META_AUTO_HIDE_EXCLUDED_IG_USER_IDS: '17841475281500944, 123 17841475281500944 invalid',
   }).metaAutoHideExcludedInstagramUserIds, ['17841475281500944', '123']);
+});
+
+test('파인트 인지 광고는 광고 config에서도 P awareness 담당자(손유곤)로 라우팅된다', async () => {
+  const { assigneeForTarget } = await import('../src/slack.js');
+  const env = {
+    SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc', SLACK_BOT_TOKEN: 'xoxb-test',
+    SLACK_ASSIGNEE_OTHER: 'U_OTHER', SLACK_ASSIGNEE_AWARENESS: 'U_AWARE',
+    SLACK_ASSIGNEE_P_AWARENESS: 'U_P_AWARE',
+  };
+  const { slackAssignees } = loadMetaAdsConfig(env);
+  // 파인트(P) 인지 광고 → P awareness. 누락 시 일반 awareness(황경원)로 폴백하던 버그 회귀 방지.
+  assert.equal(assigneeForTarget({ productName: 'P', channelCategory: '인지 광고' }, slackAssignees), 'U_P_AWARE');
+  // 쫀득바(JD) 인지 광고는 기존대로 일반 awareness.
+  assert.equal(assigneeForTarget({ productName: 'JD', channelCategory: '인지 광고' }, slackAssignees), 'U_AWARE');
 });
 
 test('awareness routing switches to the next assignee at the configured KST date', () => {
