@@ -305,6 +305,42 @@ test('queued run starts after the first measured scan do not count as coverage',
   assert.equal(result.end, Date.parse('2026-09-21T10:15:00Z'));
 });
 
+test('heartbeat ledger warm-up ignores pre-ledger run-start gaps', () => {
+  const now = Date.parse('2026-09-21T11:36:00Z');
+  const result = maximumSuccessGap([
+    { conclusion: 'success', run_started_at: '2026-09-20T11:49:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-20T15:25:58Z' },
+    { conclusion: 'success', run_started_at: '2026-09-21T10:15:32Z' },
+  ], now, 24 * 60 * 60 * 1000, [
+    '2026-09-21T06:12:00Z',
+    '2026-09-21T07:50:00Z',
+    '2026-09-21T10:15:32Z',
+    '2026-09-21T11:28:11Z',
+  ]);
+
+  assert.equal(result.durationMs, 2 * 60 * 60 * 1000 + 25 * 60 * 1000 + 32 * 1000);
+  assert.equal(result.start, Date.parse('2026-09-21T07:50:00Z'));
+  assert.equal(result.end, Date.parse('2026-09-21T10:15:32Z'));
+});
+
+test('a measured predecessor keeps a real gap that crosses the 24-hour boundary', () => {
+  const now = Date.parse('2026-09-21T12:00:00Z');
+  const result = maximumSuccessGap([], now, 24 * 60 * 60 * 1000, [
+    '2026-09-20T11:00:00Z',
+    '2026-09-20T16:00:00Z',
+    '2026-09-20T19:00:00Z',
+    '2026-09-20T22:00:00Z',
+    '2026-09-21T01:00:00Z',
+    '2026-09-21T04:00:00Z',
+    '2026-09-21T07:00:00Z',
+    '2026-09-21T10:00:00Z',
+  ]);
+
+  assert.equal(result.durationMs, 5 * 60 * 60 * 1000);
+  assert.equal(result.start, Date.parse('2026-09-20T11:00:00Z'));
+  assert.equal(result.end, Date.parse('2026-09-20T16:00:00Z'));
+});
+
 test('gap threshold fails independently from the existing morning check', () => {
   const now = Date.parse('2026-09-21T08:00:00Z'); // 17:00 KST
   const runs = [
