@@ -1,9 +1,15 @@
 name: Monitor heartbeat
 
-# monitor.yml이 오늘(KST) 09:10 이후 성공 실행됐는지 확인해, 없으면 Slack 경고.
-# GitHub 크론 지연/드롭으로 그날 점검이 '조용히' 누락되는 걸 잡는다(DB 불필요).
+# monitor.yml의 아침 운영 기준과 최근 24시간 최대 실행 공백을 함께 확인한다.
+# 고빈도 GitHub 크론이 조용히 드롭돼도 3.5시간 넘는 공백을 수치·구간과 함께 알린다.
 on:
   workflow_dispatch:
+    inputs:
+      max_gap_minutes:
+        description: Maximum allowed monitor gap (minutes); lower only for an alert-path test
+        required: false
+        type: number
+        default: 210
   schedule:
     - cron: '0 5 * * *'   # 14:00 KST — 09:10 이후 충분한 버퍼
     - cron: '0 8 * * *'   # 17:00 KST — 첫 체크가 지연/드롭됐을 때 백업
@@ -30,6 +36,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
+          HEARTBEAT_MAX_GAP_MINUTES: ${{ inputs.max_gap_minutes || '210' }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}

@@ -15,6 +15,7 @@ const repeatOffenderWorkflow = readFileSync(
   new URL('../.github/workflows/youtube-repeat-offender-report.yml', import.meta.url),
   'utf8',
 );
+const heartbeatWorkflow = readFileSync(new URL('../.github/workflows/heartbeat.yml', import.meta.url), 'utf8');
 
 test('협찬 파워채널 담당자 변수를 메인 감시 런타임에 전달한다', () => {
   assert.match(
@@ -66,4 +67,19 @@ test('Meta 자동숨김 제외 계정 변수를 정기·수동 실행 모두에 
   const pattern = /META_AUTO_HIDE_EXCLUDED_IG_USER_IDS:\s*\$\{\{\s*vars\.META_AUTO_HIDE_EXCLUDED_IG_USER_IDS\s*\}\}/;
   assert.match(monitorWorkflow, pattern);
   assert.match(awarenessAutoHideWorkflow, pattern);
+});
+
+test('메인 감시는 예약 run 내부 15분 간격 4회 루프를 사용한다', () => {
+  assert.match(monitorWorkflow, /timeout-minutes:\s*70/);
+  assert.match(monitorWorkflow, /run:\s*node src\/monitor-loop\.js/);
+  assert.match(monitorWorkflow, /MONITOR_LOOP_ITERATIONS:\s*\$\{\{ github\.event_name == 'schedule' && '4' \|\| '1' \}\}/);
+  assert.match(monitorWorkflow, /MONITOR_LOOP_INTERVAL_MS:\s*'900000'/);
+  assert.doesNotMatch(monitorWorkflow, /id:\s*intensive_gate/);
+  assert.match(monitorWorkflow, /group:\s*negative-comment-monitor-production[\s\S]*cancel-in-progress:\s*false/);
+});
+
+test('하트비트는 하루 두 번을 유지하며 3.5시간 공백 임계를 전달한다', () => {
+  assert.equal((heartbeatWorkflow.match(/- cron:/g) || []).length, 2);
+  assert.match(heartbeatWorkflow, /HEARTBEAT_MAX_GAP_MINUTES:\s*\$\{\{ inputs\.max_gap_minutes \|\| '210' \}\}/);
+  assert.match(heartbeatWorkflow, /max_gap_minutes:/);
 });

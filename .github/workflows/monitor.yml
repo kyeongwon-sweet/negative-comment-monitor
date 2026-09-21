@@ -33,7 +33,9 @@ concurrency:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 예약 run 하나가 0/15/30/45분에 네 번 게이트를 확인한다. 전체 스캔이 네 번 열려도
+    # 마지막 반복이 끝날 시간을 확보한다.
+    timeout-minutes: 70
     permissions:
       contents: read
     steps:
@@ -41,24 +43,21 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 20
-      - name: Gate 15-minute intensive run
-        id: intensive_gate
-        if: ${{ github.event_name == 'schedule' && github.event.schedule == '*/15 * * * *' }}
-        run: node src/intensive-gate.js
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-      - run: npm install --ignore-scripts
-        if: ${{ github.event_name != 'schedule' || github.event.schedule != '*/15 * * * *' || steps.intensive_gate.outputs.should_run == 'true' }}
       - name: Verify Anthropic API key
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_anthropic }}
         run: node src/verify-anthropic.js
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5-20251001
-      - run: npm start
-        if: ${{ github.event_name != 'schedule' || github.event.schedule != '*/15 * * * *' || steps.intensive_gate.outputs.should_run == 'true' }}
+      - name: Run monitor coverage loop
+        run: node src/monitor-loop.js
         env:
+          # 수동 실행은 즉시 1회, 예약 실행은 한 run 안에서 15분 간격 4회 확인한다.
+          # 의존성 설치와 npm start는 첫 full scan 직전에만 수행해 닫힌 게이트의 외부 호출을 막는다.
+          MONITOR_TRIGGER_EVENT: ${{ github.event_name }}
+          MONITOR_TRIGGER_SCHEDULE: ${{ github.event.schedule }}
+          MONITOR_LOOP_ITERATIONS: ${{ github.event_name == 'schedule' && '4' || '1' }}
+          MONITOR_LOOP_INTERVAL_MS: '900000'
           GAS_WEB_APP_URL: ${{ secrets.GAS_WEB_APP_URL }}
           GAS_VERIFY_TOKEN: ${{ secrets.GAS_VERIFY_TOKEN }}
           APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN }}

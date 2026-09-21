@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildStaleMessage, dailyStartInstant, runHeartbeatCheck } from '../src/heartbeat-check.js';
+import {
+  buildHealthWarning,
+  buildStaleMessage,
+  dailyStartInstant,
+  evaluateHealth,
+  maximumSuccessGap,
+  runHeartbeatCheck,
+} from '../src/heartbeat-check.js';
 
 const NOW = Date.parse('2026-08-03T05:00:00Z'); // 2026-08-03 14:00 KST
 const ENV = {
@@ -25,7 +32,18 @@ test('healthy heartbeat does not dispatch or notify', async () => {
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url, options });
     return jsonResponse({
-      workflow_runs: [{ conclusion: 'success', run_started_at: '2026-08-03T01:00:00Z' }],
+      workflow_runs: [
+        { conclusion: 'success', run_started_at: '2026-08-03T03:30:00Z' },
+        { conclusion: 'success', run_started_at: '2026-08-03T01:00:00Z' },
+        { conclusion: 'success', run_started_at: '2026-08-02T22:30:00Z' },
+        { conclusion: 'success', run_started_at: '2026-08-02T20:00:00Z' },
+        { conclusion: 'success', run_started_at: '2026-08-02T17:30:00Z' },
+        { conclusion: 'success', run_started_at: '2026-08-02T15:00:00Z' },
+        { conclusion: 'success', run_started_at: '2026-08-02T12:30:00Z' },
+        { conclusion: 'success', run_started_at: '2026-08-02T10:00:00Z' },
+        { conclusion: 'success', run_started_at: '2026-08-02T07:30:00Z' },
+        { conclusion: 'success', run_started_at: '2026-08-02T05:00:00Z' },
+      ],
     });
   };
 
@@ -50,7 +68,17 @@ test('delayed heartbeat before 09:10 accepts a success from the previous evening
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url, options });
     return jsonResponse({
-      workflow_runs: [{ conclusion: 'success', run_started_at: '2026-08-27T13:56:00Z' }],
+      workflow_runs: [
+        { conclusion: 'success', run_started_at: '2026-08-27T13:56:00Z' },
+        { conclusion: 'success', run_started_at: '2026-08-27T11:26:00Z' },
+        { conclusion: 'success', run_started_at: '2026-08-27T08:56:00Z' },
+        { conclusion: 'success', run_started_at: '2026-08-27T06:26:00Z' },
+        { conclusion: 'success', run_started_at: '2026-08-27T03:56:00Z' },
+        { conclusion: 'success', run_started_at: '2026-08-27T01:26:00Z' },
+        { conclusion: 'success', run_started_at: '2026-08-26T22:56:00Z' },
+        { conclusion: 'success', run_started_at: '2026-08-26T20:26:00Z' },
+        { conclusion: 'success', run_started_at: '2026-08-26T17:56:00Z' },
+      ],
     });
   };
 
@@ -97,4 +125,59 @@ test('stale message shows the actual rolled-back threshold date before 09:10 KST
 
   assert.match(message, /기준일\(2026-08-27\) 09:10 KST/);
   assert.doesNotMatch(message, /기준일\(2026-08-28\) 09:10 KST/);
+});
+
+test('maximum gap includes the 24-hour window boundaries', () => {
+  const now = Date.parse('2026-09-21T08:00:00Z');
+  const result = maximumSuccessGap([
+    { conclusion: 'success', run_started_at: '2026-09-20T10:00:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-20T13:00:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-20T18:12:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-20T21:12:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-21T00:12:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-21T03:12:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-21T06:12:00Z' },
+    { conclusion: 'failure', run_started_at: '2026-09-21T04:00:00Z' },
+  ], now);
+
+  assert.equal(result.durationMs, 5.2 * 60 * 60 * 1000);
+  assert.equal(result.start, Date.parse('2026-09-20T13:00:00Z'));
+  assert.equal(result.end, Date.parse('2026-09-20T18:12:00Z'));
+});
+
+test('gap threshold fails independently from the existing morning check', () => {
+  const now = Date.parse('2026-09-21T08:00:00Z'); // 17:00 KST
+  const runs = [
+    { conclusion: 'success', run_started_at: '2026-09-21T07:00:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-21T03:00:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-20T23:00:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-20T19:00:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-20T15:00:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-20T11:00:00Z' },
+  ];
+  const health = evaluateHealth(runs, now, 3.5 * 60 * 60 * 1000);
+
+  assert.equal(health.dailyHealthy, true);
+  assert.equal(health.gapHealthy, false);
+  assert.equal(health.healthy, false);
+  assert.equal(health.maximumGap.durationMs, 4 * 60 * 60 * 1000);
+});
+
+test('gap warning contains the measured duration and KST interval', () => {
+  const now = Date.parse('2026-09-21T08:00:00Z');
+  const health = evaluateHealth([
+    { conclusion: 'success', run_started_at: '2026-09-21T07:00:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-21T01:48:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-20T22:48:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-20T19:48:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-20T16:48:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-20T13:48:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-20T10:48:00Z' },
+  ], now, 3.5 * 60 * 60 * 1000);
+  const message = buildHealthWarning(now, health, 'U123', true);
+
+  assert.match(message, /5시간 12분/);
+  assert.match(message, /2026-09-21 10:48 KST → 2026-09-21 16:00 KST/);
+  assert.match(message, /허용 임계: 3시간 30분/);
+  assert.match(message, /<@U123>/);
 });

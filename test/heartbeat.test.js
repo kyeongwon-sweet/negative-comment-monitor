@@ -3,6 +3,17 @@ import assert from 'node:assert/strict';
 import { evaluateHealth, dailyStartInstant, buildStaleMessage, runHeartbeatCheck } from '../src/heartbeat-check.js';
 
 const NOW = Date.parse('2026-07-20T05:00:00Z'); // 14:00 KST (마감 후 체크 시점)
+const HEALTHY_RUNS = [
+  '2026-07-19T07:00:00Z',
+  '2026-07-19T10:00:00Z',
+  '2026-07-19T13:00:00Z',
+  '2026-07-19T16:00:00Z',
+  '2026-07-19T19:00:00Z',
+  '2026-07-19T22:00:00Z',
+  '2026-07-20T01:00:00Z',
+  '2026-07-20T01:55:00Z',
+  '2026-07-20T04:00:00Z',
+].map((run_started_at) => ({ conclusion: 'success', run_started_at }));
 
 test('dailyStartInstant은 그날 09:10 KST의 UTC 순간', () => {
   assert.equal(dailyStartInstant(NOW), Date.parse('2026-07-20T00:10:00Z'));
@@ -10,7 +21,7 @@ test('dailyStartInstant은 그날 09:10 KST의 UTC 순간', () => {
 
 test('오늘 09:10 KST 이후 성공 실행이 있으면 healthy', () => {
   const runs = [
-    { conclusion: 'success', run_started_at: '2026-07-20T01:55:00Z' }, // 10:55 KST
+    ...HEALTHY_RUNS,
     { conclusion: 'failure', run_started_at: '2026-07-20T02:10:00Z' },
   ];
   const h = evaluateHealth(runs, NOW);
@@ -59,7 +70,7 @@ function mockFetch({ runs }) {
 const env = { GITHUB_REPOSITORY: 'o/r', GH_TOKEN: 't', SLACK_BOT_TOKEN: 'xoxb', SLACK_CHANNEL_ID: 'C1', SLACK_ASSIGNEE_OTHER: 'U_OTHER' };
 
 test('runHeartbeatCheck: healthy면 Slack 발송 안 함', async () => {
-  const { fetchImpl, calls } = mockFetch({ runs: [{ conclusion: 'success', run_started_at: '2026-07-20T01:55:00Z' }] });
+  const { fetchImpl, calls } = mockFetch({ runs: HEALTHY_RUNS });
   const r = await runHeartbeatCheck(env, NOW, fetchImpl);
   assert.equal(r.warned, false);
   assert.equal(calls.slack.length, 0);
@@ -71,5 +82,6 @@ test('runHeartbeatCheck: stale면 Slack 경고 발송', async () => {
   assert.equal(r.warned, true);
   assert.equal(calls.slack.length, 1);
   assert.equal(calls.slack[0].channel, 'C1');
-  assert.match(calls.slack[0].text, /미확인/);
+  assert.match(calls.slack[0].text, /실행 공백 감지/);
+  assert.match(calls.slack[0].text, /최대 성공 실행 공백/);
 });

@@ -5,6 +5,7 @@
 
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
+export const DEFAULT_MAX_GAP_MS = 3.5 * HOUR;
 
 function kstDate(now) {
   return new Date(now + 9 * HOUR).toISOString().slice(0, 10);
@@ -17,20 +18,61 @@ export function dailyStartInstant(now) {
   return now < todayStart ? todayStart - DAY : todayStart;
 }
 
-function fmtKst(ms) {
+export function fmtKst(ms) {
   if (ms == null) return '기록 없음';
   return new Date(ms + 9 * HOUR).toISOString().slice(0, 16).replace('T', ' ') + ' KST';
 }
 
+export function formatDuration(ms) {
+  const minutes = Math.max(0, Math.round(ms / 60000));
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (!hours) return `${rest}분`;
+  return rest ? `${hours}시간 ${rest}분` : `${hours}시간`;
+}
+
+export function maximumSuccessGap(runs, now = Date.now(), windowMs = DAY) {
+  const windowStart = now - windowMs;
+  const successTimes = [...new Set((runs || [])
+    .filter((run) => run.conclusion === 'success')
+    .map((run) => Date.parse(run.run_started_at || run.created_at || ''))
+    .filter((timestamp) => Number.isFinite(timestamp) && timestamp >= windowStart && timestamp <= now))]
+    .sort((a, b) => a - b);
+  const points = [windowStart, ...successTimes, now];
+  let start = windowStart;
+  let end = now;
+  let durationMs = -1;
+  for (let index = 1; index < points.length; index += 1) {
+    const gap = points[index] - points[index - 1];
+    if (gap > durationMs) {
+      durationMs = gap;
+      start = points[index - 1];
+      end = points[index];
+    }
+  }
+  return { durationMs: Math.max(0, durationMs), start, end, successCount: successTimes.length };
+}
+
 // runs: [{ conclusion, run_started_at, created_at }] — monitor.yml 실행들.
-export function evaluateHealth(runs, now = Date.now()) {
+export function evaluateHealth(runs, now = Date.now(), maxGapMs = DEFAULT_MAX_GAP_MS) {
   const threshold = dailyStartInstant(now);
   const successTimes = (runs || [])
     .filter((r) => r.conclusion === 'success')
     .map((r) => Date.parse(r.run_started_at || r.created_at || ''))
     .filter(Number.isFinite);
   const lastSuccessAt = successTimes.length ? Math.max(...successTimes) : null;
-  return { healthy: lastSuccessAt != null && lastSuccessAt >= threshold, lastSuccessAt, threshold };
+  const dailyHealthy = lastSuccessAt != null && lastSuccessAt >= threshold;
+  const maximumGap = maximumSuccessGap(runs, now);
+  const gapHealthy = maximumGap.durationMs <= maxGapMs;
+  return {
+    healthy: dailyHealthy && gapHealthy,
+    dailyHealthy,
+    gapHealthy,
+    lastSuccessAt,
+    threshold,
+    maximumGap,
+    maxGapMs,
+  };
 }
 
 export function buildStaleMessage(
@@ -52,11 +94,32 @@ export function buildStaleMessage(
   ].filter(Boolean).join('\n');
 }
 
+export function buildHealthWarning(now, health, assigneeOther = '', recoveryDispatched = false) {
+  const owner = String(assigneeOther || '').trim();
+  const lines = ['⚠️ *부정댓글 모니터링 — 실행 공백 감지*'];
+  if (!health.gapHealthy) {
+    lines.push(`최근 24시간 최대 성공 실행 공백: *${formatDuration(health.maximumGap.durationMs)}*`);
+    lines.push(`공백 구간: ${fmtKst(health.maximumGap.start)} → ${fmtKst(health.maximumGap.end)}`);
+    lines.push(`허용 임계: ${formatDuration(health.maxGapMs)}`);
+  }
+  if (!health.dailyHealthy) {
+    lines.push(`기준일(${kstDate(health.threshold)}) 09:10 KST 이후 성공한 monitor 실행이 없습니다.`);
+    lines.push(`마지막 성공 실행: ${fmtKst(health.lastSuccessAt)}`);
+  }
+  lines.push(
+    recoveryDispatched
+      ? '자가치유: monitor.yml 수동 실행을 자동 요청했습니다.'
+      : 'GitHub Actions 스케줄 실행/실패를 확인하세요.',
+  );
+  if (owner) lines.push(`담당자: <@${owner}>`);
+  return lines.join('\n');
+}
+
 async function fetchMonitorRuns(env, fetchImpl) {
   const repo = String(env.GITHUB_REPOSITORY || '').trim();
   const token = String(env.GH_TOKEN || env.GITHUB_TOKEN || '').trim();
   if (!repo || !token) throw new Error('Missing GITHUB_REPOSITORY or token');
-  const url = `https://api.github.com/repos/${repo}/actions/workflows/monitor.yml/runs?per_page=30`;
+  const url = `https://api.github.com/repos/${repo}/actions/workflows/monitor.yml/runs?per_page=100`;
   const res = await fetchImpl(url, {
     headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'user-agent': 'ncm-heartbeat' },
   });
@@ -101,18 +164,22 @@ async function dispatchMonitor(env, fetchImpl) {
 
 export async function runHeartbeatCheck(env = process.env, now = Date.now(), fetchImpl = fetch) {
   const runs = await fetchMonitorRuns(env, fetchImpl);
-  const health = evaluateHealth(runs, now);
+  const configuredGapMinutes = Number(env.HEARTBEAT_MAX_GAP_MINUTES || 210);
+  const maxGapMs = Number.isFinite(configuredGapMinutes) && configuredGapMinutes > 0
+    ? configuredGapMinutes * 60000
+    : DEFAULT_MAX_GAP_MS;
+  const health = evaluateHealth(runs, now, maxGapMs);
   if (health.healthy) {
-    console.log(`[heartbeat] OK — 마지막 성공 ${fmtKst(health.lastSuccessAt)}`);
+    console.log(`[heartbeat] OK — 마지막 성공 ${fmtKst(health.lastSuccessAt)}, 최근 24h 최대 공백 ${formatDuration(health.maximumGap.durationMs)}`);
     return { warned: false, dispatched: false };
   }
   await dispatchMonitor(env, fetchImpl);
   await postSlack(
     env,
-    buildStaleMessage(now, health.lastSuccessAt, env.SLACK_ASSIGNEE_OTHER, true, health.threshold),
+    buildHealthWarning(now, health, env.SLACK_ASSIGNEE_OTHER, true),
     fetchImpl,
   );
-  console.error(`[heartbeat] STALE — ${fmtKst(health.threshold)} 이후 성공 실행 없음(마지막 ${fmtKst(health.lastSuccessAt)}) → monitor.yml 자동 실행 요청 + 경고 발송`);
+  console.error(`[heartbeat] STALE — daily=${health.dailyHealthy} gap=${formatDuration(health.maximumGap.durationMs)}/${formatDuration(health.maxGapMs)} (${fmtKst(health.maximumGap.start)} → ${fmtKst(health.maximumGap.end)}) → monitor.yml 자동 실행 요청 + 경고 발송`);
   return { warned: true, dispatched: true };
 }
 
