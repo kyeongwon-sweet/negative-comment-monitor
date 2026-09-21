@@ -41,19 +41,15 @@ function coverageTimes(runs, scanHeartbeats, windowStart, now) {
   const runTimes = (runs || [])
     .filter((run) => run.conclusion === 'success')
     .map((run) => Date.parse(run.run_started_at || run.created_at || ''))
-    .filter((timestamp) => Number.isFinite(timestamp) && timestamp >= windowStart && timestamp <= now);
+    .filter((timestamp) => Number.isFinite(timestamp) && timestamp <= now);
   const measuredScanTimes = (scanHeartbeats || [])
     .map((value) => typeof value === 'number' ? value : Date.parse(value?.scanned_at || value || ''))
-    .filter((timestamp) => Number.isFinite(timestamp) && timestamp >= windowStart && timestamp <= now);
-  if (!measuredScanTimes.length) {
-    return { times: runTimes, measuredScanTimes };
-  }
+    .filter((timestamp) => Number.isFinite(timestamp) && timestamp <= now);
 
-  // Once real scan completions exist, queued GitHub run starts are not coverage
-  // evidence. Keep older run starts only to bridge the first deployment window.
-  const firstMeasuredScan = Math.min(...measuredScanTimes);
+  // Once real scan completions exist they are the only coverage evidence. Mixing
+  // queued GitHub run starts back in would recreate the original inflated gap.
   return {
-    times: [...runTimes.filter((timestamp) => timestamp < firstMeasuredScan), ...measuredScanTimes],
+    times: measuredScanTimes.length ? measuredScanTimes : runTimes,
     measuredScanTimes,
   };
 }
@@ -61,10 +57,16 @@ function coverageTimes(runs, scanHeartbeats, windowStart, now) {
 export function maximumSuccessGap(runs, now = Date.now(), windowMs = DAY, scanHeartbeats = []) {
   const windowStart = now - windowMs;
   const coverage = coverageTimes(runs, scanHeartbeats, windowStart, now);
-  const successTimes = [...new Set(coverage.times)]
+  const allSuccessTimes = [...new Set(coverage.times)]
     .sort((a, b) => a - b);
-  const points = [windowStart, ...successTimes, now];
-  let start = windowStart;
+  const predecessor = allSuccessTimes.filter((timestamp) => timestamp < windowStart).at(-1) || null;
+  const successTimes = allSuccessTimes.filter((timestamp) => timestamp >= windowStart);
+  // During the one-time ledger warm-up there may be no measured point before
+  // the 24h boundary. Start at the first real scan instead of inventing a gap
+  // from an arbitrary clock boundary. Once a predecessor exists, retain it.
+  const coverageStart = predecessor ?? successTimes[0] ?? windowStart;
+  const points = [coverageStart, ...successTimes.filter((timestamp) => timestamp > coverageStart), now];
+  let start = coverageStart;
   let end = now;
   let durationMs = -1;
   for (let index = 1; index < points.length; index += 1) {
@@ -209,20 +211,22 @@ function healthErrorSummary(health) {
 export async function runHeartbeatCheck(env = process.env, now = Date.now(), fetchImpl = fetch) {
   const runs = await fetchMonitorRuns(env, fetchImpl);
   const stateConfig = heartbeatStateConfig(env);
+  const configuredGapMinutes = Number(env.HEARTBEAT_MAX_GAP_MINUTES || 210);
+  const maxGapMs = Number.isFinite(configuredGapMinutes) && configuredGapMinutes > 0
+    ? configuredGapMinutes * 60000
+    : DEFAULT_MAX_GAP_MS;
   let scanHeartbeats = [];
   try {
     scanHeartbeats = await fetchMonitorScanHeartbeats(
       stateConfig,
-      { from: now - DAY, to: now },
+      // Include a predecessor beyond the reporting window so a gap crossing
+      // the 24h boundary can be measured without fabricating a boundary gap.
+      { from: now - DAY - maxGapMs, to: now },
       fetchImpl,
     );
   } catch (error) {
     console.error(`[heartbeat] scan heartbeat read failed; using GitHub run starts only: ${error.message}`);
   }
-  const configuredGapMinutes = Number(env.HEARTBEAT_MAX_GAP_MINUTES || 210);
-  const maxGapMs = Number.isFinite(configuredGapMinutes) && configuredGapMinutes > 0
-    ? configuredGapMinutes * 60000
-    : DEFAULT_MAX_GAP_MS;
   const health = evaluateHealth(runs, now, maxGapMs, scanHeartbeats);
   if (health.healthy) {
     await recordPlatformOutcome(
