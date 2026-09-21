@@ -23,6 +23,9 @@ on:
     - cron: '8,23 1 * * *'
     # Floor scan: even in quiet periods, run the full monitor every 3h so first-negative latency is bounded.
     - cron: '0 */3 * * *'
+    # Staggered floor backup: top-of-hour GitHub cron drops must not create a 3h blind spot.
+    # 01:17/04:17/... UTC alternates with the primary floor at an off-peak minute.
+    - cron: '17 1-22/3 * * *'
     # 상시 15분 웨이크: 부정 감지글 3h 집중확인 + 지연분 백업.
     - cron: '*/15 * * * *'
 
@@ -53,6 +56,7 @@ jobs:
         run: node src/monitor-loop.js
         env:
           # 수동 실행은 즉시 1회, 예약 실행은 한 run 안에서 15분 간격 4회 확인한다.
+          # 집중 게이트가 닫히면 조기 종료해 staggered floor run을 막지 않는다.
           # 의존성 설치와 npm start는 첫 full scan 직전에만 수행해 닫힌 게이트의 외부 호출을 막는다.
           MONITOR_TRIGGER_EVENT: ${{ github.event_name }}
           MONITOR_TRIGGER_SCHEDULE: ${{ github.event.schedule }}

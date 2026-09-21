@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { hasRecentNegativeAlerts } from './intensive-gate.js';
+import { recordMonitorScanHeartbeat } from './monitor-scan-heartbeat.js';
 
 const MINUTE = 60 * 1000;
 
@@ -46,6 +47,8 @@ export async function runMonitorLoop(env = process.env, options = {}) {
   const gate = options.gate || ((config) => hasRecentNegativeAlerts(config));
   const execute = options.runCommand || runCommand;
   const sleep = options.sleep || delay;
+  const recordHeartbeat = options.recordHeartbeat || ((details) => recordMonitorScanHeartbeat(gateConfig, details));
+  const now = options.now || Date.now;
   let dependenciesInstalled = false;
   let monitorRuns = 0;
 
@@ -75,6 +78,22 @@ export async function runMonitorLoop(env = process.env, options = {}) {
       }
       await execute('npm', ['start'], env);
       monitorRuns += 1;
+      try {
+        const scannedAt = now();
+        await recordHeartbeat({
+          scannedAt,
+          runId: env.GITHUB_RUN_ID,
+          runAttempt: env.GITHUB_RUN_ATTEMPT,
+          iteration: iteration + 1,
+          triggerEvent: eventName,
+          triggerSchedule: schedule,
+        });
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} scan_heartbeat=${new Date(scannedAt).toISOString()}`);
+      } catch (error) {
+        // The scan itself succeeded. Heartbeat persistence must never turn a healthy
+        // collection into a failed collection; the watchdog falls back to run starts.
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} heartbeat_write_error=${error.message}`);
+      }
     } else {
       console.error(
         `[monitor-loop] iteration=${iteration + 1}/${iterations} gate_supabase_get=1 monitor_external_api_calls=0`,
@@ -82,6 +101,10 @@ export async function runMonitorLoop(env = process.env, options = {}) {
     }
 
     if (iteration + 1 < iterations) {
+      if (eventName === 'schedule' && schedule === '*/15 * * * *' && !gateOpen) {
+        console.error('[monitor-loop] intensive gate closed; ending loop early so floor/backup schedules are not blocked');
+        break;
+      }
       console.error(`[monitor-loop] sleeping ${Math.round(intervalMs / MINUTE)} minutes before the next gate check`);
       await sleep(intervalMs);
     }

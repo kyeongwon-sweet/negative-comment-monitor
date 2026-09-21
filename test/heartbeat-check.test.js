@@ -43,6 +43,9 @@ function statefulHeartbeatFetch(initialRuns) {
     if (value.includes('/actions/workflows/monitor.yml/runs?')) {
       return jsonResponse({ workflow_runs: runs });
     }
+    if (value.includes('/rest/v1/monitor_scan_heartbeats?')) {
+      return jsonResponse([]);
+    }
     if (value.includes('/rest/v1/platform_collection_health?platform=eq.')) {
       return jsonResponse(state ? [state] : []);
     }
@@ -259,6 +262,47 @@ test('maximum gap includes the 24-hour window boundaries', () => {
   assert.equal(result.durationMs, 5.2 * 60 * 60 * 1000);
   assert.equal(result.start, Date.parse('2026-09-20T13:00:00Z'));
   assert.equal(result.end, Date.parse('2026-09-20T18:12:00Z'));
+});
+
+test('actual iteration heartbeats replace the inflated run-start gap with the real scan gap', () => {
+  const now = Date.parse('2026-09-21T10:15:00Z');
+  const runs = [
+    { conclusion: 'success', run_started_at: '2026-09-21T06:11:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-21T06:19:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-21T10:15:00Z' },
+  ];
+  const scanHeartbeats = [
+    '2026-09-21T06:12:00Z',
+    '2026-09-21T06:28:00Z',
+    '2026-09-21T06:44:00Z',
+    '2026-09-21T07:00:00Z',
+    '2026-09-21T07:02:00Z',
+    '2026-09-21T07:18:00Z',
+    '2026-09-21T07:34:00Z',
+    '2026-09-21T07:50:00Z',
+  ];
+
+  const result = maximumSuccessGap(runs, now, 5 * 60 * 60 * 1000, scanHeartbeats);
+
+  assert.equal(result.durationMs, 2 * 60 * 60 * 1000 + 25 * 60 * 1000);
+  assert.equal(result.start, Date.parse('2026-09-21T07:50:00Z'));
+  assert.equal(result.end, Date.parse('2026-09-21T10:15:00Z'));
+  assert.equal(result.scanHeartbeatCount, 8);
+});
+
+test('queued run starts after the first measured scan do not count as coverage', () => {
+  const now = Date.parse('2026-09-21T10:15:00Z');
+  const result = maximumSuccessGap([
+    { conclusion: 'success', run_started_at: '2026-09-21T06:11:00Z' },
+    { conclusion: 'success', run_started_at: '2026-09-21T09:00:00Z' },
+  ], now, 5 * 60 * 60 * 1000, [
+    '2026-09-21T07:50:00Z',
+    '2026-09-21T10:15:00Z',
+  ]);
+
+  assert.equal(result.durationMs, 2 * 60 * 60 * 1000 + 25 * 60 * 1000);
+  assert.equal(result.start, Date.parse('2026-09-21T07:50:00Z'));
+  assert.equal(result.end, Date.parse('2026-09-21T10:15:00Z'));
 });
 
 test('gap threshold fails independently from the existing morning check', () => {

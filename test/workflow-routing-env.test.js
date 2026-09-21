@@ -76,6 +76,7 @@ test('메인 감시는 예약 run 내부 15분 간격 4회 루프를 사용한�
   assert.match(monitorWorkflow, /MONITOR_LOOP_INTERVAL_MS:\s*'900000'/);
   assert.doesNotMatch(monitorWorkflow, /id:\s*intensive_gate/);
   assert.match(monitorWorkflow, /group:\s*negative-comment-monitor-production[\s\S]*cancel-in-progress:\s*false/);
+  assert.match(monitorWorkflow, /cron:\s*'17 1-22\/3 \* \* \*'/);
 });
 
 test('하트비트는 하루 두 번을 유지하며 3.5시간 공백 임계를 전달한다', () => {

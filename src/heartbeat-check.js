@@ -1,4 +1,5 @@
 import { clearPlatformAlertClaim, recordPlatformOutcome } from './platform-health.js';
+import { fetchMonitorScanHeartbeats } from './monitor-scan-heartbeat.js';
 
 // 모니터 헬스체크(watchdog) — 별도 워크플로에서 하루 몇 번 실행.
 // "현재 운영일의 09:10 KST 이후 성공한 monitor 실행이 있었나"를 GitHub Actions API로 확인해,
@@ -36,12 +37,31 @@ export function formatDuration(ms) {
   return rest ? `${hours}시간 ${rest}분` : `${hours}시간`;
 }
 
-export function maximumSuccessGap(runs, now = Date.now(), windowMs = DAY) {
-  const windowStart = now - windowMs;
-  const successTimes = [...new Set((runs || [])
+function coverageTimes(runs, scanHeartbeats, windowStart, now) {
+  const runTimes = (runs || [])
     .filter((run) => run.conclusion === 'success')
     .map((run) => Date.parse(run.run_started_at || run.created_at || ''))
-    .filter((timestamp) => Number.isFinite(timestamp) && timestamp >= windowStart && timestamp <= now))]
+    .filter((timestamp) => Number.isFinite(timestamp) && timestamp >= windowStart && timestamp <= now);
+  const measuredScanTimes = (scanHeartbeats || [])
+    .map((value) => typeof value === 'number' ? value : Date.parse(value?.scanned_at || value || ''))
+    .filter((timestamp) => Number.isFinite(timestamp) && timestamp >= windowStart && timestamp <= now);
+  if (!measuredScanTimes.length) {
+    return { times: runTimes, measuredScanTimes };
+  }
+
+  // Once real scan completions exist, queued GitHub run starts are not coverage
+  // evidence. Keep older run starts only to bridge the first deployment window.
+  const firstMeasuredScan = Math.min(...measuredScanTimes);
+  return {
+    times: [...runTimes.filter((timestamp) => timestamp < firstMeasuredScan), ...measuredScanTimes],
+    measuredScanTimes,
+  };
+}
+
+export function maximumSuccessGap(runs, now = Date.now(), windowMs = DAY, scanHeartbeats = []) {
+  const windowStart = now - windowMs;
+  const coverage = coverageTimes(runs, scanHeartbeats, windowStart, now);
+  const successTimes = [...new Set(coverage.times)]
     .sort((a, b) => a - b);
   const points = [windowStart, ...successTimes, now];
   let start = windowStart;
@@ -55,19 +75,22 @@ export function maximumSuccessGap(runs, now = Date.now(), windowMs = DAY) {
       end = points[index];
     }
   }
-  return { durationMs: Math.max(0, durationMs), start, end, successCount: successTimes.length };
+  return {
+    durationMs: Math.max(0, durationMs),
+    start,
+    end,
+    successCount: successTimes.length,
+    scanHeartbeatCount: coverage.measuredScanTimes.length,
+  };
 }
 
 // runs: [{ conclusion, run_started_at, created_at }] — monitor.yml 실행들.
-export function evaluateHealth(runs, now = Date.now(), maxGapMs = DEFAULT_MAX_GAP_MS) {
+export function evaluateHealth(runs, now = Date.now(), maxGapMs = DEFAULT_MAX_GAP_MS, scanHeartbeats = []) {
   const threshold = dailyStartInstant(now);
-  const successTimes = (runs || [])
-    .filter((r) => r.conclusion === 'success')
-    .map((r) => Date.parse(r.run_started_at || r.created_at || ''))
-    .filter(Number.isFinite);
+  const successTimes = coverageTimes(runs, scanHeartbeats, Number.NEGATIVE_INFINITY, now).times;
   const lastSuccessAt = successTimes.length ? Math.max(...successTimes) : null;
   const dailyHealthy = lastSuccessAt != null && lastSuccessAt >= threshold;
-  const maximumGap = maximumSuccessGap(runs, now);
+  const maximumGap = maximumSuccessGap(runs, now, DAY, scanHeartbeats);
   const gapHealthy = maximumGap.durationMs <= maxGapMs;
   return {
     healthy: dailyHealthy && gapHealthy,
@@ -185,12 +208,22 @@ function healthErrorSummary(health) {
 
 export async function runHeartbeatCheck(env = process.env, now = Date.now(), fetchImpl = fetch) {
   const runs = await fetchMonitorRuns(env, fetchImpl);
+  const stateConfig = heartbeatStateConfig(env);
+  let scanHeartbeats = [];
+  try {
+    scanHeartbeats = await fetchMonitorScanHeartbeats(
+      stateConfig,
+      { from: now - DAY, to: now },
+      fetchImpl,
+    );
+  } catch (error) {
+    console.error(`[heartbeat] scan heartbeat read failed; using GitHub run starts only: ${error.message}`);
+  }
   const configuredGapMinutes = Number(env.HEARTBEAT_MAX_GAP_MINUTES || 210);
   const maxGapMs = Number.isFinite(configuredGapMinutes) && configuredGapMinutes > 0
     ? configuredGapMinutes * 60000
     : DEFAULT_MAX_GAP_MS;
-  const health = evaluateHealth(runs, now, maxGapMs);
-  const stateConfig = heartbeatStateConfig(env);
+  const health = evaluateHealth(runs, now, maxGapMs, scanHeartbeats);
   if (health.healthy) {
     await recordPlatformOutcome(
       stateConfig,
