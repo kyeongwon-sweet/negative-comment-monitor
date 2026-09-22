@@ -20,7 +20,7 @@ on:
         type: string
         default: ''
       monitor_chain_smoke:
-        description: Internal one-iteration chain smoke test
+        description: Internal one-hop chain smoke test (requires max per day = 1)
         required: false
         type: boolean
         default: false

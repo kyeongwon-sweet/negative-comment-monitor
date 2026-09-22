@@ -95,9 +95,15 @@ export async function chainNextMonitor(env = process.env, options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
   const dispatch = options.dispatch || dispatchMonitor;
   const config = chainConfig(env);
+  const smoke = isMonitorChainSmoke(env);
 
   if (!monitorChainEnabled(env)) return { dispatched: false, reason: 'disabled' };
-  if (!options.gateOpen) return { dispatched: false, reason: 'gate-closed' };
+  // 실환경 큐잉 경로를 게이트 상태와 무관하게 점검할 수 있는 유일한 예외.
+  // runaway를 원천 차단하도록 하루 상한을 정확히 1로 준 명시적 smoke에서만 허용한다.
+  if (smoke && config.maxPerDay !== 1) {
+    return { dispatched: false, reason: 'smoke-requires-cap-one', maxPerDay: config.maxPerDay };
+  }
+  if (!options.gateOpen && !smoke) return { dispatched: false, reason: 'gate-closed' };
   if (!config.supabaseUrl || !config.supabaseKey) return { dispatched: false, reason: 'ledger-not-configured' };
 
   const claims = await loadClaims(config, now, fetchImpl);
@@ -112,7 +118,7 @@ export async function chainNextMonitor(env = process.env, options = {}) {
     await dispatch(env, fetchImpl, {
       chain: true,
       maxPerDay: config.maxPerDay,
-      smoke: isMonitorChainSmoke(env),
+      smoke,
     });
     return { dispatched: true, reason: 'queued', count: claims.length + 1, maxPerDay: config.maxPerDay };
   } catch (error) {

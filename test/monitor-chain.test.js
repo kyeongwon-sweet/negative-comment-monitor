@@ -42,6 +42,43 @@ test('closed active gate does not read the ledger or dispatch', async () => {
   assert.equal(calls, 0);
 });
 
+test('smoke probe may test one real queue hop with the gate closed only when capped at one', async () => {
+  let dispatched = 0;
+  const result = await chainNextMonitor({
+    ...ENV,
+    MONITOR_CHAIN_SMOKE: 'true',
+    MONITOR_CHAIN_MAX_PER_DAY: '1',
+  }, {
+    now: NOW,
+    gateOpen: false,
+    fetchImpl: async (url, options = {}) => {
+      if (String(url).includes('?select=run_key')) return jsonResponse([]);
+      if (String(url).includes('?on_conflict=run_key')) return jsonResponse([JSON.parse(options.body)]);
+      throw new Error(`unexpected URL: ${url}`);
+    },
+    dispatch: async (_env, _fetch, options) => {
+      dispatched += 1;
+      assert.deepEqual(options, { chain: true, maxPerDay: 1, smoke: true });
+    },
+  });
+
+  assert.deepEqual(result, { dispatched: true, reason: 'queued', count: 1, maxPerDay: 1 });
+  assert.equal(dispatched, 1);
+});
+
+test('smoke probe refuses to bypass the gate with a cap above one', async () => {
+  let calls = 0;
+  const result = await chainNextMonitor({ ...ENV, MONITOR_CHAIN_SMOKE: 'true' }, {
+    now: NOW,
+    gateOpen: false,
+    fetchImpl: async () => { calls += 1; throw new Error('must not call'); },
+    dispatch: async () => { calls += 1; },
+  });
+
+  assert.deepEqual(result, { dispatched: false, reason: 'smoke-requires-cap-one', maxPerDay: 2 });
+  assert.equal(calls, 0);
+});
+
 test('daily cap stops self-chaining before a new claim', async () => {
   let dispatched = 0;
   const result = await chainNextMonitor(ENV, {
