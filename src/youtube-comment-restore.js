@@ -117,6 +117,8 @@ async function ensureFalsePositive(config, rows, fetchImpl, now) {
     const body = {
       review_decision: 'false_positive',
       false_positive_reason: config.falsePositiveReason,
+      hidden_confirmed: false,
+      hidden_confirmed_at: null,
     };
     if (!row.reviewed_by) body.reviewed_by = config.actor;
     if (!row.reviewed_at) body.reviewed_at = new Date(now).toISOString();

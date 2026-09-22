@@ -286,12 +286,16 @@ test('사람이 누른 YouTube 숨김은 실제 처리하되 review_decision과 
     if (url.includes('/videos')) return response(200, { items: [{ id: 'videoA1', snippet: { channelId: 'ownerA' } }] });
     if (url.includes('/comments?')) return response(200, { items: rejected ? [] : [{ id: 'commentA' }] });
     if (url.includes('/comments/setModerationStatus')) { rejected = true; return response(204); }
+    if (url.includes('/rest/v1/negative_comment_alerts') && init.method === 'PATCH') return response(200, [{ id: 11 }]);
     throw new Error(`unexpected ${url}`);
   });
 
   assert.equal(result.hidden, 1);
-  assert.equal(result.dbUpdated, 0);
-  assert.equal(calls.filter((call) => call.init.method === 'PATCH').length, 0);
+  assert.equal(result.dbUpdated, 1);
+  const patches = calls.filter((call) => call.init.method === 'PATCH');
+  assert.equal(patches.length, 1);
+  assert.equal(JSON.parse(patches[0].init.body).hidden_confirmed, true);
+  assert.equal('review_decision' in JSON.parse(patches[0].init.body), false);
   assert.equal(alert.review_decision, 'hide');
   assert.equal(alert.reviewed_by, 'U_HUMAN');
 });

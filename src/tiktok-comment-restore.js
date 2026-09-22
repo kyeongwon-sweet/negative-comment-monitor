@@ -38,6 +38,18 @@ function headers(config) {
   return { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}` };
 }
 
+async function clearHiddenConfirmation(config, row, fetchImpl) {
+  const response = await fetchImpl(
+    `${config.supabaseUrl}/rest/v1/negative_comment_alerts?id=eq.${encodeURIComponent(row.id)}&source=eq.tiktok_ads`,
+    {
+      method: 'PATCH',
+      headers: { ...headers(config), 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      body: JSON.stringify({ hidden_confirmed: false, hidden_confirmed_at: null }),
+    },
+  );
+  if (!response.ok) throw new Error(`TikTok restore state update failed (${response.status})`);
+}
+
 export async function loadTikTokRestoreAlert(config, fetchImpl = fetch) {
   const url = new URL(`${config.supabaseUrl}/rest/v1/negative_comment_alerts`);
   url.searchParams.set('select', 'id,source,comment_id,comment_text,post_url,review_decision,reviewed_by,slack_channel_id,slack_ts');
@@ -94,6 +106,7 @@ export async function restoreTikTokAdComment(
   const verified = await verifyImpl(config, [String(row.comment_id)], fetchImpl, now);
   const restored = verified.visibleIds.includes(String(row.comment_id));
   if (!restored) throw new Error('TikTok public restore was not visible during verification');
+  await clearHiddenConfirmation(config, row, fetchImpl);
   const slack = await syncRestoredCard(config, row, fetchImpl, now);
   return {
     restored: true,

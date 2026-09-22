@@ -49,18 +49,19 @@ test('ensureDailyThread: 비활성/실패는 null(최상위 발송 폴백)', asy
   assert.equal(await ensureDailyThread(CFG, { kstDate: '2026-07-23', assignee: 'U1' }, f), null);
 });
 
-test('markCompletedThreads: 미처리 카드(버튼) 없으면 완료느낌표(무시·숨김 처리분 남아도), 미처리·이미반응은 스킵', async () => {
+test('markCompletedThreads: 미처리 버튼·숨김 확인대기는 완료 처리하지 않는다', async () => {
   const CFG = { supabaseUrl: 'https://db', supabaseKey: 'k', slackBotToken: 'tok', slackChannelId: 'C1' };
-  // T0=답글0(전부 삭제,→달림), T1=미처리 카드(버튼 있음,→스킵), T2=이미반응(→스킵), T3=처리분만(버튼 제거,→달림)
+  // T0=답글0(→달림), T1=버튼(→스킵), T2=이미반응, T3=확정 처리(→달림), T4=플랫폼 확인대기(→스킵)
   const added = [];
   const fetchImpl = async (u, o) => {
-    if (/alert_threads/.test(u)) return { ok: true, json: async () => [{ slack_ts: 'T0' }, { slack_ts: 'T1' }, { slack_ts: 'T2' }, { slack_ts: 'T3' }] };
+    if (/alert_threads/.test(u)) return { ok: true, json: async () => [{ slack_ts: 'T0' }, { slack_ts: 'T1' }, { slack_ts: 'T2' }, { slack_ts: 'T3' }, { slack_ts: 'T4' }] };
     if (/conversations\.replies/.test(u)) {
       const ts = new URL(u).searchParams.get('ts');
       if (ts === 'T0') return { json: async () => ({ messages: [{ ts: 'T0', reactions: [] }] }) };
       if (ts === 'T1') return { json: async () => ({ messages: [{ ts: 'T1', reactions: [] }, { ts: 'r1', blocks: [{ type: 'section' }, { type: 'actions' }] }] }) };
       if (ts === 'T2') return { json: async () => ({ messages: [{ ts: 'T2', reactions: [{ name: '완료느낌표' }] }] }) };
       if (ts === 'T3') return { json: async () => ({ messages: [{ ts: 'T3', reactions: [] }, { ts: 'r3', blocks: [{ type: 'section' }, { type: 'context' }] }] }) };
+      if (ts === 'T4') return { json: async () => ({ messages: [{ ts: 'T4', reactions: [] }, { ts: 'r4', text: '숨김 요청됨 · 플랫폼 확인 대기', blocks: [{ type: 'context', elements: [{ type: 'mrkdwn', text: '플랫폼 확인 대기' }] }] }] }) };
     }
     if (/reactions\.add/.test(u)) { added.push(JSON.parse(o.body).timestamp); return { json: async () => ({ ok: true }) }; }
     return { ok: true, json: async () => ({}) };

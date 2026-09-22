@@ -172,10 +172,36 @@ export async function persistHiddenRows(config, rowIds, fetchImpl = fetch, now =
       {
         method: 'PATCH',
         headers: supabaseHeaders(config, { 'Content-Type': 'application/json', Prefer: 'return=representation' }),
-        body: JSON.stringify({ review_decision: 'hidden', reviewed_by: config.actor, reviewed_at: new Date(now).toISOString() }),
+        body: JSON.stringify({
+          review_decision: 'hidden',
+          reviewed_by: config.actor,
+          reviewed_at: new Date(now).toISOString(),
+          hidden_confirmed: true,
+          hidden_confirmed_at: new Date(now).toISOString(),
+        }),
       },
     );
     if (!response.ok) throw new Error(`Supabase moderation audit update failed (${response.status})`);
+    const rows = await response.json().catch(() => []);
+    updated += Array.isArray(rows) ? rows.length : 0;
+  }
+  return updated;
+}
+
+// 감사/자가치유에서 사람의 hide/complete/keep 감사값은 보존하고 플랫폼 확인값만 갱신한다.
+export async function persistHiddenConfirmation(config, rowIds, fetchImpl = fetch, now = Date.now()) {
+  if (!rowIds.length) return 0;
+  let updated = 0;
+  for (const batch of chunk(rowIds, 100)) {
+    const response = await fetchImpl(
+      `${config.supabaseUrl}/rest/v1/negative_comment_alerts?id=in.(${encodeURIComponent(encodedIdList(batch))})&source=eq.tiktok_ads`,
+      {
+        method: 'PATCH',
+        headers: supabaseHeaders(config, { 'Content-Type': 'application/json', Prefer: 'return=representation' }),
+        body: JSON.stringify({ hidden_confirmed: true, hidden_confirmed_at: new Date(now).toISOString() }),
+      },
+    );
+    if (!response.ok) throw new Error(`Supabase moderation confirmation update failed (${response.status})`);
     const rows = await response.json().catch(() => []);
     updated += Array.isArray(rows) ? rows.length : 0;
   }
@@ -360,6 +386,7 @@ export async function bulkHideTikTokAlerts(config = loadTikTokBulkHideConfig(), 
     if (!config.dryRun && result.repairedVisible) {
       const repaired = new Set(repairableVisibleIds.filter((id) => verified.hiddenIds.includes(id)));
       const rows = [...repaired].flatMap((cid) => byComment.get(cid) || []);
+      result.dbUpdated = await persistHiddenConfirmation(config, rows.map((row) => row.id), fetchImpl, now);
       result.slack = await syncHiddenTikTokSlackCards(config, rows, scopedMessages, fetchImpl, sleep, now);
     }
     return result;

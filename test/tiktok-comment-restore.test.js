@@ -36,6 +36,7 @@ test('TikTok 공개 복원은 PUBLIC/BIDDING 성공을 재확인하고 DB 결정
   const fetchImpl = async (input, init = {}) => {
     const url = String(input);
     calls.push({ url, init });
+    if (url.includes('/rest/v1/negative_comment_alerts') && init.method === 'PATCH') return response(204);
     if (url.includes('/rest/v1/negative_comment_alerts')) return response(200, [{
       id: 895, source: 'tiktok_ads', comment_id: 'comment-1', review_decision: 'false_positive', reviewed_by: 'user-keep',
       slack_channel_id: 'C1', slack_ts: '1.2', post_url: 'https://tiktok.test/video/1', comment_text: '비교 댓글',
@@ -52,7 +53,8 @@ test('TikTok 공개 복원은 PUBLIC/BIDDING 성공을 재확인하고 DB 결정
   });
   assert.equal(result.restored, true);
   assert.equal(result.databaseDecisionPreserved, 'false_positive');
-  assert.equal(calls.some((call) => call.init.method === 'PATCH'), false);
+  const statePatch = calls.find((call) => call.init.method === 'PATCH');
+  assert.deepEqual(JSON.parse(statePatch.init.body), { hidden_confirmed: false, hidden_confirmed_at: null });
   assert.equal(JSON.stringify(result).includes('comment-1'), false);
 });
 

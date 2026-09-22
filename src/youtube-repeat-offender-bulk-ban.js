@@ -110,6 +110,8 @@ async function persistAuthorBanned(config, alertIds, fetchImpl, now) {
         review_decision: 'author_banned',
         reviewed_by: config.actor,
         reviewed_at: new Date(now).toISOString(),
+        hidden_confirmed: true,
+        hidden_confirmed_at: new Date(now).toISOString(),
       }),
     },
   );

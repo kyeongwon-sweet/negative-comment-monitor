@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FALSE_POSITIVE_REASONS, falsePositiveStats, loadFalsePositives, recordFalsePositive } from '../src/review.js';
+import { FALSE_POSITIVE_REASONS, falsePositiveStats, loadFalsePositives, recordFalsePositive, recordReviewDecision } from '../src/review.js';
 
 const CFG = { supabaseUrl: 'https://db.example', supabaseKey: 'svc' };
 
@@ -62,6 +62,21 @@ test('recordFalsePositive: 주어지지 않은 필드는 덮어쓰지 않음(사
 test('recordFalsePositive: 실패해도 예외 없이 false(버튼 UX 유지)', async () => {
   assert.equal(await recordFalsePositive(CFG, { fingerprint: 'x' }, async () => ({ ok: false })), false);
   assert.equal(await recordFalsePositive(CFG, { fingerprint: 'x' }, async () => { throw new Error('x'); }), false);
+});
+
+test('recordReviewDecision: 숨김 실행 결과와 분리해 사람 결정만 기록한다', async () => {
+  let body;
+  const ok = await recordReviewDecision(CFG, {
+    slackChannelId: 'C1', slackTs: '2.3', decision: 'manual_hide_required', reviewedBy: 'U1', now: 0,
+  }, async (url, options) => {
+    assert.match(String(url), /slack_channel_id=eq\.C1/);
+    body = JSON.parse(options.body);
+    return { ok: true };
+  });
+  assert.equal(ok, true);
+  assert.equal(body.review_decision, 'manual_hide_required');
+  assert.equal(body.reviewed_by, 'U1');
+  assert.equal('hidden_confirmed' in body, false);
 });
 
 test('falsePositiveStats: classifier_hash별 오탐률(#8)', async () => {

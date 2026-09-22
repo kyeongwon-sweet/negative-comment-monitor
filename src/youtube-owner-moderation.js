@@ -122,7 +122,7 @@ export async function loadYouTubeOwnerAlerts(config, fetchImpl = fetch) {
   const rows = [];
   for (let offset = 0; ; offset += 1000) {
     let pathname = 'negative_comment_alerts'
-      + '?select=id,source,platform,comment_id,comment_text,post_url,review_decision,reviewed_by,reviewed_at,slack_channel_id,slack_ts'
+      + '?select=id,source,platform,comment_id,comment_text,post_url,review_decision,reviewed_by,reviewed_at,hidden_confirmed,hidden_confirmed_at,slack_channel_id,slack_ts'
       + alertSourceQuery(config)
       + '&order=alerted_at.asc'
       + `&offset=${offset}&limit=1000`;
@@ -233,7 +233,7 @@ const KEEP_REVIEW_DECISIONS = new Set([
 function alertDisposition(alert, { singleAlert = false, autoHideAllNegatives = false } = {}) {
   const decision = String(alert.review_decision || '').trim().toLowerCase();
   // author_banned = 작성자 밴으로 이미 플랫폼에서 숨겨진 종결 상태 → 재처리 대상 아님.
-  if (decision === 'hidden' || decision === 'author_banned') return 'hidden';
+  if (alert.hidden_confirmed === true || decision === 'hidden' || decision === 'author_banned') return 'hidden';
   // 인지 광고 상시 자동 숨김은 [완료]로 카드가 정리된 댓글도 실제 플랫폼에서 숨긴다.
   // persistHiddenRows는 사람의 결정/행위자를 덮지 않으므로 감사 이력은 그대로 남는다.
   if (autoHideAllNegatives && ['complete', 'hide'].includes(decision)) return 'eligible';
@@ -503,11 +503,27 @@ export async function persistHiddenRows(config, alerts, fetchImpl = fetch, now =
   const unreviewed = alerts
     .filter((alert) => !alert.review_decision && !alert.reviewed_by && !alert.reviewed_at)
     .map((alert) => alert.id);
-  return patchRows(config, unreviewed, {
-    review_decision: 'hidden',
-    reviewed_by: config.actor,
-    reviewed_at: new Date(now).toISOString(),
-  }, fetchImpl);
+  const reviewed = alerts
+    .filter((alert) => alert.review_decision || alert.reviewed_by || alert.reviewed_at)
+    .map((alert) => alert.id);
+  const confirmedAt = new Date(now).toISOString();
+  let confirmed = 0;
+  if (unreviewed.length) {
+    confirmed += await patchRows(config, unreviewed, {
+      review_decision: 'hidden',
+      reviewed_by: config.actor,
+      reviewed_at: confirmedAt,
+      hidden_confirmed: true,
+      hidden_confirmed_at: confirmedAt,
+    }, fetchImpl);
+  }
+  if (reviewed.length) {
+    confirmed += await patchRows(config, reviewed, {
+      hidden_confirmed: true,
+      hidden_confirmed_at: confirmedAt,
+    }, fetchImpl);
+  }
+  return confirmed;
 }
 
 export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModerationConfig(), fetchImpl = fetch, now = Date.now()) {

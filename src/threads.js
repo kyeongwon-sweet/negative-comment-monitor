@@ -79,9 +79,14 @@ export async function markCompletedThreads(config, kstDate, emoji = '완료느�
       const replies = msgs.filter((m) => m.ts !== ts);
       // 답글을 다 못 받아왔으면(reply_count > 조회된 답글) 처리 여부 확인 불가 → 보수적으로 스킵(오반응 방지).
       if (Number(parent.reply_count || 0) > replies.length) continue;
-      // 미처리 카드 = 버튼(actions 블록)이 남아있는 답글. 완료·숨김(삭제)·무시·메타숨김(버튼 제거)은 모두 처리됨.
-      // 미처리 카드가 하나도 없으면 = 그 날짜×분류 부정댓글 전부 처리 → 부모에 완료 이모지.
-      const unhandled = replies.filter((m) => Array.isArray(m.blocks) && m.blocks.some((b) => b.type === 'actions'));
+      // 미처리 카드 = 버튼이 남아있거나, 숨김 결정 뒤 실제 플랫폼 확인을 기다리거나,
+      // API 불가로 수동 숨김이 필요한 카드. hide 결정만으로 완료 반응을 붙이지 않는다.
+      const unhandled = replies.filter((m) => {
+        if (!Array.isArray(m.blocks)) return false;
+        if (m.blocks.some((b) => b.type === 'actions')) return true;
+        const rendered = `${m.text || ''} ${JSON.stringify(m.blocks)}`;
+        return rendered.includes('플랫폼 확인 대기') || rendered.includes('수동 숨김 필요');
+      });
       if (unhandled.length > 0) continue;
       const add = await fetchImpl('https://slack.com/api/reactions.add', {
         method: 'POST',

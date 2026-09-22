@@ -36,9 +36,9 @@ function fixtureFetch({ live = false } = {}) {
     if (url.includes('/rest/v1/negative_comment_alerts')) {
       if (init.method === 'PATCH') throw new Error('audit must not mutate review decisions');
       return response(200, [
-        { id: 1, comment_id: 'rejectedA', post_url: 'https://youtube.com/watch?v=videoA1', review_decision: 'hidden' },
-        { id: 2, comment_id: 'visibleA', post_url: 'https://youtube.com/watch?v=videoA1', review_decision: 'complete', reviewed_by: 'U1' },
-        { id: 3, comment_id: 'missingA', post_url: 'https://youtube.com/watch?v=videoA1', review_decision: 'hide', reviewed_by: 'U2' },
+        { id: 1, comment_id: 'rejectedA', post_url: 'https://youtube.com/watch?v=videoA1', review_decision: 'hidden', hidden_confirmed: true },
+        { id: 2, comment_id: 'visibleA', post_url: 'https://youtube.com/watch?v=videoA1', review_decision: 'complete', reviewed_by: 'U1', hidden_confirmed: true },
+        { id: 3, comment_id: 'missingA', post_url: 'https://youtube.com/watch?v=videoA1', review_decision: 'hide', reviewed_by: 'U2', hidden_confirmed: false },
         { id: 4, comment_id: 'ignoredA', post_url: 'https://youtube.com/watch?v=videoA1', review_decision: 'false_positive', reviewed_by: 'U3' },
       ]);
     }
@@ -85,11 +85,11 @@ test('YouTube hidden audit 설정은 라이브 복구 확인문구를 요구한�
 test('YouTube hidden audit dry-run은 rejected/공개/누락을 전수 집계하고 쓰지 않는다', async () => {
   const { fetchImpl, calls } = fixtureFetch();
   const result = await auditHiddenYouTubeOwnerAlerts(CFG, fetchImpl);
-  assert.equal(result.expectedHiddenRows, 3);
-  assert.equal(result.uniqueComments, 3);
+  assert.equal(result.expectedHiddenRows, 2);
+  assert.equal(result.uniqueComments, 2);
   assert.equal(result.rejected, 1);
   assert.equal(result.visible, 1);
-  assert.equal(result.missing, 1);
+  assert.equal(result.missing, 0);
   assert.equal(result.repairAttempted, 0);
   assert.equal(result.remainingVisible, 1);
   assert.equal(calls.some((call) => call.init.method === 'POST' && call.url.includes('setModerationStatus')), false);

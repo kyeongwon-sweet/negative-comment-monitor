@@ -118,6 +118,7 @@ test('bulkHideTikTokAlerts: 라이브 감사는 실제 공개 댓글만 재숨�
   const statusUpdates = [];
   let verification = 0;
   let patches = 0;
+  let patchBody;
   const fetchImpl = async (u, opts = {}) => {
     if (/conversations\.replies/.test(String(u))) return slackScope();
     if (/review_decision,reviewed_by/.test(String(u))) return { ok: true, json: async () => [
@@ -131,7 +132,8 @@ test('bulkHideTikTokAlerts: 라이브 감사는 실제 공개 댓글만 재숨�
     }
     if (/negative_comment_alerts\?id=in/.test(String(u)) && opts.method === 'PATCH') {
       patches += 1;
-      return { ok: true, json: async () => [] };
+      patchBody = JSON.parse(opts.body);
+      return { ok: true, json: async () => [{ id: 2 }] };
     }
     if (/chat\.update/.test(String(u))) return { ok: true, json: async () => ({ ok: true }) };
     throw new Error('unexpected ' + u);
@@ -154,8 +156,9 @@ test('bulkHideTikTokAlerts: 라이브 감사는 실제 공개 댓글만 재숨�
   assert.equal(result.repairBlockedByDecision, 1);
   assert.equal(result.repairedVisible, 1);
   assert.equal(result.repairStillVisible, 0);
-  assert.equal(result.dbUpdated, 0);
-  assert.equal(patches, 0);
+  assert.equal(result.dbUpdated, 1);
+  assert.equal(patches, 1);
+  assert.deepEqual(Object.keys(patchBody).sort(), ['hidden_confirmed', 'hidden_confirmed_at']);
   assert.equal(result.failed.length, 0);
   assert.equal(JSON.stringify(result).includes('visible-hidden'), false);
 });

@@ -69,12 +69,29 @@ test('[완료] → GAS 갱신 후 답글 삭제(chat.delete), update 안 함', a
   assert.equal(calls.some((u) => /chat\.update/.test(u)), false, 'update는 안 함');
 });
 
-test('[숨김] → 답글 삭제', async () => {
-  const payload = { user: { id: 'U1' }, channel: { id: 'C1' }, message: { ts: '9.9', blocks: [] }, actions: [{ action_id: 'hide', value: '{}' }] };
+test('[숨김] → 실제 플랫폼 확인 전 카드를 삭제하지 않고 확인대기로 남김', async () => {
+  const payload = { user: { id: 'U1' }, channel: { id: 'C1' }, message: { ts: '9.9', blocks: [] }, actions: [{ action_id: 'hide', value: JSON.stringify({ source: 'youtube_ads', platform: 'youtube' }) }] };
   const calls = [];
   const fetchImpl = async (url) => { calls.push(String(url)); return new Response(JSON.stringify({ ok: true, ts: '9.9' })); };
   await handleSlackInteraction(REVIEW_CFG, signedRequest(payload), fetchImpl, 1000 * 1000);
-  assert.ok(calls.some((u) => /chat\.delete/.test(u)));
+  assert.equal(calls.some((u) => /chat\.delete/.test(u)), false);
+  assert.ok(calls.some((u) => /chat\.update/.test(u)));
+});
+
+test('유기 TikTok [수동 숨김 필요]은 GAS hide를 호출하지 않고 DB에 미실행 상태를 기록', async () => {
+  const payload = { user: { id: 'U1' }, channel: { id: 'C1' }, message: { ts: '8.8', blocks: [{ type: 'section' }, { type: 'actions' }] }, actions: [{ action_id: 'manual_hide_required', value: JSON.stringify({ source: '', platform: 'tiktok', channelCategory: '위성채널' }) }] };
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (/negative_comment_alerts/.test(String(url))) return { ok: true };
+    return new Response(JSON.stringify({ ok: true, ts: '8.8' }));
+  };
+  const response = await handleSlackInteraction(REVIEW_CFG, signedRequest(payload), fetchImpl, 1000 * 1000);
+  assert.equal(response.status, 200);
+  assert.equal(calls.some((call) => /\/gas/.test(call.url)), false);
+  const db = calls.find((call) => /negative_comment_alerts/.test(call.url));
+  assert.equal(JSON.parse(db.options.body).review_decision, 'manual_hide_required');
+  assert.ok(calls.some((call) => /chat\.update/.test(call.url)));
 });
 
 test('[보류] → 삭제하지 않고 메시지 업데이트 유지', async () => {

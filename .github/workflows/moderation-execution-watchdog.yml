@@ -1,0 +1,59 @@
+name: Moderation execution watchdog
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 3시간마다 확인하되 cost_usage_ledger 멱등키로 상품×카테고리×플랫폼별 하루 1회만 알린다.
+    - cron: '37 0,3,6,9,12,15,18,21 * * *'
+
+concurrency:
+  group: moderation-execution-watchdog
+  cancel-in-progress: false
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts
+      - name: Alert unresolved moderation execution
+        run: npm run watch:moderation-execution
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_WORKSPACE_HOST: lalasweethq.slack.com
+          MANAGED_CHANNEL_CATEGORIES: ${{ vars.MANAGED_CHANNEL_CATEGORIES }}
+          SLACK_ROUTING_EFFECTIVE_DATE_KST: ${{ vars.SLACK_ROUTING_EFFECTIVE_DATE_KST }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_SATELLITE: ${{ vars.SLACK_ASSIGNEE_SATELLITE }}
+          SLACK_ASSIGNEE_VIRAL_BANNER: ${{ vars.SLACK_ASSIGNEE_VIRAL_BANNER }}
+          SLACK_ASSIGNEE_VIRAL_VIDEO_OWNED: ${{ vars.SLACK_ASSIGNEE_VIRAL_VIDEO_OWNED }}
+          SLACK_ASSIGNEE_OWNED: ${{ vars.SLACK_ASSIGNEE_OWNED }}
+          SLACK_ASSIGNEE_AWARENESS: ${{ vars.SLACK_ASSIGNEE_AWARENESS }}
+          SLACK_ASSIGNEE_AWARENESS_NEXT: ${{ vars.SLACK_ASSIGNEE_AWARENESS_NEXT }}
+          SLACK_ASSIGNEE_SPONSORSHIP: ${{ vars.SLACK_ASSIGNEE_SPONSORSHIP }}
+          SLACK_ASSIGNEE_JDBOK: ${{ vars.SLACK_ASSIGNEE_JDBOK }}
+          SLACK_ASSIGNEE_JD_POWER_CHANNEL: ${{ vars.SLACK_ASSIGNEE_JD_POWER_CHANNEL }}
+          SLACK_ASSIGNEE_JD_SPONSORSHIP: ${{ vars.SLACK_ASSIGNEE_JD_SPONSORSHIP }}
+          SLACK_ASSIGNEE_JD_SPONSORSHIP_NEXT: ${{ vars.SLACK_ASSIGNEE_JD_SPONSORSHIP_NEXT }}
+          SLACK_ASSIGNEE_JD_VIRAL_BANNER: ${{ vars.SLACK_ASSIGNEE_JD_VIRAL_BANNER }}
+          SLACK_ASSIGNEE_JD_VIRAL_BANNER_NEXT: ${{ vars.SLACK_ASSIGNEE_JD_VIRAL_BANNER_NEXT }}
+          SLACK_ASSIGNEE_JD_VIRAL_VIDEO: ${{ vars.SLACK_ASSIGNEE_JD_VIRAL_VIDEO }}
+          SLACK_ASSIGNEE_JD_VIRAL_VIDEO_NEXT: ${{ vars.SLACK_ASSIGNEE_JD_VIRAL_VIDEO_NEXT }}
+          SLACK_ASSIGNEE_JD_SATELLITE: ${{ vars.SLACK_ASSIGNEE_JD_SATELLITE }}
+          SLACK_ASSIGNEE_JD_SATELLITE_NEXT: ${{ vars.SLACK_ASSIGNEE_JD_SATELLITE_NEXT }}
+          SLACK_ASSIGNEE_P_AWARENESS: ${{ vars.SLACK_ASSIGNEE_P_AWARENESS }}
+          SLACK_ASSIGNEE_P_POWER_CHANNEL: ${{ vars.SLACK_ASSIGNEE_P_POWER_CHANNEL }}
+          SLACK_ASSIGNEE_P_SPONSORSHIP: ${{ vars.SLACK_ASSIGNEE_P_SPONSORSHIP }}
+          SLACK_ASSIGNEE_P_VIRAL_BANNER: ${{ vars.SLACK_ASSIGNEE_P_VIRAL_BANNER }}
+          SLACK_ASSIGNEE_P_VIRAL_VIDEO: ${{ vars.SLACK_ASSIGNEE_P_VIRAL_VIDEO }}
+          SLACK_ASSIGNEE_JG_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JG_PRIMARY }}
+          SLACK_ASSIGNEE_JG_ADDITIONAL: ${{ vars.SLACK_ASSIGNEE_JG_ADDITIONAL }}

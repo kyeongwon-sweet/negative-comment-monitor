@@ -17,12 +17,14 @@ const assignees = {
   jg: { primary: 'U_JG', additional: ['U_JG_2', 'U_JG_3', 'U_JG_4'] },
 };
 
-test('owned media and satellite channels get moderation buttons', () => {
-  assert.deepEqual(actionDefinitions({ channelCategory: '온드미디어' }).map((item) => item[1]), ['hide', 'approve', 'hold', 'unhide']);
-  assert.deepEqual(actionDefinitions({ channelCategory: '위성채널_빙과' }).map((item) => item[1]), ['hide', 'approve', 'hold', 'unhide']);
+test('owned YouTube gets API buttons, organic TikTok gets manual-hide state', () => {
+  assert.deepEqual(actionDefinitions({ platform: 'youtube', channelCategory: '온드미디어' }).map((item) => item[1]), ['hide', 'approve', 'hold', 'unhide']);
+  assert.deepEqual(actionDefinitions({ platform: 'youtube', channelCategory: '위성채널_빙과' }).map((item) => item[1]), ['hide', 'approve', 'hold', 'unhide']);
+  assert.deepEqual(actionDefinitions({ platform: 'tiktok', channelCategory: '위성채널_빙과' }).map((item) => item[1]), ['manual_hide_required', 'hold', 'ignore']);
 });
 test('external channels only get complete and ignore buttons', () => {
   assert.deepEqual(actionDefinitions({ channelCategory: '유상협찬' }).map((item) => item[1]), ['complete', 'ignore']);
+  assert.deepEqual(actionDefinitions({ source: 'tiktok_ads', channelCategory: '협찬 (파워채널)' }).map((item) => item[1]), ['complete', 'ignore']);
 });
 test('Meta ad alerts expose only human hide and ignore actions', () => {
   assert.deepEqual(actionDefinitions({ source: 'meta_ads', channelCategory: '인지 광고' }).map((item) => item[1]), ['hide', 'ignore']);

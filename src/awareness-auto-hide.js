@@ -24,14 +24,14 @@ export async function loadActionableAwarenessAlerts(
   { includeHumanDecisions = false } = {},
 ) {
   const url = `${config.supabaseUrl}/rest/v1/negative_comment_alerts`
-    + '?select=id,comment_id,comment_text,post_url,meta_ad_id,review_decision,reviewed_by,reviewed_at,slack_channel_id,slack_ts'
+    + '?select=id,comment_id,comment_text,post_url,meta_ad_id,review_decision,reviewed_by,reviewed_at,hidden_confirmed,hidden_confirmed_at,slack_channel_id,slack_ts'
     + `&source=eq.${encodeURIComponent(source)}&comment_id=not.is.null&order=id.asc&limit=2000`;
   const response = await fetchImpl(url, { headers: headers(config) });
   if (!response.ok) throw new Error(`Awareness alert lookup failed (${response.status})`);
   const rows = await response.json();
   return rows.filter((row) => {
     const decision = String(row.review_decision || '').trim().toLowerCase();
-    if (KEEP_DECISIONS.has(decision) || decision === 'hidden') return false;
+    if (row.hidden_confirmed === true || KEEP_DECISIONS.has(decision) || decision === 'hidden') return false;
     // 상시 자동 처리에서는 아직 사람이 누르지 않은 새 카드만 대상으로 삼는다.
     // 일회성 백로그 정리만 hide/complete를 다시 API에 보내 실제 숨김을 수렴시킨다.
     if (decision) return includeHumanDecisions && ['hide', 'complete'].includes(decision);
@@ -100,6 +100,8 @@ async function persistAutoHidden(config, source, rows, fetchImpl, now) {
           review_decision: 'hidden',
           reviewed_by: `${source}-auto-hide`,
           reviewed_at: new Date(now).toISOString(),
+          hidden_confirmed: true,
+          hidden_confirmed_at: new Date(now).toISOString(),
         }),
       },
     );

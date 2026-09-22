@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { loadYouTubeAdAlerts, loadYouTubeOwnerModerationConfig } from './youtube-owner-moderation.js';
 import { syncHiddenYouTubeSlackCards } from './youtube-hidden-slack.js';
+import { isHiddenConfirmed } from './moderation-state.js';
 
 export const YOUTUBE_HIDDEN_SLACK_SYNC_CONFIRMATION = 'SYNC_ALL_HIDDEN_YOUTUBE_CARDS';
 
@@ -11,7 +12,7 @@ export async function runHiddenYouTubeSlackSync(config = loadYouTubeOwnerModerat
     throw new Error(`Slack sync requires YOUTUBE_HIDDEN_SLACK_SYNC_CONFIRM=${YOUTUBE_HIDDEN_SLACK_SYNC_CONFIRMATION}`);
   }
   const rows = (await loadYouTubeAdAlerts(config, fetchImpl))
-    .filter((row) => row.review_decision === 'hidden' || row.review_decision === 'author_banned');
+    .filter(isHiddenConfirmed);
   const result = await syncHiddenYouTubeSlackCards(config, rows, fetchImpl);
   return { hiddenRows: rows.length, ...result };
 }

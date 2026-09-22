@@ -10,6 +10,8 @@ const PLATFORM_LABELS = {
 
 const REVIEW_LABELS = {
   hidden: '숨김완료',
+  hide: '숨김요청(확인대기)',
+  manual_hide_required: '수동숨김필요',
   false_positive: '오탐(무시)',
   ignore: '오탐(무시)',
   complete: '완료',
@@ -82,7 +84,9 @@ export function sheetRowFromAlert(row) {
     platform: PLATFORM_LABELS[platform] || clean(row.platform),
     channelName: clean(row.channel_name),
     assetName: clean(row.asset_name),
-    status: REVIEW_LABELS[clean(row.review_decision).toLowerCase()] || '미처리',
+    status: row.hidden_confirmed === true
+      ? '숨김완료'
+      : (REVIEW_LABELS[clean(row.review_decision).toLowerCase()] || '미처리'),
     detectedAtKst: formatKstSeconds(row.comment_timestamp || row.alerted_at),
     commentId: clean(row.comment_id),
     fingerprint: clean(row.fingerprint),
@@ -92,7 +96,7 @@ export function sheetRowFromAlert(row) {
 export async function loadPendingSheetAlerts(config, fetchImpl = fetch) {
   const select = [
     'id', 'fingerprint', 'platform', 'post_url', 'comment_id', 'comment_text', 'alerted_at',
-    'review_decision', 'category', 'reason', 'product_name', 'channel_category', 'channel_name',
+    'review_decision', 'hidden_confirmed', 'category', 'reason', 'product_name', 'channel_category', 'channel_name',
     'asset_name', 'comment_timestamp', 'sheet_sync_attempts',
   ].join(',');
   const url = new URL(`${config.supabaseUrl}/rest/v1/negative_comment_alerts`);

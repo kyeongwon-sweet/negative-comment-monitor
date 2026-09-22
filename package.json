@@ -24,6 +24,7 @@
     "oauth:youtube-satellite": "node scripts/youtube-satellite-owner-oauth.mjs",
     "oauth:youtube-satellite:submit": "node scripts/youtube-satellite-owner-oauth-submit.mjs",
     "sync:youtube-hidden-slack": "node src/youtube-hidden-slack-sync.js",
+    "watch:moderation-execution": "node src/moderation-execution-watchdog.js",
     "test": "node --test"
   },
   "engines": {

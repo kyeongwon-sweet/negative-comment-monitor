@@ -11,9 +11,9 @@ import {
   rejectCommentsIsolated,
   YOUTUBE_OWNER_ALERT_SCOPES,
 } from './youtube-owner-moderation.js';
+import { isHiddenConfirmed } from './moderation-state.js';
 
 export const YOUTUBE_HIDDEN_AUDIT_CONFIRMATION = 'REHIDE_VISIBLE_YOUTUBE_AD_ALERTS';
-const EXPECTED_HIDDEN_DECISIONS = new Set(['hidden', 'hide', 'complete', 'author_banned']);
 
 function required(env, name) {
   const value = String(env[name] || '').trim();
@@ -54,7 +54,7 @@ function videoIdFromAlert(alert) {
 }
 
 function expectedHidden(alert) {
-  return EXPECTED_HIDDEN_DECISIONS.has(String(alert.review_decision || '').trim().toLowerCase());
+  return isHiddenConfirmed(alert);
 }
 
 async function loadAuditAlerts(config, fetchImpl) {

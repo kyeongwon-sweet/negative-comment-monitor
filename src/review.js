@@ -25,6 +25,31 @@ export function reviewEnabled(config) {
   return Boolean(config && config.supabaseUrl && config.supabaseKey);
 }
 
+// 댓글 원문 없이 Slack 카드 키로 사람의 결정을 기록한다. 플랫폼 실행 결과는
+// hidden_confirmed 계열 컬럼에 별도로 기록하므로 이 함수는 절대 숨김 성공을 주장하지 않는다.
+export async function recordReviewDecision(config, params, fetchImpl = fetch) {
+  if (!reviewEnabled(config)) return false;
+  const { slackChannelId, slackTs, decision, reviewedBy, now = Date.now() } = params;
+  if (!slackChannelId || !slackTs || !decision) return false;
+  const filter = `slack_channel_id=eq.${encodeURIComponent(slackChannelId)}`
+    + `&slack_ts=eq.${encodeURIComponent(slackTs)}`;
+  const patch = {
+    review_decision: String(decision),
+    reviewed_at: new Date(now).toISOString(),
+  };
+  if (reviewedBy) patch.reviewed_by = reviewedBy;
+  try {
+    const res = await fetchImpl(`${config.supabaseUrl}/rest/v1/negative_comment_alerts?${filter}`, {
+      method: 'PATCH',
+      headers: headers(config, { 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
+      body: JSON.stringify(patch),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 // 오탐으로 표시된 지문 Set. best-effort(실패=빈 Set → 억제 안 함; 재알림은 dedup가 막음).
 export async function loadFalsePositives(config, fingerprints, fetchImpl = fetch) {
   const set = new Set();
