@@ -258,8 +258,10 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
         if (!risk || risk.engine !== 'llm' || risk.alert === true) return;
         const comment = comments[index];
         if (!comment) return;
-        // 댓글 본문이 라라스윗/쫀득바 등 브랜드·제품을 직접 언급한 경우만 승격 대상(고신호 협소화).
-        if (findEntityContext(comment, entries[e].target).commentMatches.length === 0) return;
+        // 소유채널 미탐은 대부분 우리 브랜드명을 안 부르는 미묘 부정(경쟁제품 우위·짝퉁, 광고 냉소·피로,
+        // "알고리즘에서 나가"류)이다. 브랜드 본문언급 여부와 무관하게, 이 회차 LLM '정상'이 된 소유댓글은
+        // 전부 강한 모델로 2차 판정한다. 하드넷(engine!=='llm')·캐시 히트·기알림은 위에서 이미 제외돼
+        // 대상은 'LLM이 정상이라 흘린 소유 delta 댓글'로 한정 → 강한 모델(무료 티어) 호출량 bounded.
         escRefs.push({ entry: e, index, comment });
       });
     }
@@ -286,7 +288,7 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
           const promoted = {
             alert: true,
             category: verdict.category && verdict.category !== '정상댓글' ? verdict.category : '브랜드 적대/조롱',
-            reason: String(verdict.reason || '브랜드 지목 부정(강한 모델 승격)'),
+            reason: String(verdict.reason || '소유채널 부정(강한 모델 승격)'),
             priority: verdict.priority || 'high',
             entity: { matched: true },
             engine: 'llm-strong-owned',

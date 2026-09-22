@@ -171,6 +171,42 @@ test('미탐 스윕 반영: 소유 채널에서 봇이 놓쳤던 저신호 부�
   assert.equal(positive.alert, false);
 });
 
+test('ljeeeReiq1k 재발방지: 소유채널은 브랜드 미언급이어도 LLM 정상건을 강한 모델로 2차 승격', async () => {
+  // 1차(약한 모델)=정상, 2차(강한 모델)=부정으로 단계별 응답하는 목.
+  let call = 0;
+  const staged = async (items) => {
+    call += 1;
+    return items.map(() => (call === 1
+      ? { alert: false, category: '정상댓글', reason: '', priority: 'normal' }
+      : { alert: true, category: '광고 냉소/피로', reason: '광고 피로', priority: 'high' }));
+  };
+  // 브랜드/제품명을 안 부르고 하드넷에도 안 걸리는 미묘 부정(실제 미탐 유형).
+  const [risk] = await classifyCommentsHybrid(
+    [{ text: '이거 어디서 살 수 있는지 궁금하긴 하네요' }],
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true, fullContextReview: true },
+    { anthropicKey: 'key', ownedBrandEscalationModel: 'claude-strong' },
+    staged,
+  );
+  assert.equal(risk.alert, true, '브랜드 미언급 소유댓글도 강한 모델 승격 대상이어야 함');
+  assert.equal(risk.engine, 'llm-strong-owned');
+
+  // 비소유(제3자) 스코프는 승격하지 않는다(고volume 오탐·비용 방지).
+  let call2 = 0;
+  const staged2 = async (items) => {
+    call2 += 1;
+    return items.map(() => (call2 === 1
+      ? { alert: false, category: '정상댓글', reason: '', priority: 'normal' }
+      : { alert: true, category: 'x', reason: 'y', priority: 'high' }));
+  };
+  const [nonScoped] = await classifyCommentsHybrid(
+    [{ text: '이거 어디서 살 수 있는지 궁금하긴 하네요' }],
+    { brandName: '라라스윗', fullContextReview: true },
+    { anthropicKey: 'key', ownedBrandEscalationModel: 'claude-strong' },
+    staged2,
+  );
+  assert.equal(nonScoped.alert, false, '비소유 스코프는 강한 모델 승격 대상이 아니어야 함');
+});
+
 test('pCRMnMYe3y8 회귀: 제품 폄하·AI 광고 거부와 운영 지정 경쟁품 우위 표현을 잡는다', async () => {
   const normalLlm = async (items) => items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' }));
   const missed = [
@@ -224,17 +260,20 @@ test('pCRMnMYe3y8 회귀: 제품 폄하·AI 광고 거부와 운영 지정 경�
   assert.equal(llmAlert.engine, 'keyword-hard-owned');
 });
 
-test('A안 소유채널 브랜드 지목 승격: 약한 1차가 정상이어도 강한 모델이 부정으로 승격한다', async () => {
+test('소유채널 승격(협소화 제거): 브랜드 언급 여부와 무관하게 LLM 정상건을 전부 강한 모델로 재판정', async () => {
+  // 2026-09-22 ljeeeReiq1k 재발방지: 옛 A안은 본문에 브랜드/제품명이 있어야만 승격했는데,
+  // 실제 미탐 대부분은 브랜드명을 안 부르는 경쟁제품 우위·광고 냉소류였다. 이제 소유 스코프의
+  // '이번 회차 LLM 정상' 건은 브랜드 미언급이어도 전부 강한 모델 2차 판정 대상이다.
   const comments = [
-    { text: '라라스윗 나본적도 없는데?', id: 'c1' }, // 브랜드 직접 언급 → 승격 대상
-    { text: '오늘 날씨 참 좋네요', id: 'c2' },        // 브랜드 미언급 → 승격 제외
+    { text: '라라스윗 나본적도 없는데?', id: 'c1' }, // 브랜드 언급
+    { text: '오늘 날씨 참 좋네요', id: 'c2' },        // 브랜드 미언급 — 이제도 승격 후보
   ];
   const calls = [];
   const llmClassifier = async (items, cfg) => {
     calls.push({ provider: cfg.llmProvider, anthropicModel: cfg.anthropicModel, n: items.length });
     // 강한 모델(승격) 호출이면 부정으로, 약한 1차 호출이면 전부 정상으로 응답한다.
     if (cfg.anthropicModel === 'claude-strong-test') {
-      return items.map(() => ({ alert: true, category: '브랜드 적대/조롱', reason: '브랜드 비하', priority: 'high' }));
+      return items.map(() => ({ alert: true, category: '브랜드 적대/조롱', reason: '소유채널 부정', priority: 'high' }));
     }
     return items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' }));
   };
@@ -245,11 +284,12 @@ test('A안 소유채널 브랜드 지목 승격: 약한 1차가 정상이어도 
   );
   assert.equal(results[0].alert, true, '브랜드 언급 댓글은 승격돼야 한다');
   assert.equal(results[0].engine, 'llm-strong-owned');
-  assert.equal(results[1].alert, false, '브랜드 미언급 댓글은 승격 대상이 아니다');
-  // 강한 모델은 브랜드 언급 1건만 대상으로 호출된다(고신호 협소화).
+  assert.equal(results[1].alert, true, '브랜드 미언급 소유댓글도 이제 승격 대상이어야 한다');
+  assert.equal(results[1].engine, 'llm-strong-owned');
+  // 강한 모델은 소유 스코프 LLM 정상건 2개 모두를 대상으로 호출된다(협소화 제거).
   const strongCall = calls.find((c) => c.anthropicModel === 'claude-strong-test');
   assert.ok(strongCall, '강한 모델 승격 호출이 있어야 한다');
-  assert.equal(strongCall.n, 1);
+  assert.equal(strongCall.n, 2);
 });
 
 test('A안 승격 비활성/미대상: 모델 미설정이면 승격하지 않고, 비소유 지면은 대상 아니다', async () => {
