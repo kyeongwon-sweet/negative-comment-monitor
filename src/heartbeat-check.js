@@ -1,5 +1,6 @@
 import { clearPlatformAlertClaim, recordPlatformOutcome } from './platform-health.js';
 import { fetchMonitorScanHeartbeats } from './monitor-scan-heartbeat.js';
+import { dispatchMonitor } from './monitor-dispatch.js';
 
 // 모니터 헬스체크(watchdog) — 별도 워크플로에서 하루 몇 번 실행.
 // "현재 운영일의 09:10 KST 이후 성공한 monitor 실행이 있었나"를 GitHub Actions API로 확인해,
@@ -170,26 +171,6 @@ async function postSlack(env, text, fetchImpl) {
   const payload = await res.json();
   if (!payload.ok) throw new Error(`Slack API: ${payload.error || 'unknown_error'}`);
   return payload;
-}
-
-async function dispatchMonitor(env, fetchImpl) {
-  const repo = String(env.GITHUB_REPOSITORY || '').trim();
-  const token = String(env.GH_TOKEN || env.GITHUB_TOKEN || '').trim();
-  const ref = String(env.GITHUB_REF_NAME || 'master').trim() || 'master';
-  if (!repo || !token) throw new Error('Missing GITHUB_REPOSITORY or token');
-  const url = `https://api.github.com/repos/${repo}/actions/workflows/monitor.yml/dispatches`;
-  const res = await fetchImpl(url, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${token}`,
-      accept: 'application/vnd.github+json',
-      'content-type': 'application/json',
-      'user-agent': 'ncm-heartbeat',
-    },
-    body: JSON.stringify({ ref }),
-  });
-  if (!res.ok) throw new Error(`GitHub dispatch API ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  return true;
 }
 
 function heartbeatStateConfig(env) {

@@ -9,6 +9,21 @@ on:
         required: false
         type: boolean
         default: false
+      monitor_chain:
+        description: Internal self-chain continuation (do not enable for an ordinary manual run)
+        required: false
+        type: boolean
+        default: false
+      monitor_chain_max_per_day:
+        description: Internal daily chain cap override (smoke tests only)
+        required: false
+        type: string
+        default: ''
+      monitor_chain_smoke:
+        description: Internal one-iteration chain smoke test
+        required: false
+        type: boolean
+        default: false
   schedule:
     # ⚠️ 아침 배치가 UTC 0시(=KST 09시) '데드존'에만 걸려 있으면 GitHub가 그 시각 크론을 대량
     # 드롭할 때 아침 스캔이 통째로 미발화한다(실측: 08-13 09시대 크론 4개 전부 드롭 → 인지 광고·
@@ -40,6 +55,7 @@ jobs:
     # 마지막 반복이 끝날 시간을 확보한다.
     timeout-minutes: 70
     permissions:
+      actions: write
       contents: read
     steps:
       - uses: actions/checkout@v5
@@ -55,13 +71,18 @@ jobs:
       - name: Run monitor coverage loop
         run: node src/monitor-loop.js
         env:
-          # 수동 실행은 즉시 1회, 예약 실행은 한 run 안에서 15분 간격 4회 확인한다.
+          # 수동 실행은 즉시 1회, 예약·self-chain 실행은 한 run 안에서 15분 간격 4회 확인한다.
           # 집중 게이트가 닫히면 조기 종료해 staggered floor run을 막지 않는다.
           # 의존성 설치와 npm start는 첫 full scan 직전에만 수행해 닫힌 게이트의 외부 호출을 막는다.
           MONITOR_TRIGGER_EVENT: ${{ github.event_name }}
           MONITOR_TRIGGER_SCHEDULE: ${{ github.event.schedule }}
-          MONITOR_LOOP_ITERATIONS: ${{ github.event_name == 'schedule' && '4' || '1' }}
+          MONITOR_CHAIN_RUN: ${{ inputs.monitor_chain && 'true' || 'false' }}
+          MONITOR_CHAIN_SMOKE: ${{ inputs.monitor_chain_smoke && 'true' || 'false' }}
+          MONITOR_CHAIN_ENABLED: ${{ (github.event_name == 'schedule' || inputs.monitor_chain) && 'true' || 'false' }}
+          MONITOR_CHAIN_MAX_PER_DAY: ${{ inputs.monitor_chain_max_per_day || vars.MONITOR_CHAIN_MAX_PER_DAY || '24' }}
+          MONITOR_LOOP_ITERATIONS: ${{ inputs.monitor_chain_smoke && '1' || ((github.event_name == 'schedule' || inputs.monitor_chain) && '4' || '1') }}
           MONITOR_LOOP_INTERVAL_MS: '900000'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GAS_WEB_APP_URL: ${{ secrets.GAS_WEB_APP_URL }}
           GAS_VERIFY_TOKEN: ${{ secrets.GAS_VERIFY_TOKEN }}
           APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN }}
@@ -149,13 +170,13 @@ jobs:
           META_ADS_POLL_LOOKBACK_HOURS: '72'
           META_ADS_POLL_MAX_PAGES: '3'
           META_ADS_POLL_CONCURRENCY: '8'
-          META_ADS_POLL_FORCE: ${{ github.event_name == 'workflow_dispatch' }}
+          META_ADS_POLL_FORCE: ${{ github.event_name == 'workflow_dispatch' && !inputs.monitor_chain }}
       - name: Process queued Meta Instagram ad comments
         # 인지 광고 부정댓글은 '아침 배치'로만 발송(부정댓글 관리 시간 정렬). 웹훅은 하루 종일 큐에 쌓임.
         # ⚠️ 특정 아침 크론(13,26,39,52)에만 걸면 GitHub이 그 크론을 드롭할 때 배치가 통째로 누락된다(실측 사고).
         # → always()로 모든 웨이크(주로 안정적인 */15)에서 실행하되, meta-ads-run.js가 KST 9시대에만 실제
         #   동작하도록 자체 게이트(inMorningWindow). 아침대 15분 웨이크 4회가 재시도 역할 = 자가치유.
-        #   workflow_dispatch는 META_ADS_FORCE로 시간 무관 강제 실행.
+        #   일반 workflow_dispatch만 META_ADS_FORCE로 시간 무관 강제 실행(self-chain은 정기 게이트 유지).
         if: ${{ always() }}
         run: node src/meta-ads-run.js
         env:
@@ -190,7 +211,7 @@ jobs:
           # 금지 — 앞뒤로 넓혀 실제 도는 웨이크(UTC 23/1/2)를 타게 한다. 수동 실행은 FORCE로 시간 무관.
           META_ADS_WINDOW_START: '8'
           META_ADS_WINDOW_END: '11'
-          META_ADS_FORCE: ${{ github.event_name == 'workflow_dispatch' }}
+          META_ADS_FORCE: ${{ github.event_name == 'workflow_dispatch' && !inputs.monitor_chain }}
           META_ADS_AUTO_HIDE: 'true'
           DRY_RUN: 'false'
       - name: Poll TikTok awareness ad comments
@@ -233,7 +254,7 @@ jobs:
           TIKTOK_ADS_REQUEST_DELAY_MS: '1000'
           TIKTOK_ADS_WINDOW_START: '8'
           TIKTOK_ADS_WINDOW_END: '11'
-          TIKTOK_ADS_FORCE: ${{ github.event_name == 'workflow_dispatch' }}
+          TIKTOK_ADS_FORCE: ${{ github.event_name == 'workflow_dispatch' && !inputs.monitor_chain }}
           TIKTOK_ADS_AUTO_HIDE: 'true'
           DRY_RUN: 'false'
       - name: Poll YouTube awareness ad comments
@@ -283,7 +304,7 @@ jobs:
           YOUTUBE_ADS_ALERT_AFTER: ${{ vars.YOUTUBE_ADS_ALERT_AFTER }}
           YOUTUBE_ADS_WINDOW_START: '8'
           YOUTUBE_ADS_WINDOW_END: '11'
-          YOUTUBE_ADS_FORCE: ${{ github.event_name == 'workflow_dispatch' }}
+          YOUTUBE_ADS_FORCE: ${{ github.event_name == 'workflow_dispatch' && !inputs.monitor_chain }}
           YOUTUBE_OWNER_AUTO_HIDE: 'true'
           DRY_RUN: 'false'
       - name: Record YouTube Ads auxiliary outcome

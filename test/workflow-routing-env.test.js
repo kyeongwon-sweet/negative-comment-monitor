@@ -72,8 +72,15 @@ test('Meta 자동숨김 제외 계정 변수를 정기·수동 실행 모두에 
 test('메인 감시는 예약 run 내부 15분 간격 4회 루프를 사용한다', () => {
   assert.match(monitorWorkflow, /timeout-minutes:\s*70/);
   assert.match(monitorWorkflow, /run:\s*node src\/monitor-loop\.js/);
-  assert.match(monitorWorkflow, /MONITOR_LOOP_ITERATIONS:\s*\$\{\{ github\.event_name == 'schedule' && '4' \|\| '1' \}\}/);
+  assert.match(monitorWorkflow, /MONITOR_CHAIN_RUN:\s*\$\{\{ inputs\.monitor_chain && 'true' \|\| 'false' \}\}/);
+  assert.match(monitorWorkflow, /MONITOR_CHAIN_SMOKE:\s*\$\{\{ inputs\.monitor_chain_smoke && 'true' \|\| 'false' \}\}/);
+  assert.match(monitorWorkflow, /MONITOR_CHAIN_ENABLED:\s*\$\{\{ \(github\.event_name == 'schedule' \|\| inputs\.monitor_chain\) && 'true' \|\| 'false' \}\}/);
+  assert.match(monitorWorkflow, /MONITOR_LOOP_ITERATIONS:.*monitor_chain_smoke.*monitor_chain.*'4'.*'1'/);
   assert.match(monitorWorkflow, /MONITOR_LOOP_INTERVAL_MS:\s*'900000'/);
+  assert.match(monitorWorkflow, /MONITOR_CHAIN_MAX_PER_DAY:.*'24'/);
+  assert.match(monitorWorkflow, /actions:\s*write/);
+  assert.match(monitorWorkflow, /GH_TOKEN:\s*\$\{\{ secrets\.GITHUB_TOKEN \}\}/);
+  assert.equal((monitorWorkflow.match(/_FORCE:\s*\$\{\{ github\.event_name == 'workflow_dispatch' && !inputs\.monitor_chain \}\}/g) || []).length, 4);
   assert.doesNotMatch(monitorWorkflow, /id:\s*intensive_gate/);
   assert.match(monitorWorkflow, /group:\s*negative-comment-monitor-production[\s\S]*cancel-in-progress:\s*false/);
   assert.match(monitorWorkflow, /cron:\s*'17 1-22\/3 \* \* \*'/);

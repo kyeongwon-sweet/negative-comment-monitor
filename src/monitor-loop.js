@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { hasRecentNegativeAlerts } from './intensive-gate.js';
 import { recordMonitorScanHeartbeat } from './monitor-scan-heartbeat.js';
+import { chainNextMonitor, isMonitorChainRun } from './monitor-chain.js';
 
 const MINUTE = 60 * 1000;
 
@@ -31,8 +32,8 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function forceFirstMonitor({ eventName, schedule, iteration }) {
-  return iteration === 0 && (eventName !== 'schedule' || schedule !== '*/15 * * * *');
+export function forceFirstMonitor({ eventName, schedule, iteration, chainRun = false }) {
+  return iteration === 0 && !chainRun && (eventName !== 'schedule' || schedule !== '*/15 * * * *');
 }
 
 export async function runMonitorLoop(env = process.env, options = {}) {
@@ -40,6 +41,8 @@ export async function runMonitorLoop(env = process.env, options = {}) {
   const intervalMs = positiveInt(env.MONITOR_LOOP_INTERVAL_MS, 15 * MINUTE);
   const eventName = String(env.MONITOR_TRIGGER_EVENT || '').trim();
   const schedule = String(env.MONITOR_TRIGGER_SCHEDULE || '').trim();
+  const chainRun = isMonitorChainRun(env);
+  const coverageLoop = eventName === 'schedule' || chainRun;
   const gateConfig = {
     supabaseUrl: String(env.SUPABASE_URL || '').trim(),
     supabaseKey: String(env.SUPABASE_SERVICE_ROLE_KEY || '').trim(),
@@ -48,9 +51,11 @@ export async function runMonitorLoop(env = process.env, options = {}) {
   const execute = options.runCommand || runCommand;
   const sleep = options.sleep || delay;
   const recordHeartbeat = options.recordHeartbeat || ((details) => recordMonitorScanHeartbeat(gateConfig, details));
+  const chain = options.chain || ((details) => chainNextMonitor(env, details));
   const now = options.now || Date.now;
   let dependenciesInstalled = false;
   let monitorRuns = 0;
+  let verifiedGateOpen = false;
 
   for (let iteration = 0; iteration < iterations; iteration += 1) {
     let gateOpen = false;
@@ -58,13 +63,15 @@ export async function runMonitorLoop(env = process.env, options = {}) {
     try {
       gateOpen = await gate(gateConfig);
       gateState = gateOpen ? 'open' : 'closed';
+      verifiedGateOpen = gateOpen;
     } catch (error) {
       gateOpen = true;
       gateState = 'fail-open';
+      verifiedGateOpen = false;
       console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} gate_error=${error.message}`);
     }
 
-    const forced = forceFirstMonitor({ eventName, schedule, iteration });
+    const forced = forceFirstMonitor({ eventName, schedule, iteration, chainRun });
     const shouldRun = forced || gateOpen;
     console.error(
       `[monitor-loop] iteration=${iteration + 1}/${iterations} gate=${gateState} forced=${forced} decision=${shouldRun ? 'run' : 'skip'}`,
@@ -101,7 +108,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
     }
 
     if (iteration + 1 < iterations) {
-      if (eventName === 'schedule' && schedule === '*/15 * * * *' && !gateOpen) {
+      if (coverageLoop && !gateOpen) {
         console.error('[monitor-loop] intensive gate closed; ending loop early so floor/backup schedules are not blocked');
         break;
       }
@@ -110,8 +117,17 @@ export async function runMonitorLoop(env = process.env, options = {}) {
     }
   }
 
-  console.error(`[monitor-loop] complete iterations=${iterations} full_scans=${monitorRuns}`);
-  return { iterations, monitorRuns, dependenciesInstalled };
+  let chainResult = { dispatched: false, reason: 'not-attempted' };
+  try {
+    chainResult = await chain({ gateOpen: verifiedGateOpen, now: now() });
+  } catch (error) {
+    // 체인 실패는 기존 크론/heartbeat가 복구한다. 정상 수집을 실패로 뒤집지 않는다.
+    chainResult = { dispatched: false, reason: 'chain-error', error: error.message };
+  }
+  console.error(
+    `[monitor-loop] complete iterations=${iterations} full_scans=${monitorRuns} chain=${chainResult.reason}`,
+  );
+  return { iterations, monitorRuns, dependenciesInstalled, chain: chainResult };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
