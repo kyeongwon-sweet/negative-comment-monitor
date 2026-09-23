@@ -13,7 +13,7 @@ const assignees = {
   awareness: 'U_AWARENESS',
   sponsorship: 'U_SPONSORSHIP',
   jd: { primary: 'U_JD_PRIMARY', satellite: 'U_JD_SAT' },
-  p: { viralBanner: 'U_P_BANNER', viralVideo: 'U_P_VIDEO', powerChannel: 'U_P_POWER', sponsorship: 'U_P_SPON', awareness: 'U_P_AWARENESS' },
+  p: { viralBanner: 'U_P_BANNER', viralVideo: 'U_P_VIDEO', powerChannel: 'U_P_POWER', sponsorship: 'U_P_SPON', awareness: 'U_P_AWARENESS', ownedYoutube: 'U_P_OWNED_YT' },
   jg: { primary: 'U_JG', additional: ['U_JG_2', 'U_JG_3', 'U_JG_4'] },
 };
 
@@ -229,6 +229,8 @@ test('assigneeForTarget: 상품×카테고리 라우팅 + 미지정은 카테고
   // 파인트 파워채널/매거진 = 이도경(p.powerChannel, 협찬 인플루언서보다 우선)
   assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '협찬 (파워채널/매거진)' }, assignees), 'U_P_POWER');
   assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '협찬 (매거진)' }, assignees), 'U_P_POWER');
+  // 파인트 소유 YouTube = 박지원 전용 슬롯(공용 other 폴백 아님)
+  assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '소유 YouTube' }, assignees), 'U_P_OWNED_YT');
   // 제과: 모든 카테고리의 부모 스레드 대표 담당자는 모현진.
   assert.equal(assigneeForTarget({ productName: 'JG', channelCategory: '인지 광고' }, assignees), 'U_JG');
   assert.equal(assigneeForTarget({ productName: '블트하', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_JG');

@@ -50,6 +50,7 @@ export function loadSlackAssignees(env = process.env, now = Date.now()) {
       powerChannel: String(env.SLACK_ASSIGNEE_P_POWER_CHANNEL || '').trim(),
       sponsorship: String(env.SLACK_ASSIGNEE_P_SPONSORSHIP || '').trim(),
       awareness: String(env.SLACK_ASSIGNEE_P_AWARENESS || '').trim(),
+      ownedYoutube: String(env.SLACK_ASSIGNEE_P_OWNED_YOUTUBE || '').trim(),
     },
     jg: {
       primary: String(env.SLACK_ASSIGNEE_JG_PRIMARY || '').trim(),

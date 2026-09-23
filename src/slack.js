@@ -97,6 +97,7 @@ export function assigneeForTarget(target, assignees = {}) {
   const isSponsorship = category.includes('협찬');
   const isPowerChannel = category.includes('파워채널') || category.includes('매거진'); // 협찬 (파워채널/매거진)
   const isOwned = category.includes('온드'); // 온드미디어
+  const isOwnedYoutube = category.includes('소유'); // 소유 YouTube(자사 유튜브 채널)
   const isAwareness = category.includes('인지'); // 인지(메타) 광고 부정댓글 전용 담당자
   if (group === 'jd') {
     // 쫀득바는 위성채널만 별도 담당(김보나), 그 외 전 카테고리(인지광고·바이럴·협찬·온드·소유YouTube 등)는
@@ -104,8 +105,9 @@ export function assigneeForTarget(target, assignees = {}) {
     if (isSatellite) return assignees.jd?.satellite || assignees.satellite || '';
     if (assignees.jd?.primary) return assignees.jd.primary;
   } else if (group === 'p') {
-    if (isAwareness && assignees.p?.awareness) return assignees.p.awareness;           // 파인트 인지광고=손유곤
-    if (isPowerChannel && assignees.p?.powerChannel) return assignees.p.powerChannel; // 파인트 파워채널=이도경
+    if (isAwareness && assignees.p?.awareness) return assignees.p.awareness;           // 파인트 인지광고=박지원
+    if (isOwnedYoutube && assignees.p?.ownedYoutube) return assignees.p.ownedYoutube;  // 파인트 소유 YouTube=박지원
+    if (isPowerChannel && assignees.p?.powerChannel) return assignees.p.powerChannel;  // 파인트 협찬(파워채널/매거진)=박지원
     if (isSponsorship && assignees.p?.sponsorship) return assignees.p.sponsorship;     // 파인트 협찬(인플루언서)=손유곤
     if (isBanner && assignees.p?.viralBanner) return assignees.p.viralBanner;
     if (isVideo && assignees.p?.viralVideo) return assignees.p.viralVideo;
