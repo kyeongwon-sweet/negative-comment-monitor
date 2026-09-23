@@ -12,7 +12,7 @@ const assignees = {
   jdBok: 'U_JDBOK',
   awareness: 'U_AWARENESS',
   sponsorship: 'U_SPONSORSHIP',
-  jd: { powerChannel: 'U_JD_POWER', sponsorship: 'U_JD_SPON', viralBanner: 'U_JD_BANNER', viralVideo: 'U_JD_VIDEO', satellite: 'U_JD_SAT' },
+  jd: { primary: 'U_JD_PRIMARY', satellite: 'U_JD_SAT' },
   p: { viralBanner: 'U_P_BANNER', viralVideo: 'U_P_VIDEO', powerChannel: 'U_P_POWER', sponsorship: 'U_P_SPON', awareness: 'U_P_AWARENESS' },
   jg: { primary: 'U_JG', additional: ['U_JG_2', 'U_JG_3', 'U_JG_4'] },
 };
@@ -99,9 +99,10 @@ test('alert card(메타 광고): 카드 담당자는 제작자(영상담당자)�
   assert.ok(!blocks.some((b) => b.text?.text?.includes('U_OTHER')));
 });
 test('alert card(메타 광고): 제작자 매핑 없으면 인지 광고 담당자(awareness)로, 미지정 시 other 폴백', () => {
-  const target = { url: 'https://example.com', channelCategory: '인지 광고', productName: 'JD', source: 'meta_ads', extraAssignees: [] };
+  // 비쫀득바(기타) 인지광고 메타광고 — 상품군 무관 awareness 라우팅 검증(쫀득바는 primary로 별도).
+  const target = { url: 'https://example.com', channelCategory: '인지 광고', productName: 'DB멜', source: 'meta_ads', extraAssignees: [] };
   const comment = { id: 'c1', platform: 'instagram', text: '라라스윗 별로', risk: {} };
-  // 제작자(extraAssignees) 없으면 인지 광고 전용 담당자(awareness = 이재원)
+  // 제작자(extraAssignees) 없으면 인지 광고 전용 담당자(awareness)
   const withAwareness = buildAlertBlocks(target, comment, undefined, assignees);
   assert.ok(withAwareness.some((b) => b.text?.text === '*담당자*\n<@U_AWARENESS>'));
   // awareness 미지정이면 기존대로 other(황경원)로 폴백
@@ -111,8 +112,8 @@ test('alert card(메타 광고): 제작자 매핑 없으면 인지 광고 담당
 test('인지광고 라우팅: 파인트(P)는 p.awareness(손유곤), 그 외 상품군은 기존 awareness 유지', () => {
   // 파인트 인지광고 → 파인트 전용 인지광고 담당자
   assert.equal(assigneeForTarget({ channelCategory: '인지 광고', productName: 'P혼멜' }, assignees), 'U_P_AWARENESS');
-  // 쫀득바(JD) 인지광고 → 기존 상품군 무관 awareness 유지(영향 없음)
-  assert.equal(assigneeForTarget({ channelCategory: '인지 광고', productName: 'JD' }, assignees), 'U_AWARENESS');
+  // 쫀득바(JD) 인지광고 → 쫀득바 대표 담당(김바다) 하나로. (제품무관 awareness 아님)
+  assert.equal(assigneeForTarget({ channelCategory: '인지 광고', productName: 'JD' }, assignees), 'U_JD_PRIMARY');
   // 파인트라도 인지광고가 아니면 기존 협찬 담당자 유지
   assert.equal(assigneeForTarget({ channelCategory: '협찬 (인플루언서)', productName: 'P혼멜' }, assignees), 'U_P_SPON');
   // p.awareness 미지정이면 기존대로 상품군 무관 awareness로 폴백
@@ -123,9 +124,9 @@ test('alert card(바이럴): 소재명 제작자(extraAssignees)만 태그, 없�
   // 제작자 있으면 그 사람만(황경원/기타 base 제외)
   const withCreator = buildAlertBlocks({ url: 'https://example.com', channelCategory: '바이럴 (영상)', productName: 'JD멜', extraAssignees: ['U_VIDEO'] }, comment, undefined, assignees);
   assert.ok(withCreator.some((b) => b.text?.text === '*담당자*\n<@U_VIDEO>'));
-  // 제작자 매핑 없으면 base(JD 바이럴 영상 담당)로 폴백
+  // 제작자 매핑 없으면 base(쫀득바 대표 담당 김바다)로 폴백
   const noCreator = buildAlertBlocks({ url: 'https://example.com', channelCategory: '바이럴 (영상)', productName: 'JD멜', extraAssignees: [] }, comment, undefined, assignees);
-  assert.ok(noCreator.some((b) => b.text?.text === '*담당자*\n<@U_JD_VIDEO>'));
+  assert.ok(noCreator.some((b) => b.text?.text === '*담당자*\n<@U_JD_PRIMARY>'));
   // 배너도 동일
   const banner = buildAlertBlocks({ url: 'https://example.com', channelCategory: '바이럴 (배너)', productName: 'JD멜', extraAssignees: ['U_VIDEO'] }, comment, undefined, assignees);
   assert.ok(banner.some((b) => b.text?.text === '*담당자*\n<@U_VIDEO>'));
@@ -211,11 +212,16 @@ test('productLabel: jd=쫀득바, p=파인트, jg=제과, 그 외=기타', () =>
   assert.equal(productLabel('other'), '기타');
 });
 test('assigneeForTarget: 상품×카테고리 라우팅 + 미지정은 카테고리 기본값 폴백', () => {
-  // JD 상품
-  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_JD_SPON');
-  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '바이럴 (배너)' }, assignees), 'U_JD_BANNER');
-  assert.equal(assigneeForTarget({ productName: 'JD망', channelCategory: '바이럴 (영상)' }, assignees), 'U_JD_VIDEO');
+  // JD(쫀득바): 위성채널만 김보나(U_JD_SAT), 그 외 전 카테고리는 대표 담당(U_JD_PRIMARY).
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_JD_PRIMARY');
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (파워채널/매거진)' }, assignees), 'U_JD_PRIMARY');
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '바이럴 (배너)' }, assignees), 'U_JD_PRIMARY');
+  assert.equal(assigneeForTarget({ productName: 'JD망', channelCategory: '바이럴 (영상)' }, assignees), 'U_JD_PRIMARY');
+  assert.equal(assigneeForTarget({ productName: 'JD', channelCategory: '온드미디어' }, assignees), 'U_JD_PRIMARY');
+  assert.equal(assigneeForTarget({ productName: 'JD', channelCategory: '소유 YouTube' }, assignees), 'U_JD_PRIMARY');
   assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '위성채널' }, assignees), 'U_JD_SAT');
+  // jd.primary 미지정이면 위성은 base satellite로 폴백(위성 담당 유지).
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '위성채널' }, { ...assignees, jd: { satellite: '' } }), 'U_SATELLITE');
   // P 상품(배너·영상만 지정) — 나머지 조합은 기타로 황경원(other)
   assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '바이럴 (배너)' }, assignees), 'U_P_BANNER');
   assert.equal(assigneeForTarget({ productName: 'P망', channelCategory: '바이럴 (영상)' }, assignees), 'U_P_VIDEO');
@@ -227,15 +233,15 @@ test('assigneeForTarget: 상품×카테고리 라우팅 + 미지정은 카테고
   assert.equal(assigneeForTarget({ productName: 'JG', channelCategory: '인지 광고' }, assignees), 'U_JG');
   assert.equal(assigneeForTarget({ productName: '블트하', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_JG');
   assert.equal(assigneeForTarget({ productName: '제과', channelCategory: '협찬 (파워채널/매거진)' }, assignees), 'U_JG');
-  // 쫀득바 협찬(인플루언서)=김바다(jd.sponsorship), 파워채널/매거진=이재원(jd.powerChannel)
-  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_JD_SPON');
-  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (파워채널/먹스타)' }, assignees), 'U_JD_POWER');
-  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (파워채널/매거진)' }, assignees), 'U_JD_POWER');
-  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (매거진)' }, assignees), 'U_JD_POWER');
-  // 온드미디어는 상품군 무관 owned(김바다)
-  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '온드미디어' }, assignees), 'U_OWNED');
+  // 쫀득바는 위성채널 외 전 카테고리(협찬 인플루언서·파워채널·먹스타·매거진 포함)가 대표 담당(김바다)
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_JD_PRIMARY');
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (파워채널/먹스타)' }, assignees), 'U_JD_PRIMARY');
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (파워채널/매거진)' }, assignees), 'U_JD_PRIMARY');
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (매거진)' }, assignees), 'U_JD_PRIMARY');
+  // 쫀득바 온드미디어도 대표 담당(김바다)로. 비쫀득바 온드미디어는 상품군 무관 owned로.
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '온드미디어' }, assignees), 'U_JD_PRIMARY');
   assert.equal(assigneeForTarget({ productName: 'DB혼', channelCategory: '온드미디어' }, assignees), 'U_OWNED');
-  // 위성채널은 상품군 무관하게 항상 이세진(base satellite) — JD/P/기타 전부
+  // 위성채널: 쫀득바는 jd.satellite(김보나), 비쫀득바는 base satellite(이세진)
   assert.equal(assigneeForTarget({ productName: 'DB딸', channelCategory: '위성채널' }, assignees), 'U_SATELLITE');
   assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '위성채널' }, assignees), 'U_SATELLITE');
   assert.equal(assigneeForTarget({ channelCategory: '위성채널' }, assignees), 'U_SATELLITE'); // 상품명 없어도 위성=이세진
@@ -245,7 +251,7 @@ test('assigneeForTarget: 상품×카테고리 라우팅 + 미지정은 카테고
   // 상품 정보 없음 → 기타 → 황경원(other)
   assert.equal(assigneeForTarget({ channelCategory: '유상협찬' }, assignees), 'U_OTHER');
   // 인지(메타) 광고는 상품군 무관 전용 담당자(awareness). 미지정 시 other로 폴백.
-  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '인지 광고' }, assignees), 'U_AWARENESS');
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '인지 광고' }, assignees), 'U_JD_PRIMARY');
   assert.equal(assigneeForTarget({ channelCategory: '인지 광고' }, assignees), 'U_AWARENESS');
   assert.equal(assigneeForTarget({ channelCategory: '인지 광고' }, { other: 'U_OTHER' }), 'U_OTHER');
 });
@@ -290,7 +296,7 @@ test('alert blocks mention the category assignee', () => {
     undefined,
     assignees,
   );
-  assert.ok(blocks.some((block) => block.text?.text === '*담당자*\n<@U_JD_BANNER>'));
+  assert.ok(blocks.some((block) => block.text?.text === '*담당자*\n<@U_JD_PRIMARY>'));
 });
 test('작성자는 메인 라인에만, 필드엔 중복 없음(B2)', () => {
   const blocks = buildAlertBlocks(

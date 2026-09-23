@@ -69,6 +69,7 @@ jobs:
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_JD_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JD_PRIMARY }}
           SLACK_ASSIGNEE_JDBOK: ${{ vars.SLACK_ASSIGNEE_JDBOK }}
           SLACK_ASSIGNEE_SATELLITE: ${{ vars.SLACK_ASSIGNEE_SATELLITE }}
           SLACK_ASSIGNEE_JD_SATELLITE: ${{ vars.SLACK_ASSIGNEE_JD_SATELLITE }}
@@ -119,6 +120,7 @@ jobs:
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_JD_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JD_PRIMARY }}
       - name: Notify Slack of auxiliary degraded state
         if: ${{ steps.schema.outcome == 'failure' || steps.owner_monitor.outcome == 'failure' }}
         continue-on-error: true
@@ -127,6 +129,7 @@ jobs:
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_JD_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JD_PRIMARY }}
           AUXILIARY_COMPONENT: YouTube 소유채널 보조 모니터
           AUXILIARY_REASON: schema=${{ steps.schema.outcome }}, monitor=${{ steps.owner_monitor.outcome }}
           FAILURE_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}

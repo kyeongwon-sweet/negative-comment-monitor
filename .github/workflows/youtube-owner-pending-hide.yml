@@ -65,6 +65,7 @@ jobs:
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_JD_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JD_PRIMARY }}
           AUXILIARY_COMPONENT: YouTube 소유채널 15분 자동숨김
           AUXILIARY_REASON: pending owner moderation failed or made no progress
           AUXILIARY_FAILURE_THRESHOLD: '3'
@@ -82,6 +83,7 @@ jobs:
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_JD_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JD_PRIMARY }}
           AUXILIARY_COMPONENT: YouTube 오탐 댓글 자동 공개복원
           AUXILIARY_REASON: owner OAuth public restore failed or could not be verified
           AUXILIARY_FAILURE_THRESHOLD: '3'

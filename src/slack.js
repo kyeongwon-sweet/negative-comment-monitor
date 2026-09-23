@@ -85,7 +85,8 @@ export function hasProductName(target) {
 }
 
 // 담당자 라우팅 = (상품군 × 채널카테고리).
-//   - JD/P 상품의 지정 조합은 해당 담당자로.
+//   - JD(쫀득바)는 위성채널만 김보나, 그 외 전 카테고리는 대표 담당 김바다(primary) 하나로.
+//   - P(파인트)의 지정 조합은 해당 담당자로.
 //   - 그 외(기타 제품 DB·C·ZB·BA 등 + 기타 채널 + 미지정 조합)는 모두 담당자 other(황경원).
 export function assigneeForTarget(target, assignees = {}) {
   const category = String(target?.channelCategory || '').trim().toLowerCase();
@@ -98,12 +99,10 @@ export function assigneeForTarget(target, assignees = {}) {
   const isOwned = category.includes('온드'); // 온드미디어
   const isAwareness = category.includes('인지'); // 인지(메타) 광고 부정댓글 전용 담당자
   if (group === 'jd') {
-    // 쫀득바 협찬: 파워채널/매거진=이재원, 인플루언서=김바다.
-    if (isSponsorship && isPowerChannel && assignees.jd?.powerChannel) return assignees.jd.powerChannel;
-    if (isSponsorship && !isPowerChannel && assignees.jd?.sponsorship) return assignees.jd.sponsorship;
-    if (isBanner && assignees.jd?.viralBanner) return assignees.jd.viralBanner;
-    if (isVideo && assignees.jd?.viralVideo) return assignees.jd.viralVideo;
-    if (isSatellite && assignees.jd?.satellite) return assignees.jd.satellite;
+    // 쫀득바는 위성채널만 별도 담당(김보나), 그 외 전 카테고리(인지광고·바이럴·협찬·온드·소유YouTube 등)는
+    // 대표 담당(김바다) 하나로 라우팅. 위성은 base satellite로 폴백해 최소한 위성 담당이 유지되게 한다.
+    if (isSatellite) return assignees.jd?.satellite || assignees.satellite || '';
+    if (assignees.jd?.primary) return assignees.jd.primary;
   } else if (group === 'p') {
     if (isAwareness && assignees.p?.awareness) return assignees.p.awareness;           // 파인트 인지광고=손유곤
     if (isPowerChannel && assignees.p?.powerChannel) return assignees.p.powerChannel; // 파인트 파워채널=이도경

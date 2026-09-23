@@ -52,6 +52,7 @@ jobs:
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_JD_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JD_PRIMARY }}
           YOUTUBE_OWNER_COVERAGE_AUDIT_VIDEO_IDS: ${{ github.event_name == 'workflow_dispatch' && inputs.video_ids || '' }}
           YOUTUBE_OWNER_COVERAGE_AUDIT_MAX_VIDEOS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_videos || '5' }}
           YOUTUBE_OWNER_COVERAGE_AUDIT_FORCE_RECLASSIFY: ${{ github.event_name == 'workflow_dispatch' && inputs.force_reclassify || false }}

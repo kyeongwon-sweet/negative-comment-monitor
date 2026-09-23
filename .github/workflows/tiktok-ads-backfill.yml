@@ -40,6 +40,7 @@ jobs:
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_JD_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JD_PRIMARY }}
           SLACK_ASSIGNEE_JDBOK: ${{ vars.SLACK_ASSIGNEE_JDBOK }}
           SLACK_ASSIGNEE_AWARENESS: ${{ vars.SLACK_ASSIGNEE_AWARENESS }}
           SLACK_ASSIGNEE_P_AWARENESS: ${{ vars.SLACK_ASSIGNEE_P_AWARENESS }}
@@ -75,4 +76,5 @@ jobs:
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_JD_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JD_PRIMARY }}
           FAILURE_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}

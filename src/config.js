@@ -40,10 +40,8 @@ export function loadSlackAssignees(env = process.env, now = Date.now()) {
     awareness: scheduledAssignee(env, 'SLACK_ASSIGNEE_AWARENESS', 'SLACK_ASSIGNEE_AWARENESS_NEXT', nextRoutingActive),
     sponsorship: String(env.SLACK_ASSIGNEE_SPONSORSHIP || '').trim(),
     jd: {
-      powerChannel: String(env.SLACK_ASSIGNEE_JD_POWER_CHANNEL || '').trim(),
-      sponsorship: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_SPONSORSHIP', 'SLACK_ASSIGNEE_JD_SPONSORSHIP_NEXT', nextRoutingActive),
-      viralBanner: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_VIRAL_BANNER', 'SLACK_ASSIGNEE_JD_VIRAL_BANNER_NEXT', nextRoutingActive),
-      viralVideo: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_VIRAL_VIDEO', 'SLACK_ASSIGNEE_JD_VIRAL_VIDEO_NEXT', nextRoutingActive),
+      // 쫀득바는 위성채널만 별도 담당(satellite=김보나), 그 외 전 카테고리는 대표 담당(primary=김바다).
+      primary: String(env.SLACK_ASSIGNEE_JD_PRIMARY || '').trim(),
       satellite: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_SATELLITE', 'SLACK_ASSIGNEE_JD_SATELLITE_NEXT', nextRoutingActive),
     },
     p: {
