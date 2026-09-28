@@ -85,3 +85,18 @@ export async function fetchMonitorScanHeartbeats(
     .map((row) => Date.parse(row?.scanned_at || ''))
     .filter((timestamp) => Number.isFinite(timestamp) && timestamp >= fromMs && timestamp <= toMs);
 }
+
+export async function fetchLatestMonitorScanHeartbeat(config, fetchImpl = fetch) {
+  if (!enabled(config)) return null;
+  const url = new URL(`${baseUrl(config)}/rest/v1/monitor_scan_heartbeats`);
+  url.searchParams.set('select', 'scanned_at');
+  url.searchParams.set('order', 'scanned_at.desc');
+  url.searchParams.set('limit', '1');
+  const response = await fetchImpl(url, { headers: headers(config) });
+  if (!response.ok) {
+    throw new Error(`latest scan heartbeat read HTTP ${response.status}; apply ${MIGRATION}`);
+  }
+  const rows = await response.json();
+  const timestamp = Date.parse(Array.isArray(rows) ? rows[0]?.scanned_at || '' : '');
+  return Number.isFinite(timestamp) ? timestamp : null;
+}

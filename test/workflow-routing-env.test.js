@@ -74,16 +74,20 @@ test('메인 감시는 예약 run 내부 15분 간격 4회 루프를 사용한�
   assert.match(monitorWorkflow, /run:\s*node src\/monitor-loop\.js/);
   assert.match(monitorWorkflow, /MONITOR_CHAIN_RUN:\s*\$\{\{ inputs\.monitor_chain && 'true' \|\| 'false' \}\}/);
   assert.match(monitorWorkflow, /MONITOR_CHAIN_SMOKE:\s*\$\{\{ inputs\.monitor_chain_smoke && 'true' \|\| 'false' \}\}/);
+  assert.match(monitorWorkflow, /MONITOR_CHAIN_FLOOR_RUN:\s*\$\{\{ inputs\.monitor_chain_floor && 'true' \|\| 'false' \}\}/);
   assert.match(monitorWorkflow, /MONITOR_CHAIN_ENABLED:\s*\$\{\{ \(github\.event_name == 'schedule' \|\| inputs\.monitor_chain\) && 'true' \|\| 'false' \}\}/);
   assert.match(monitorWorkflow, /MONITOR_LOOP_ITERATIONS:.*monitor_chain_smoke.*monitor_chain.*'4'.*'1'/);
   assert.match(monitorWorkflow, /MONITOR_LOOP_INTERVAL_MS:\s*'900000'/);
   assert.match(monitorWorkflow, /MONITOR_CHAIN_MAX_PER_DAY:.*'24'/);
+  assert.match(monitorWorkflow, /MONITOR_CHAIN_FLOOR_MINUTES:.*'150'/);
+  assert.match(monitorWorkflow, /MONITOR_CHAIN_FLOOR_MAX_PER_DAY:.*'12'/);
   assert.match(monitorWorkflow, /actions:\s*write/);
   assert.match(monitorWorkflow, /GH_TOKEN:\s*\$\{\{ secrets\.GITHUB_TOKEN \}\}/);
   assert.equal((monitorWorkflow.match(/_FORCE:\s*\$\{\{ github\.event_name == 'workflow_dispatch' && !inputs\.monitor_chain \}\}/g) || []).length, 4);
   assert.doesNotMatch(monitorWorkflow, /id:\s*intensive_gate/);
   assert.match(monitorWorkflow, /group:\s*negative-comment-monitor-production[\s\S]*cancel-in-progress:\s*false/);
   assert.match(monitorWorkflow, /cron:\s*'17 1-22\/3 \* \* \*'/);
+  assert.match(monitorWorkflow, /cron:\s*'9,39 6-16 \* \* \*'/);
 });
 
 test('하트비트는 하루 두 번을 유지하며 3.5시간 공백 임계를 전달한다', () => {

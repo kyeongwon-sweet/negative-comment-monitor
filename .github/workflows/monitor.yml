@@ -24,6 +24,21 @@ on:
         required: false
         type: boolean
         default: false
+      monitor_chain_floor:
+        description: Internal quiet-period floor continuation
+        required: false
+        type: boolean
+        default: false
+      monitor_chain_floor_minutes:
+        description: Internal floor interval override
+        required: false
+        type: string
+        default: ''
+      monitor_chain_floor_max_per_day:
+        description: Internal daily floor-chain cap override
+        required: false
+        type: string
+        default: ''
   schedule:
     # ⚠️ 아침 배치가 UTC 0시(=KST 09시) '데드존'에만 걸려 있으면 GitHub가 그 시각 크론을 대량
     # 드롭할 때 아침 스캔이 통째로 미발화한다(실측: 08-13 09시대 크론 4개 전부 드롭 → 인지 광고·
@@ -43,6 +58,8 @@ on:
     - cron: '17 1-22/3 * * *'
     # 상시 15분 웨이크: 부정 감지글 3h 집중확인 + 지연분 백업.
     - cron: '*/15 * * * *'
+    # UTC 06~16시 크론 연속 드롭 분산: 정각·15분 경계와 겹치지 않는 조용한 구간 floor 백업.
+    - cron: '9,39 6-16 * * *'
 
 concurrency:
   group: negative-comment-monitor-production
@@ -78,8 +95,11 @@ jobs:
           MONITOR_TRIGGER_SCHEDULE: ${{ github.event.schedule }}
           MONITOR_CHAIN_RUN: ${{ inputs.monitor_chain && 'true' || 'false' }}
           MONITOR_CHAIN_SMOKE: ${{ inputs.monitor_chain_smoke && 'true' || 'false' }}
+          MONITOR_CHAIN_FLOOR_RUN: ${{ inputs.monitor_chain_floor && 'true' || 'false' }}
           MONITOR_CHAIN_ENABLED: ${{ (github.event_name == 'schedule' || inputs.monitor_chain) && 'true' || 'false' }}
           MONITOR_CHAIN_MAX_PER_DAY: ${{ inputs.monitor_chain_max_per_day || vars.MONITOR_CHAIN_MAX_PER_DAY || '24' }}
+          MONITOR_CHAIN_FLOOR_MINUTES: ${{ inputs.monitor_chain_floor_minutes || vars.MONITOR_CHAIN_FLOOR_MINUTES || '150' }}
+          MONITOR_CHAIN_FLOOR_MAX_PER_DAY: ${{ inputs.monitor_chain_floor_max_per_day || vars.MONITOR_CHAIN_FLOOR_MAX_PER_DAY || '12' }}
           MONITOR_LOOP_ITERATIONS: ${{ inputs.monitor_chain_smoke && '1' || ((github.event_name == 'schedule' || inputs.monitor_chain) && '4' || '1') }}
           MONITOR_LOOP_INTERVAL_MS: '900000'
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

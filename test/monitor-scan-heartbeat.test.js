@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  fetchLatestMonitorScanHeartbeat,
   fetchMonitorScanHeartbeats,
   recordMonitorScanHeartbeat,
 } from '../src/monitor-scan-heartbeat.js';
@@ -57,6 +58,22 @@ test('heartbeat reader returns only valid measured timestamps', async () => {
   assert.match(requestUrl, /scanned_at=gte\./);
   assert.match(requestUrl, /scanned_at=lte\./);
   assert.match(requestUrl, /order=scanned_at\.asc/);
+});
+
+test('latest heartbeat reader requests only the newest measured scan', async () => {
+  let requestUrl = '';
+  const timestamp = await fetchLatestMonitorScanHeartbeat(CONFIG, async (url) => {
+    requestUrl = String(url);
+    return new Response(JSON.stringify([{ scanned_at: '2026-09-21T07:50:00Z' }]), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  });
+
+  assert.equal(timestamp, Date.parse('2026-09-21T07:50:00Z'));
+  assert.match(requestUrl, /select=scanned_at/);
+  assert.match(requestUrl, /order=scanned_at\.desc/);
+  assert.match(requestUrl, /limit=1/);
 });
 
 test('heartbeat storage errors name the required migration', async () => {

@@ -10,6 +10,9 @@ export async function dispatchMonitor(env = process.env, fetchImpl = fetch, opti
       monitor_chain: 'true',
       monitor_chain_max_per_day: String(options.maxPerDay || ''),
       monitor_chain_smoke: options.smoke ? 'true' : 'false',
+      monitor_chain_floor: options.floor ? 'true' : 'false',
+      monitor_chain_floor_minutes: String(options.floorMinutes || ''),
+      monitor_chain_floor_max_per_day: String(options.floorMaxPerDay || ''),
     };
   }
 

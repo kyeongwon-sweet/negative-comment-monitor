@@ -4,9 +4,13 @@ import { fileURLToPath } from 'node:url';
 
 import { hasRecentNegativeAlerts } from './intensive-gate.js';
 import { recordMonitorScanHeartbeat } from './monitor-scan-heartbeat.js';
-import { chainNextMonitor, isMonitorChainRun } from './monitor-chain.js';
+import { chainNextMonitor, isMonitorChainFloorRun, isMonitorChainRun } from './monitor-chain.js';
 
 const MINUTE = 60 * 1000;
+const GATE_ONLY_SCHEDULES = new Set([
+  '*/15 * * * *',
+  '9,39 6-16 * * *',
+]);
 
 function positiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -32,8 +36,11 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function forceFirstMonitor({ eventName, schedule, iteration, chainRun = false }) {
-  return iteration === 0 && !chainRun && (eventName !== 'schedule' || schedule !== '*/15 * * * *');
+export function forceFirstMonitor({ eventName, schedule, iteration, chainRun = false, floorRun = false }) {
+  return iteration === 0 && (
+    floorRun
+    || (!chainRun && (eventName !== 'schedule' || !GATE_ONLY_SCHEDULES.has(schedule)))
+  );
 }
 
 export async function runMonitorLoop(env = process.env, options = {}) {
@@ -42,6 +49,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
   const eventName = String(env.MONITOR_TRIGGER_EVENT || '').trim();
   const schedule = String(env.MONITOR_TRIGGER_SCHEDULE || '').trim();
   const chainRun = isMonitorChainRun(env);
+  const floorRun = isMonitorChainFloorRun(env);
   const coverageLoop = eventName === 'schedule' || chainRun;
   const gateConfig = {
     supabaseUrl: String(env.SUPABASE_URL || '').trim(),
@@ -71,7 +79,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
       console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} gate_error=${error.message}`);
     }
 
-    const forced = forceFirstMonitor({ eventName, schedule, iteration, chainRun });
+    const forced = forceFirstMonitor({ eventName, schedule, iteration, chainRun, floorRun });
     const shouldRun = forced || gateOpen;
     console.error(
       `[monitor-loop] iteration=${iteration + 1}/${iterations} gate=${gateState} forced=${forced} decision=${shouldRun ? 'run' : 'skip'}`,
@@ -119,7 +127,11 @@ export async function runMonitorLoop(env = process.env, options = {}) {
 
   let chainResult = { dispatched: false, reason: 'not-attempted' };
   try {
-    chainResult = await chain({ gateOpen: verifiedGateOpen, now: now() });
+    chainResult = await chain({
+      gateOpen: verifiedGateOpen,
+      scannedThisRun: monitorRuns > 0,
+      now: now(),
+    });
   } catch (error) {
     // 체인 실패는 기존 크론/heartbeat가 복구한다. 정상 수집을 실패로 뒤집지 않는다.
     chainResult = { dispatched: false, reason: 'chain-error', error: error.message };

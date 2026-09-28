@@ -1,7 +1,11 @@
 import { kstDateKey } from './schedule.js';
 import { dispatchMonitor } from './monitor-dispatch.js';
+import { fetchLatestMonitorScanHeartbeat } from './monitor-scan-heartbeat.js';
 
 export const DEFAULT_MONITOR_CHAIN_MAX_PER_DAY = 24;
+export const DEFAULT_MONITOR_CHAIN_FLOOR_MINUTES = 150;
+export const DEFAULT_MONITOR_CHAIN_FLOOR_MAX_PER_DAY = 12;
+export const MONITOR_WATCHDOG_MAX_GAP_MINUTES = 210;
 
 function headers(config, extra = {}) {
   return {
@@ -32,26 +36,39 @@ export function isMonitorChainSmoke(env = process.env) {
   return truthy(env.MONITOR_CHAIN_SMOKE);
 }
 
+export function isMonitorChainFloorRun(env = process.env) {
+  return truthy(env.MONITOR_CHAIN_FLOOR_RUN);
+}
+
 function chainConfig(env) {
   return {
     supabaseUrl: String(env.SUPABASE_URL || '').replace(/\/$/, ''),
     supabaseKey: String(env.SUPABASE_SERVICE_ROLE_KEY || '').trim(),
     maxPerDay: positiveInt(env.MONITOR_CHAIN_MAX_PER_DAY, DEFAULT_MONITOR_CHAIN_MAX_PER_DAY),
+    floorMinutes: Math.min(
+      positiveInt(env.MONITOR_CHAIN_FLOOR_MINUTES, DEFAULT_MONITOR_CHAIN_FLOOR_MINUTES),
+      MONITOR_WATCHDOG_MAX_GAP_MINUTES - 1,
+    ),
+    floorMaxPerDay: positiveInt(
+      env.MONITOR_CHAIN_FLOOR_MAX_PER_DAY,
+      DEFAULT_MONITOR_CHAIN_FLOOR_MAX_PER_DAY,
+    ),
   };
 }
 
-function chainPrefix(now) {
-  return `monitor-chain:${kstDateKey(now)}:`;
+function chainPrefix(now, kind = 'intensive') {
+  const namespace = kind === 'floor' ? 'monitor-floor-chain' : 'monitor-chain';
+  return `${namespace}:${kstDateKey(now)}:`;
 }
 
-function chainRunKey(env, now) {
+function chainRunKey(env, now, kind) {
   const runId = String(env.GITHUB_RUN_ID || '').trim();
   const attempt = String(env.GITHUB_RUN_ATTEMPT || '1').trim();
-  return `${chainPrefix(now)}${runId ? `${runId}:${attempt}` : `local:${now}`}`;
+  return `${chainPrefix(now, kind)}${runId ? `${runId}:${attempt}` : `local:${now}`}`;
 }
 
-async function loadClaims(config, now, fetchImpl) {
-  const prefix = chainPrefix(now);
+async function loadClaims(config, now, fetchImpl, kind) {
+  const prefix = chainPrefix(now, kind);
   const url = `${config.supabaseUrl}/rest/v1/cost_usage_ledger?select=run_key&run_key=like.${encodeURIComponent(`${prefix}*`)}`;
   const response = await fetchImpl(url, { headers: headers(config) });
   if (!response.ok) throw new Error(`monitor chain ledger read HTTP ${response.status}`);
@@ -59,8 +76,8 @@ async function loadClaims(config, now, fetchImpl) {
   return Array.isArray(rows) ? rows : [];
 }
 
-async function claimSlot(config, env, now, fetchImpl) {
-  const runKey = chainRunKey(env, now);
+async function claimSlot(config, env, now, fetchImpl, kind) {
+  const runKey = chainRunKey(env, now, kind);
   const response = await fetchImpl(`${config.supabaseUrl}/rest/v1/cost_usage_ledger?on_conflict=run_key`, {
     method: 'POST',
     headers: headers(config, {
@@ -77,6 +94,62 @@ async function claimSlot(config, env, now, fetchImpl) {
   if (!response.ok) throw new Error(`monitor chain ledger claim HTTP ${response.status}`);
   const rows = await response.json();
   return { claimed: Array.isArray(rows) && rows.length > 0, runKey };
+}
+
+async function queueClaimedMonitor({
+  config,
+  env,
+  now,
+  fetchImpl,
+  dispatch,
+  kind,
+  maxPerDay,
+  dispatchOptions,
+}) {
+  const label = kind === 'floor' ? 'floor' : 'intensive';
+  let claims;
+  try {
+    claims = await loadClaims(config, now, fetchImpl, kind);
+  } catch (error) {
+    console.error(`[monitor-chain] ${label} ledger read failed; skipping dispatch: ${error.message}`);
+    return { dispatched: false, reason: `${label}-ledger-error`, error: error.message };
+  }
+  if (claims.length >= maxPerDay) {
+    return {
+      dispatched: false,
+      reason: kind === 'floor' ? 'floor-daily-cap' : 'daily-cap',
+      count: claims.length,
+      maxPerDay,
+    };
+  }
+
+  let claim;
+  try {
+    claim = await claimSlot(config, env, now, fetchImpl, kind);
+  } catch (error) {
+    console.error(`[monitor-chain] ${label} ledger claim failed; skipping dispatch: ${error.message}`);
+    return { dispatched: false, reason: `${label}-claim-error`, error: error.message };
+  }
+  if (!claim.claimed) {
+    return { dispatched: false, reason: `${label}-already-claimed`, count: claims.length };
+  }
+
+  try {
+    await dispatch(env, fetchImpl, dispatchOptions);
+    return {
+      dispatched: true,
+      reason: kind === 'floor' ? 'floor-queued' : 'queued',
+      count: claims.length + 1,
+      maxPerDay,
+    };
+  } catch (error) {
+    await releaseSlot(config, claim.runKey, fetchImpl);
+    return {
+      dispatched: false,
+      reason: kind === 'floor' ? 'floor-dispatch-failed' : 'dispatch-failed',
+      error: error.message,
+    };
+  }
 }
 
 async function releaseSlot(config, runKey, fetchImpl) {
@@ -103,26 +176,77 @@ export async function chainNextMonitor(env = process.env, options = {}) {
   if (smoke && config.maxPerDay !== 1) {
     return { dispatched: false, reason: 'smoke-requires-cap-one', maxPerDay: config.maxPerDay };
   }
-  if (!options.gateOpen && !smoke) return { dispatched: false, reason: 'gate-closed' };
   if (!config.supabaseUrl || !config.supabaseKey) return { dispatched: false, reason: 'ledger-not-configured' };
 
-  const claims = await loadClaims(config, now, fetchImpl);
-  if (claims.length >= config.maxPerDay) {
-    return { dispatched: false, reason: 'daily-cap', count: claims.length, maxPerDay: config.maxPerDay };
+  // 집중 게이트가 열리면 기존 self-chain이 항상 우선한다. floor 원장/상한과 섞지 않는다.
+  if (options.gateOpen || smoke) {
+    return queueClaimedMonitor({
+      config,
+      env,
+      now,
+      fetchImpl,
+      dispatch,
+      kind: 'intensive',
+      maxPerDay: config.maxPerDay,
+      dispatchOptions: {
+        chain: true,
+        maxPerDay: config.maxPerDay,
+        smoke,
+        floor: false,
+        floorMinutes: config.floorMinutes,
+        floorMaxPerDay: config.floorMaxPerDay,
+      },
+    });
   }
 
-  const claim = await claimSlot(config, env, now, fetchImpl);
-  if (!claim.claimed) return { dispatched: false, reason: 'already-claimed', count: claims.length };
+  // 이 run에서 이미 실제 스캔을 마쳤다면 heartbeat 조회 장애가 있더라도 즉시 floor를
+  // 연쇄하지 않는다. 기록 장애 때 최대 12회가 연속 실행되는 비용 폭주를 막는다.
+  if (options.scannedThisRun) {
+    return { dispatched: false, reason: 'floor-scan-completed' };
+  }
 
+  let lastScannedAt = null;
+  let heartbeatReadFailed = false;
   try {
-    await dispatch(env, fetchImpl, {
+    lastScannedAt = await fetchLatestMonitorScanHeartbeat(config, fetchImpl);
+  } catch (error) {
+    // 커버리지 정본 조회 실패는 오래된 것으로 간주하되, 아래 별도 floor 상한은 반드시 거친다.
+    heartbeatReadFailed = true;
+    console.error(`[monitor-chain] latest heartbeat read failed; treating floor as due: ${error.message}`);
+  }
+  const ageMs = lastScannedAt == null ? Infinity : Math.max(0, now - lastScannedAt);
+  const floorMs = config.floorMinutes * 60 * 1000;
+  const ageMinutes = Number.isFinite(ageMs) ? Math.floor(ageMs / (60 * 1000)) : null;
+  if (ageMs < floorMs) {
+    return {
+      dispatched: false,
+      reason: 'floor-not-due',
+      ageMinutes,
+      floorMinutes: config.floorMinutes,
+    };
+  }
+
+  const result = await queueClaimedMonitor({
+    config,
+    env,
+    now,
+    fetchImpl,
+    dispatch,
+    kind: 'floor',
+    maxPerDay: config.floorMaxPerDay,
+    dispatchOptions: {
       chain: true,
       maxPerDay: config.maxPerDay,
       smoke,
-    });
-    return { dispatched: true, reason: 'queued', count: claims.length + 1, maxPerDay: config.maxPerDay };
-  } catch (error) {
-    await releaseSlot(config, claim.runKey, fetchImpl);
-    return { dispatched: false, reason: 'dispatch-failed', error: error.message };
-  }
+      floor: true,
+      floorMinutes: config.floorMinutes,
+      floorMaxPerDay: config.floorMaxPerDay,
+    },
+  });
+  return {
+    ...result,
+    ageMinutes,
+    floorMinutes: config.floorMinutes,
+    ...(heartbeatReadFailed ? { heartbeatReadFailed: true } : {}),
+  };
 }

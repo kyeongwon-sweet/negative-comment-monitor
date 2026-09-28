@@ -117,7 +117,11 @@ test('verified-open scheduled loop queues exactly one guarded continuation', asy
   });
 
   assert.equal(chainCalls.length, 1);
-  assert.deepEqual(chainCalls[0], { gateOpen: true, now: Date.parse('2026-09-22T03:00:00Z') });
+  assert.deepEqual(chainCalls[0], {
+    gateOpen: true,
+    scannedThisRun: true,
+    now: Date.parse('2026-09-22T03:00:00Z'),
+  });
   assert.deepEqual(result.chain, { dispatched: true, reason: 'queued' });
 });
 
@@ -142,6 +146,33 @@ test('chain continuation does not force a scan after the intensive gate closes',
   assert.deepEqual(result.chain, { dispatched: false, reason: 'gate-closed' });
 });
 
+test('floor-chain continuation forces exactly one scan while the intensive gate is closed', async () => {
+  const commands = [];
+  const heartbeats = [];
+  const result = await runMonitorLoop({
+    ...BASE_ENV,
+    MONITOR_TRIGGER_EVENT: 'workflow_dispatch',
+    MONITOR_TRIGGER_SCHEDULE: '',
+    MONITOR_CHAIN_RUN: 'true',
+    MONITOR_CHAIN_FLOOR_RUN: 'true',
+    MONITOR_CHAIN_ENABLED: 'true',
+  }, {
+    gate: async () => false,
+    runCommand: async (command, args) => { commands.push([command, ...args]); },
+    recordHeartbeat: async (details) => { heartbeats.push(details); },
+    sleep: async () => {},
+    chain: async () => ({ dispatched: false, reason: 'floor-not-due' }),
+  });
+
+  assert.equal(result.monitorRuns, 1);
+  assert.deepEqual(commands, [
+    ['npm', 'install', '--ignore-scripts'],
+    ['npm', 'start'],
+  ]);
+  assert.equal(heartbeats.length, 1);
+  assert.deepEqual(result.chain, { dispatched: false, reason: 'floor-not-due' });
+});
+
 test('chain failure is fail-soft and does not flip a successful scan to failure', async () => {
   const result = await runMonitorLoop({ ...BASE_ENV, MONITOR_CHAIN_ENABLED: 'true' }, {
     gate: async () => true,
@@ -163,6 +194,10 @@ test('only the first non-intensive iteration is forced', () => {
   assert.equal(forceFirstMonitor({ eventName: 'schedule', schedule: '0 */3 * * *', iteration: 0 }), true);
   assert.equal(forceFirstMonitor({ eventName: 'schedule', schedule: '0 */3 * * *', iteration: 1 }), false);
   assert.equal(forceFirstMonitor({ eventName: 'schedule', schedule: '*/15 * * * *', iteration: 0 }), false);
+  assert.equal(forceFirstMonitor({ eventName: 'schedule', schedule: '9,39 6-16 * * *', iteration: 0 }), false);
   assert.equal(forceFirstMonitor({ eventName: 'workflow_dispatch', schedule: '', iteration: 0 }), true);
   assert.equal(forceFirstMonitor({ eventName: 'workflow_dispatch', schedule: '', iteration: 0, chainRun: true }), false);
+  assert.equal(forceFirstMonitor({
+    eventName: 'workflow_dispatch', schedule: '', iteration: 0, chainRun: true, floorRun: true,
+  }), true);
 });
