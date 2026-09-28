@@ -4,7 +4,12 @@ import path from 'node:path';
 import { loadSlackAssignees } from './config.js';
 import { assigneeForTarget, productGroup, productLabel } from './slack.js';
 import { ensureDailyThread } from './threads.js';
-import { isUnresolvedModeration, unresolvedKind } from './moderation-state.js';
+import {
+  MANUAL_HIDE_REQUIRED,
+  canRequestAutomaticHide,
+  isUnresolvedModeration,
+  unresolvedKind,
+} from './moderation-state.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -101,11 +106,31 @@ function slackCardLink(config, row) {
   return channel && ts ? `https://${config.slackWorkspaceHost}/archives/${channel}/p${ts}` : clean(row.post_url);
 }
 
+export function unresolvedActionLink(config, row, index = 0) {
+  const target = targetFromRow(row);
+  const kind = unresolvedKind({ ...row, ...target }, config.managedChannelCategories);
+  const manual = kind === MANUAL_HIDE_REQUIRED
+    || !canRequestAutomaticHide(target, config.managedChannelCategories);
+  const postUrl = clean(row.post_url);
+
+  // TikTok organic and third-party sponsorship cards may have been removed while the
+  // actual manual action point remains the platform post. Do not send operators to a
+  // stale Slack permalink for rows the bot cannot moderate through an API.
+  if (manual && postUrl) return { url: postUrl, label: '▶ 영상 열기', manual: true };
+
+  return {
+    url: slackCardLink(config, row),
+    label: `미해결 카드 ${index + 1}`,
+    manual,
+  };
+}
+
 export function buildUnresolvedMessage(config, group) {
   const c = group.counts;
   const assignee = group.assignee ? `<@${group.assignee}> ` : '';
   const links = group.rows.slice(0, config.maxLinksPerMessage)
-    .map((row, index) => `• <${slackCardLink(config, row)}|미해결 카드 ${index + 1}>`);
+    .map((row, index) => unresolvedActionLink(config, row, index))
+    .map(({ url, label }) => `• <${url}|${label}>`);
   const omitted = group.rows.length - links.length;
   return [
     `⚠️ *실제 숨김 미확인* · ${group.platform} · ${group.rows.length}건`,

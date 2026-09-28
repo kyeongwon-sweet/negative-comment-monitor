@@ -5,6 +5,7 @@ import {
   groupUnresolvedModerationRows,
   loadUnresolvedModerationRows,
   runModerationExecutionWatchdog,
+  unresolvedActionLink,
 } from '../src/moderation-execution-watchdog.js';
 
 const CFG = {
@@ -15,9 +16,9 @@ const CFG = {
 };
 
 const rows = [
-  { id: 1, platform: 'tiktok', source: null, review_decision: 'hide', hidden_confirmed: false, product_name: 'JD멜', channel_category: '위성채널', slack_channel_id: 'C1', slack_ts: '1.1' },
-  { id: 2, platform: 'tiktok', source: null, review_decision: 'hold', hidden_confirmed: false, product_name: 'JD멜', channel_category: '위성채널', slack_channel_id: 'C1', slack_ts: '1.2' },
-  { id: 3, platform: 'youtube', source: 'youtube_ads', review_decision: 'hide', hidden_confirmed: false, product_name: 'JD멜', channel_category: '인지 광고', slack_channel_id: 'C1', slack_ts: '1.3' },
+  { id: 1, platform: 'tiktok', source: null, post_url: 'https://www.tiktok.com/@sat/video/1', review_decision: 'hide', hidden_confirmed: false, product_name: 'JD멜', channel_category: '위성채널', slack_channel_id: 'C1', slack_ts: '1.1' },
+  { id: 2, platform: 'tiktok', source: null, post_url: 'https://www.tiktok.com/@sat/video/2', review_decision: 'hold', hidden_confirmed: false, product_name: 'JD멜', channel_category: '위성채널', slack_channel_id: 'C1', slack_ts: '1.2' },
+  { id: 3, platform: 'youtube', source: 'youtube_ads', post_url: 'https://www.youtube.com/watch?v=ad3', review_decision: 'hide', hidden_confirmed: false, product_name: 'JD멜', channel_category: '인지 광고', slack_channel_id: 'C1', slack_ts: '1.3' },
   { id: 4, platform: 'instagram', source: null, review_decision: null, hidden_confirmed: false, product_name: '', channel_category: null },
 ];
 
@@ -46,8 +47,35 @@ test('카테고리×플랫폼 그룹에서 유기 TikTok hide는 수동 미실�
   const message = buildUnresolvedMessage(CFG, tiktok);
   assert.match(message, /실제 숨김 미확인/);
   assert.match(message, /수동 숨김 필요 1/);
-  assert.match(message, /workspace\.test\/archives\/C1\/p11/);
+  assert.match(message, /www\.tiktok\.com\/@sat\/video\/1\|▶ 영상 열기/);
+  assert.match(message, /www\.tiktok\.com\/@sat\/video\/2\|▶ 영상 열기/);
+  assert.doesNotMatch(message, /workspace\.test\/archives\/C1\/p11/);
   assert.doesNotMatch(message, /comment_id/);
+});
+
+test('수동숨김 대상은 post_url, 자동숨김 대상은 Slack 카드로 라우팅', () => {
+  assert.deepEqual(unresolvedActionLink(CFG, rows[0], 0), {
+    url: 'https://www.tiktok.com/@sat/video/1', label: '▶ 영상 열기', manual: true,
+  });
+  assert.deepEqual(unresolvedActionLink(CFG, rows[2], 2), {
+    url: 'https://workspace.test/archives/C1/p13', label: '미해결 카드 3', manual: false,
+  });
+
+  const sponsorship = {
+    ...rows[2], id: 5, platform: 'instagram', source: 'meta_ads',
+    post_url: 'https://www.instagram.com/p/sponsored5/', channel_category: '협찬 (인플루언서)',
+  };
+  assert.deepEqual(unresolvedActionLink(CFG, sponsorship, 0), {
+    url: sponsorship.post_url, label: '▶ 영상 열기', manual: true,
+  });
+
+  const explicitlyManual = {
+    ...rows[2], id: 6, review_decision: 'manual_hide_required',
+    post_url: 'https://www.youtube.com/watch?v=manual6',
+  };
+  assert.deepEqual(unresolvedActionLink(CFG, explicitlyManual, 0), {
+    url: explicitlyManual.post_url, label: '▶ 영상 열기', manual: true,
+  });
 });
 
 test('워치독은 일일 멱등 claim 뒤 기존 담당 스레드에만 알리고 재실행은 dedup', async () => {
