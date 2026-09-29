@@ -120,6 +120,7 @@ test('verified-open scheduled loop queues exactly one guarded continuation', asy
   assert.deepEqual(chainCalls[0], {
     gateOpen: true,
     scannedThisRun: true,
+    lastScannedAt: Date.parse('2026-09-22T03:00:00Z'),
     now: Date.parse('2026-09-22T03:00:00Z'),
   });
   assert.deepEqual(result.chain, { dispatched: true, reason: 'queued' });

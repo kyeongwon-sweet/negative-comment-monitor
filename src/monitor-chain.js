@@ -1,5 +1,5 @@
 import { kstDateKey } from './schedule.js';
-import { dispatchMonitor } from './monitor-dispatch.js';
+import { dispatchFloorWake, dispatchMonitor } from './monitor-dispatch.js';
 import { fetchLatestMonitorScanHeartbeat } from './monitor-scan-heartbeat.js';
 
 export const DEFAULT_MONITOR_CHAIN_MAX_PER_DAY = 24;
@@ -57,7 +57,11 @@ function chainConfig(env) {
 }
 
 function chainPrefix(now, kind = 'intensive') {
-  const namespace = kind === 'floor' ? 'monitor-floor-chain' : 'monitor-chain';
+  const namespace = kind === 'floor'
+    ? 'monitor-floor-chain'
+    : kind === 'wake'
+      ? 'monitor-floor-wake'
+      : 'monitor-chain';
   return `${namespace}:${kstDateKey(now)}:`;
 }
 
@@ -78,6 +82,10 @@ async function loadClaims(config, now, fetchImpl, kind) {
 
 async function claimSlot(config, env, now, fetchImpl, kind) {
   const runKey = chainRunKey(env, now, kind);
+  return claimRunKey(config, runKey, now, fetchImpl);
+}
+
+async function claimRunKey(config, runKey, now, fetchImpl) {
   const response = await fetchImpl(`${config.supabaseUrl}/rest/v1/cost_usage_ledger?on_conflict=run_key`, {
     method: 'POST',
     headers: headers(config, {
@@ -94,6 +102,10 @@ async function claimSlot(config, env, now, fetchImpl, kind) {
   if (!response.ok) throw new Error(`monitor chain ledger claim HTTP ${response.status}`);
   const rows = await response.json();
   return { claimed: Array.isArray(rows) && rows.length > 0, runKey };
+}
+
+function floorWakeRunKey(now, wakeAt) {
+  return `${chainPrefix(now, 'wake')}${Math.floor(wakeAt / 1000)}`;
 }
 
 async function queueClaimedMonitor({
@@ -163,10 +175,73 @@ async function releaseSlot(config, runKey, fetchImpl) {
   }
 }
 
+async function queueClaimedFloorWake({
+  config,
+  env,
+  now,
+  wakeAt,
+  fetchImpl,
+  scheduleWake,
+}) {
+  const runKey = floorWakeRunKey(now, wakeAt);
+  let claim;
+  try {
+    claim = await claimRunKey(config, runKey, now, fetchImpl);
+  } catch (error) {
+    console.error(`[monitor-chain] floor wake claim failed; skipping wake: ${error.message}`);
+    return { scheduled: false, reason: 'floor-wake-claim-error', error: error.message };
+  }
+  if (!claim.claimed) {
+    return { scheduled: false, reason: 'floor-wake-already-claimed', wakeAt };
+  }
+
+  let claims;
+  try {
+    claims = await loadClaims(config, now, fetchImpl, 'wake');
+  } catch (error) {
+    await releaseSlot(config, runKey, fetchImpl);
+    console.error(`[monitor-chain] floor wake ledger read failed; skipping wake: ${error.message}`);
+    return { scheduled: false, reason: 'floor-wake-ledger-error', error: error.message };
+  }
+  const retained = claims
+    .map((row) => String(row?.run_key || ''))
+    .filter(Boolean)
+    .sort()
+    .slice(0, config.floorMaxPerDay);
+  if (!retained.includes(runKey)) {
+    await releaseSlot(config, runKey, fetchImpl);
+    return {
+      scheduled: false,
+      reason: 'floor-wake-daily-cap',
+      count: claims.length,
+      maxPerDay: config.floorMaxPerDay,
+    };
+  }
+
+  try {
+    await scheduleWake(env, fetchImpl, {
+      wakeAt,
+      floorMinutes: config.floorMinutes,
+      floorMaxPerDay: config.floorMaxPerDay,
+    });
+    return {
+      scheduled: true,
+      reason: 'floor-wake-scheduled',
+      wakeAt,
+      count: retained.indexOf(runKey) + 1,
+      maxPerDay: config.floorMaxPerDay,
+    };
+  } catch (error) {
+    await releaseSlot(config, runKey, fetchImpl);
+    return { scheduled: false, reason: 'floor-wake-dispatch-failed', error: error.message };
+  }
+}
+
 export async function chainNextMonitor(env = process.env, options = {}) {
   const now = Number(options.now ?? Date.now());
   const fetchImpl = options.fetchImpl || fetch;
   const dispatch = options.dispatch || dispatchMonitor;
+  const scheduleWake = options.scheduleWake || dispatchFloorWake;
   const config = chainConfig(env);
   const smoke = isMonitorChainSmoke(env);
 
@@ -202,7 +277,18 @@ export async function chainNextMonitor(env = process.env, options = {}) {
   // 이 run에서 이미 실제 스캔을 마쳤다면 heartbeat 조회 장애가 있더라도 즉시 floor를
   // 연쇄하지 않는다. 기록 장애 때 최대 12회가 연속 실행되는 비용 폭주를 막는다.
   if (options.scannedThisRun) {
-    return { dispatched: false, reason: 'floor-scan-completed' };
+    const scannedAt = Number.isFinite(Number(options.lastScannedAt))
+      ? Number(options.lastScannedAt)
+      : now;
+    const wake = await queueClaimedFloorWake({
+      config,
+      env,
+      now,
+      wakeAt: scannedAt + config.floorMinutes * 60 * 1000,
+      fetchImpl,
+      scheduleWake,
+    });
+    return { dispatched: false, reason: 'floor-scan-completed', wake };
   }
 
   let lastScannedAt = null;
@@ -218,11 +304,20 @@ export async function chainNextMonitor(env = process.env, options = {}) {
   const floorMs = config.floorMinutes * 60 * 1000;
   const ageMinutes = Number.isFinite(ageMs) ? Math.floor(ageMs / (60 * 1000)) : null;
   if (ageMs < floorMs) {
+    const wake = await queueClaimedFloorWake({
+      config,
+      env,
+      now,
+      wakeAt: lastScannedAt + floorMs,
+      fetchImpl,
+      scheduleWake,
+    });
     return {
       dispatched: false,
       reason: 'floor-not-due',
       ageMinutes,
       floorMinutes: config.floorMinutes,
+      wake,
     };
   }
 

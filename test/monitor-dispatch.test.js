@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { dispatchMonitor } from '../src/monitor-dispatch.js';
+import { dispatchFloorWake, dispatchMonitor } from '../src/monitor-dispatch.js';
 
 const ENV = {
   GITHUB_REPOSITORY: 'owner/repo',
@@ -70,5 +70,24 @@ test('floor-chain dispatch propagates the floor marker, interval, and separate c
     monitor_chain_floor: 'true',
     monitor_chain_floor_minutes: '150',
     monitor_chain_floor_max_per_day: '12',
+  });
+});
+
+test('floor wake dispatch targets the lightweight waiter with an absolute timestamp', async () => {
+  let request;
+  const wakeAt = Date.parse('2026-09-22T05:30:00Z');
+  await dispatchFloorWake(ENV, async (url, options) => {
+    request = { url, options };
+    return new Response(null, { status: 204 });
+  }, { wakeAt, floorMinutes: 150, floorMaxPerDay: 12 });
+
+  assert.match(request.url, /monitor-floor-wake\.yml\/dispatches$/);
+  assert.deepEqual(JSON.parse(request.options.body), {
+    ref: 'master',
+    inputs: {
+      wake_at: '2026-09-22T05:30:00.000Z',
+      monitor_chain_floor_minutes: '150',
+      monitor_chain_floor_max_per_day: '12',
+    },
   });
 });

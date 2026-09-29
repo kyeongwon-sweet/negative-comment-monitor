@@ -64,6 +64,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
   let dependenciesInstalled = false;
   let monitorRuns = 0;
   let verifiedGateOpen = false;
+  let lastScannedAt = null;
 
   for (let iteration = 0; iteration < iterations; iteration += 1) {
     let gateOpen = false;
@@ -95,6 +96,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
       monitorRuns += 1;
       try {
         const scannedAt = now();
+        lastScannedAt = scannedAt;
         await recordHeartbeat({
           scannedAt,
           runId: env.GITHUB_RUN_ID,
@@ -130,6 +132,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
     chainResult = await chain({
       gateOpen: verifiedGateOpen,
       scannedThisRun: monitorRuns > 0,
+      lastScannedAt,
       now: now(),
     });
   } catch (error) {

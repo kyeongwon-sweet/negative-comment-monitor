@@ -27,6 +27,30 @@ function jsonResponse(body, status = 200) {
   });
 }
 
+function floorWakeHarness(lastScannedAt) {
+  const calls = [];
+  const wakes = [];
+  let claim = null;
+  return {
+    calls,
+    wakes,
+    fetchImpl: async (url, options = {}) => {
+      const value = String(url);
+      calls.push({ url: value, options });
+      if (value.includes('monitor_scan_heartbeats')) {
+        return jsonResponse([{ scanned_at: new Date(lastScannedAt).toISOString() }]);
+      }
+      if (value.includes('?on_conflict=run_key')) {
+        claim = JSON.parse(options.body);
+        return jsonResponse([claim]);
+      }
+      if (value.includes('?select=run_key')) return jsonResponse(claim ? [claim] : []);
+      throw new Error(`unexpected URL: ${url}`);
+    },
+    scheduleWake: async (_env, _fetch, options) => { wakes.push(options); },
+  };
+}
+
 test('chain flags are explicit and do not infer from generic workflow_dispatch', () => {
   assert.equal(monitorChainEnabled(ENV), true);
   assert.equal(isMonitorChainRun(ENV), true);
@@ -37,39 +61,151 @@ test('chain flags are explicit and do not infer from generic workflow_dispatch',
 });
 
 test('closed active gate does not dispatch while the latest scan is newer than the floor', async () => {
-  const calls = [];
+  const harness = floorWakeHarness(NOW - 149 * 60_000);
   const result = await chainNextMonitor(ENV, {
     now: NOW,
     gateOpen: false,
-    fetchImpl: async (url) => {
-      calls.push(String(url));
-      return jsonResponse([{ scanned_at: new Date(NOW - 149 * 60_000).toISOString() }]);
-    },
+    fetchImpl: harness.fetchImpl,
+    scheduleWake: harness.scheduleWake,
     dispatch: async () => { throw new Error('must not dispatch'); },
   });
 
-  assert.deepEqual(result, {
-    dispatched: false,
-    reason: 'floor-not-due',
-    ageMinutes: 149,
-    floorMinutes: 150,
-  });
-  assert.equal(calls.length, 1);
-  assert.match(calls[0], /monitor_scan_heartbeats/);
+  assert.equal(result.reason, 'floor-not-due');
+  assert.equal(result.ageMinutes, 149);
+  assert.equal(result.floorMinutes, 150);
+  assert.equal(result.wake.scheduled, true);
+  assert.equal(result.wake.wakeAt, NOW + 60_000);
+  assert.equal(harness.wakes.length, 1);
+  assert.equal(harness.wakes[0].wakeAt, NOW + 60_000);
+  assert.equal(harness.calls.filter((call) => call.url.includes('monitor_scan_heartbeats')).length, 1);
 });
 
-test('a completed scan never immediately floor-chains when the gate closes', async () => {
-  let calls = 0;
+test('a completed scan reserves exactly one delayed floor wake without immediate floor chaining', async () => {
+  const harness = floorWakeHarness(NOW);
   const result = await chainNextMonitor(ENV, {
     now: NOW,
     gateOpen: false,
     scannedThisRun: true,
-    fetchImpl: async () => { calls += 1; throw new Error('must not call'); },
-    dispatch: async () => { calls += 1; },
+    lastScannedAt: NOW,
+    fetchImpl: harness.fetchImpl,
+    scheduleWake: harness.scheduleWake,
+    dispatch: async () => { throw new Error('must not dispatch monitor'); },
   });
 
-  assert.deepEqual(result, { dispatched: false, reason: 'floor-scan-completed' });
-  assert.equal(calls, 0);
+  assert.equal(result.reason, 'floor-scan-completed');
+  assert.equal(result.wake.scheduled, true);
+  assert.equal(result.wake.wakeAt, NOW + 150 * 60_000);
+  assert.equal(harness.wakes.length, 1);
+  assert.equal(harness.calls.some((call) => call.url.includes('monitor_scan_heartbeats')), false);
+});
+
+test('floor wake reservations obey the same explicit daily cap and do not dispatch past it', async () => {
+  const calls = [];
+  const existing = { run_key: 'monitor-floor-wake:2026-09-22:0000000000' };
+  let claimed;
+  let wakeDispatches = 0;
+  const result = await chainNextMonitor({
+    ...ENV,
+    MONITOR_CHAIN_FLOOR_MAX_PER_DAY: '1',
+  }, {
+    now: NOW,
+    gateOpen: false,
+    scannedThisRun: true,
+    lastScannedAt: NOW,
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      if (String(url).includes('?on_conflict=run_key')) {
+        claimed = JSON.parse(options.body);
+        return jsonResponse([claimed]);
+      }
+      if (String(url).includes('?select=run_key')) return jsonResponse([existing, claimed]);
+      if (options.method === 'DELETE') return new Response(null, { status: 204 });
+      throw new Error(`unexpected URL: ${url}`);
+    },
+    scheduleWake: async () => { wakeDispatches += 1; },
+  });
+
+  assert.equal(result.reason, 'floor-scan-completed');
+  assert.equal(result.wake.reason, 'floor-wake-daily-cap');
+  assert.equal(result.wake.maxPerDay, 1);
+  assert.equal(wakeDispatches, 0);
+  assert.equal(calls.at(-1).options.method, 'DELETE');
+});
+
+test('six hours without GitHub schedules stays within the 150-minute scan floor', async () => {
+  let now = NOW;
+  let lastScannedAt = NOW;
+  let runId = 1;
+  const end = NOW + 6 * 60 * 60_000;
+  const scans = [NOW];
+  const wakes = [];
+  const ledger = new Map();
+
+  const fetchImpl = async (url, options = {}) => {
+    const value = String(url);
+    if (value.includes('monitor_scan_heartbeats')) {
+      return jsonResponse([{ scanned_at: new Date(lastScannedAt).toISOString() }]);
+    }
+    if (value.includes('?on_conflict=run_key')) {
+      const row = JSON.parse(options.body);
+      if (ledger.has(row.run_key)) return jsonResponse([]);
+      ledger.set(row.run_key, row);
+      return jsonResponse([row]);
+    }
+    if (value.includes('?select=run_key')) {
+      const decoded = decodeURIComponent(value);
+      const prefix = decoded.match(/run_key=like\.([^*]+)\*/)?.[1] || '';
+      return jsonResponse([...ledger.values()].filter((row) => row.run_key.startsWith(prefix)));
+    }
+    if (options.method === 'DELETE') {
+      const decoded = decodeURIComponent(value);
+      const runKey = decoded.match(/run_key=eq\.(.+)$/)?.[1];
+      if (runKey) ledger.delete(runKey);
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected URL: ${url}`);
+  };
+  const scheduleWake = async (_env, _fetch, options) => { wakes.push(options.wakeAt); };
+  const env = () => ({ ...ENV, GITHUB_RUN_ID: String(runId) });
+
+  await chainNextMonitor(env(), {
+    now,
+    gateOpen: false,
+    scannedThisRun: true,
+    lastScannedAt,
+    fetchImpl,
+    scheduleWake,
+  });
+
+  while (wakes.length && Math.min(...wakes) <= end) {
+    now = Math.min(...wakes);
+    wakes.splice(wakes.indexOf(now), 1);
+    runId += 1;
+    const result = await chainNextMonitor(env(), {
+      now,
+      gateOpen: false,
+      fetchImpl,
+      scheduleWake,
+      dispatch: async () => {},
+    });
+    assert.equal(result.reason, 'floor-queued');
+    lastScannedAt = now;
+    scans.push(now);
+    await chainNextMonitor(env(), {
+      now,
+      gateOpen: false,
+      scannedThisRun: true,
+      lastScannedAt,
+      fetchImpl,
+      scheduleWake,
+    });
+  }
+
+  const gaps = scans.slice(1).map((scan, index) => scan - scans[index]);
+  assert.ok(gaps.length >= 2);
+  assert.ok(gaps.every((gap) => gap <= 150 * 60_000));
+  assert.equal(wakes.length, 1);
+  assert.equal(wakes[0], NOW + 450 * 60_000);
 });
 
 test('smoke probe may test one real queue hop with the gate closed only when capped at one', async () => {
@@ -290,20 +426,18 @@ test('floor dispatch failure releases only the floor claim and remains fail-soft
 });
 
 test('floor interval is clamped below the 210-minute watchdog threshold', async () => {
+  const harness = floorWakeHarness(NOW - 208 * 60_000);
   const result = await chainNextMonitor({ ...ENV, MONITOR_CHAIN_FLOOR_MINUTES: '999' }, {
     now: NOW,
     gateOpen: false,
-    fetchImpl: async (url) => {
-      assert.match(String(url), /monitor_scan_heartbeats/);
-      return jsonResponse([{ scanned_at: new Date(NOW - 208 * 60_000).toISOString() }]);
-    },
+    fetchImpl: harness.fetchImpl,
+    scheduleWake: harness.scheduleWake,
     dispatch: async () => { throw new Error('must not dispatch'); },
   });
 
-  assert.deepEqual(result, {
-    dispatched: false,
-    reason: 'floor-not-due',
-    ageMinutes: 208,
-    floorMinutes: 209,
-  });
+  assert.equal(result.reason, 'floor-not-due');
+  assert.equal(result.ageMinutes, 208);
+  assert.equal(result.floorMinutes, 209);
+  assert.equal(harness.wakes.length, 1);
+  assert.equal(harness.wakes[0].wakeAt, NOW + 60_000);
 });

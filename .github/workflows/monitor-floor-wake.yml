@@ -1,0 +1,50 @@
+name: Negative comment monitor floor wake
+run-name: Negative comment monitor floor wake (${{ inputs.wake_at }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      wake_at:
+        description: Absolute UTC time for the next quiet-period floor check
+        required: true
+        type: string
+      monitor_chain_floor_minutes:
+        description: Internal floor interval override
+        required: false
+        type: string
+        default: '150'
+      monitor_chain_floor_max_per_day:
+        description: Internal daily floor and waiter cap
+        required: false
+        type: string
+        default: '12'
+
+# This waiter must never hold negative-comment-monitor-production while sleeping.
+# A later real scan dispatches a newer absolute wake and replaces the obsolete waiter.
+concurrency:
+  group: negative-comment-monitor-floor-wake
+  cancel-in-progress: true
+
+jobs:
+  wait-and-dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 220
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Wait outside production concurrency and re-check the floor
+        run: node src/monitor-floor-wake.js
+        env:
+          MONITOR_FLOOR_WAKE_AT: ${{ inputs.wake_at }}
+          MONITOR_CHAIN_ENABLED: 'true'
+          MONITOR_CHAIN_MAX_PER_DAY: ${{ vars.MONITOR_CHAIN_MAX_PER_DAY || '24' }}
+          MONITOR_CHAIN_FLOOR_MINUTES: ${{ inputs.monitor_chain_floor_minutes || vars.MONITOR_CHAIN_FLOOR_MINUTES || '150' }}
+          MONITOR_CHAIN_FLOOR_MAX_PER_DAY: ${{ inputs.monitor_chain_floor_max_per_day || vars.MONITOR_CHAIN_FLOOR_MAX_PER_DAY || '12' }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

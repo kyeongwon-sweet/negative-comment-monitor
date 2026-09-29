@@ -32,3 +32,35 @@ export async function dispatchMonitor(env = process.env, fetchImpl = fetch, opti
   }
   return true;
 }
+
+export async function dispatchFloorWake(env = process.env, fetchImpl = fetch, options = {}) {
+  const repo = String(env.GITHUB_REPOSITORY || '').trim();
+  const token = String(env.GH_TOKEN || env.GITHUB_TOKEN || '').trim();
+  const ref = String(env.GITHUB_REF_NAME || 'master').trim() || 'master';
+  const wakeAt = Number(options.wakeAt);
+  if (!repo || !token) throw new Error('Missing GITHUB_REPOSITORY or token');
+  if (!Number.isFinite(wakeAt)) throw new Error('Missing floor wake timestamp');
+
+  const url = `https://api.github.com/repos/${repo}/actions/workflows/monitor-floor-wake.yml/dispatches`;
+  const response = await fetchImpl(url, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: 'application/vnd.github+json',
+      'content-type': 'application/json',
+      'user-agent': 'ncm-monitor-floor-wake',
+    },
+    body: JSON.stringify({
+      ref,
+      inputs: {
+        wake_at: new Date(wakeAt).toISOString(),
+        monitor_chain_floor_minutes: String(options.floorMinutes || ''),
+        monitor_chain_floor_max_per_day: String(options.floorMaxPerDay || ''),
+      },
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`GitHub floor wake dispatch API ${response.status}: ${(await response.text()).slice(0, 200)}`);
+  }
+  return true;
+}

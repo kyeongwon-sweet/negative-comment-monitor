@@ -16,6 +16,10 @@ const repeatOffenderWorkflow = readFileSync(
   'utf8',
 );
 const heartbeatWorkflow = readFileSync(new URL('../.github/workflows/heartbeat.yml', import.meta.url), 'utf8');
+const floorWakeWorkflow = readFileSync(
+  new URL('../.github/workflows/monitor-floor-wake.yml', import.meta.url),
+  'utf8',
+);
 
 test('협찬 파워채널 담당자 변수를 메인 감시 런타임에 전달한다', () => {
   assert.match(
@@ -96,4 +100,14 @@ test('하트비트는 하루 두 번을 유지하며 3.5시간 공백 임계를 
   assert.match(heartbeatWorkflow, /HEARTBEAT_ALERT_COOLDOWN_HOURS:\s*'24'/);
   assert.match(heartbeatWorkflow, /SUPABASE_SERVICE_ROLE_KEY:\s*\$\{\{ secrets\.SUPABASE_SERVICE_ROLE_KEY \}\}/);
   assert.match(heartbeatWorkflow, /max_gap_minutes:/);
+});
+
+test('floor waiter는 production concurrency 밖에서 절대시각까지 대기한다', () => {
+  assert.match(floorWakeWorkflow, /group:\s*negative-comment-monitor-floor-wake/);
+  assert.match(floorWakeWorkflow, /cancel-in-progress:\s*true/);
+  assert.doesNotMatch(floorWakeWorkflow, /group:\s*negative-comment-monitor-production/);
+  assert.match(floorWakeWorkflow, /run:\s*node src\/monitor-floor-wake\.js/);
+  assert.match(floorWakeWorkflow, /MONITOR_FLOOR_WAKE_AT:\s*\$\{\{ inputs\.wake_at \}\}/);
+  assert.match(floorWakeWorkflow, /MONITOR_CHAIN_FLOOR_MAX_PER_DAY:.*'12'/);
+  assert.match(floorWakeWorkflow, /actions:\s*write/);
 });
