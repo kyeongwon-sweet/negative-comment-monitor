@@ -99,37 +99,71 @@ test('a completed scan reserves exactly one delayed floor wake without immediate
   assert.equal(harness.calls.some((call) => call.url.includes('monitor_scan_heartbeats')), false);
 });
 
-test('floor wake reservations obey the same explicit daily cap and do not dispatch past it', async () => {
-  const calls = [];
-  const existing = { run_key: 'monitor-floor-wake:2026-09-22:0000000000' };
-  let claimed;
-  let wakeDispatches = 0;
-  const result = await chainNextMonitor({
-    ...ENV,
-    MONITOR_CHAIN_FLOOR_MAX_PER_DAY: '1',
-  }, {
-    now: NOW,
-    gateOpen: false,
-    scannedThisRun: true,
-    lastScannedAt: NOW,
-    fetchImpl: async (url, options = {}) => {
-      calls.push({ url: String(url), options });
-      if (String(url).includes('?on_conflict=run_key')) {
-        claimed = JSON.parse(options.body);
-        return jsonResponse([claimed]);
-      }
-      if (String(url).includes('?select=run_key')) return jsonResponse([existing, claimed]);
-      if (options.method === 'DELETE') return new Response(null, { status: 204 });
-      throw new Error(`unexpected URL: ${url}`);
-    },
-    scheduleWake: async () => { wakeDispatches += 1; },
-  });
+test('twenty replaced floor wake reservations do not consume the actual dispatch cap', async () => {
+  const wakes = [];
+  let ledgerCalls = 0;
 
-  assert.equal(result.reason, 'floor-scan-completed');
-  assert.equal(result.wake.reason, 'floor-wake-daily-cap');
-  assert.equal(result.wake.maxPerDay, 1);
-  assert.equal(wakeDispatches, 0);
-  assert.equal(calls.at(-1).options.method, 'DELETE');
+  for (let index = 0; index < 21; index += 1) {
+    const now = NOW + index * 60_000;
+    const result = await chainNextMonitor({
+      ...ENV,
+      GITHUB_RUN_ID: String(1_000 + index),
+      MONITOR_CHAIN_FLOOR_MAX_PER_DAY: '12',
+    }, {
+      now,
+      gateOpen: false,
+      scannedThisRun: true,
+      lastScannedAt: now,
+      fetchImpl: async () => {
+        ledgerCalls += 1;
+        throw new Error('wake reservation must not touch the daily ledger');
+      },
+      scheduleWake: async (_env, _fetch, options) => { wakes.push(options.wakeAt); },
+    });
+
+    assert.equal(result.reason, 'floor-scan-completed');
+    assert.equal(result.wake.reason, 'floor-wake-scheduled');
+    assert.equal(result.wake.maxPerDay, 12);
+  }
+
+  assert.equal(wakes.length, 21);
+  assert.equal(new Set(wakes).size, 21);
+  assert.equal(ledgerCalls, 0);
+});
+
+test('floor cap counts actual waiter dispatches and rejects only the thirteenth', async () => {
+  const ledger = new Map();
+  let dispatches = 0;
+  const fetchImpl = async (url, options = {}) => {
+    const value = String(url);
+    if (value.includes('monitor_scan_heartbeats')) return jsonResponse([]);
+    if (value.includes('?select=run_key')) return jsonResponse([...ledger.values()]);
+    if (value.includes('?on_conflict=run_key')) {
+      const row = JSON.parse(options.body);
+      if (ledger.has(row.run_key)) return jsonResponse([]);
+      ledger.set(row.run_key, row);
+      return jsonResponse([row]);
+    }
+    throw new Error(`unexpected URL: ${url}`);
+  };
+
+  for (let index = 0; index < 13; index += 1) {
+    const result = await chainNextMonitor({
+      ...ENV,
+      GITHUB_RUN_ID: String(2_000 + index),
+      MONITOR_CHAIN_FLOOR_MAX_PER_DAY: '12',
+    }, {
+      now: NOW + index * 60_000,
+      gateOpen: false,
+      fetchImpl,
+      dispatch: async () => { dispatches += 1; },
+    });
+    assert.equal(result.reason, index < 12 ? 'floor-queued' : 'floor-daily-cap');
+  }
+
+  assert.equal(dispatches, 12);
+  assert.equal(ledger.size, 12);
+  assert.ok([...ledger.keys()].every((key) => key.startsWith('monitor-floor-chain:')));
 });
 
 test('six hours without GitHub schedules stays within the 150-minute scan floor', async () => {

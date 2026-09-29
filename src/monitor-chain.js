@@ -59,9 +59,7 @@ function chainConfig(env) {
 function chainPrefix(now, kind = 'intensive') {
   const namespace = kind === 'floor'
     ? 'monitor-floor-chain'
-    : kind === 'wake'
-      ? 'monitor-floor-wake'
-      : 'monitor-chain';
+    : 'monitor-chain';
   return `${namespace}:${kstDateKey(now)}:`;
 }
 
@@ -102,10 +100,6 @@ async function claimRunKey(config, runKey, now, fetchImpl) {
   if (!response.ok) throw new Error(`monitor chain ledger claim HTTP ${response.status}`);
   const rows = await response.json();
   return { claimed: Array.isArray(rows) && rows.length > 0, runKey };
-}
-
-function floorWakeRunKey(now, wakeAt) {
-  return `${chainPrefix(now, 'wake')}${Math.floor(wakeAt / 1000)}`;
 }
 
 async function queueClaimedMonitor({
@@ -175,49 +169,16 @@ async function releaseSlot(config, runKey, fetchImpl) {
   }
 }
 
-async function queueClaimedFloorWake({
+async function queueFloorWake({
   config,
   env,
-  now,
   wakeAt,
   fetchImpl,
   scheduleWake,
 }) {
-  const runKey = floorWakeRunKey(now, wakeAt);
-  let claim;
-  try {
-    claim = await claimRunKey(config, runKey, now, fetchImpl);
-  } catch (error) {
-    console.error(`[monitor-chain] floor wake claim failed; skipping wake: ${error.message}`);
-    return { scheduled: false, reason: 'floor-wake-claim-error', error: error.message };
-  }
-  if (!claim.claimed) {
-    return { scheduled: false, reason: 'floor-wake-already-claimed', wakeAt };
-  }
-
-  let claims;
-  try {
-    claims = await loadClaims(config, now, fetchImpl, 'wake');
-  } catch (error) {
-    await releaseSlot(config, runKey, fetchImpl);
-    console.error(`[monitor-chain] floor wake ledger read failed; skipping wake: ${error.message}`);
-    return { scheduled: false, reason: 'floor-wake-ledger-error', error: error.message };
-  }
-  const retained = claims
-    .map((row) => String(row?.run_key || ''))
-    .filter(Boolean)
-    .sort()
-    .slice(0, config.floorMaxPerDay);
-  if (!retained.includes(runKey)) {
-    await releaseSlot(config, runKey, fetchImpl);
-    return {
-      scheduled: false,
-      reason: 'floor-wake-daily-cap',
-      count: claims.length,
-      maxPerDay: config.floorMaxPerDay,
-    };
-  }
-
+  // Pending waiters replace each other through workflow concurrency and must not
+  // consume the daily floor budget. The budget is claimed only after a waiter
+  // wakes and queueClaimedMonitor() is about to dispatch a real floor scan.
   try {
     await scheduleWake(env, fetchImpl, {
       wakeAt,
@@ -228,11 +189,9 @@ async function queueClaimedFloorWake({
       scheduled: true,
       reason: 'floor-wake-scheduled',
       wakeAt,
-      count: retained.indexOf(runKey) + 1,
       maxPerDay: config.floorMaxPerDay,
     };
   } catch (error) {
-    await releaseSlot(config, runKey, fetchImpl);
     return { scheduled: false, reason: 'floor-wake-dispatch-failed', error: error.message };
   }
 }
@@ -280,10 +239,9 @@ export async function chainNextMonitor(env = process.env, options = {}) {
     const scannedAt = Number.isFinite(Number(options.lastScannedAt))
       ? Number(options.lastScannedAt)
       : now;
-    const wake = await queueClaimedFloorWake({
+    const wake = await queueFloorWake({
       config,
       env,
-      now,
       wakeAt: scannedAt + config.floorMinutes * 60 * 1000,
       fetchImpl,
       scheduleWake,
@@ -304,10 +262,9 @@ export async function chainNextMonitor(env = process.env, options = {}) {
   const floorMs = config.floorMinutes * 60 * 1000;
   const ageMinutes = Number.isFinite(ageMs) ? Math.floor(ageMs / (60 * 1000)) : null;
   if (ageMs < floorMs) {
-    const wake = await queueClaimedFloorWake({
+    const wake = await queueFloorWake({
       config,
       env,
-      now,
       wakeAt: lastScannedAt + floorMs,
       fetchImpl,
       scheduleWake,

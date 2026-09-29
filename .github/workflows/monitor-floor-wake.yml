@@ -14,7 +14,7 @@ on:
         type: string
         default: '150'
       monitor_chain_floor_max_per_day:
-        description: Internal daily floor and waiter cap
+        description: Daily cap for actual floor scan dispatches after wake
         required: false
         type: string
         default: '12'
