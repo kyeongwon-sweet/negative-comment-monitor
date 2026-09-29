@@ -36,6 +36,7 @@ export function loadSlackAssignees(env = process.env, now = Date.now()) {
     viralVideoOwned: String(env.SLACK_ASSIGNEE_VIRAL_VIDEO_OWNED || '').trim(),
     other: String(env.SLACK_ASSIGNEE_OTHER || '').trim(),
     owned: String(env.SLACK_ASSIGNEE_OWNED || '').trim(),
+    pbachi: String(env.SLACK_ASSIGNEE_PBACHI || '').trim(), // P바치 상품군 전담(이재원)
     jdBok: String(env.SLACK_ASSIGNEE_JDBOK || '').trim(),
     awareness: scheduledAssignee(env, 'SLACK_ASSIGNEE_AWARENESS', 'SLACK_ASSIGNEE_AWARENESS_NEXT', nextRoutingActive),
     sponsorship: String(env.SLACK_ASSIGNEE_SPONSORSHIP || '').trim(),

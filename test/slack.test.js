@@ -9,6 +9,7 @@ const assignees = {
   viralVideoOwned: 'U_VIDEO_OWNED',
   other: 'U_OTHER',
   owned: 'U_OWNED',
+  pbachi: 'U_PBACHI',
   jdBok: 'U_JDBOK',
   awareness: 'U_AWARENESS',
   sponsorship: 'U_SPONSORSHIP',
@@ -65,6 +66,19 @@ test('productGroup: JD 포함=jd, P로 시작=p, 그 외=other', () => {
   assert.equal(productGroup('DB혼'), 'other');
   assert.equal(productGroup('C혼'), 'other');
   assert.equal(productGroup(''), 'other');
+  // P바치는 'p'로 시작하지만 파인트가 아닌 별개 상품군(pbachi). 정확히 'P바치'만.
+  assert.equal(productGroup('P바치'), 'pbachi');
+  assert.equal(productGroup('p바치'), 'pbachi');
+  assert.equal(productGroup('P'), 'p');   // 파인트는 그대로
+  assert.equal(productGroup('P말'), 'p');
+});
+test('P바치: 전 카테고리를 이재원(pbachi 슬롯)으로, 파인트와 분리', () => {
+  for (const c of ['인지 광고', '바이럴 (배너)', '협찬 (인플루언서)', '온드미디어', '위성채널', '소유 YouTube']) {
+    assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: c }, assignees), 'U_PBACHI', `P바치 ${c}`);
+  }
+  assert.equal(productLabel(productGroup('P바치')), 'P바치');
+  // 파인트는 영향 없음
+  assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '인지 광고' }, assignees), 'U_P_AWARENESS');
 });
 test('videoAssigneeFromAdTitle: 광고명 마지막 이름을 Slack ID로 매핑', () => {
   const map = { '정요한': 'U_VIDEO', '김유진': 'U_KJ' };

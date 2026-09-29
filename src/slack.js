@@ -45,6 +45,8 @@ export function assigneeForChannelCategory(channelCategory, assignees = {}) {
 export function productGroup(productName) {
   const p = String(productName || '').trim().toLowerCase();
   if (!p) return 'other';
+  // 'P바치'는 'p'로 시작하지만 파인트와 별개 상품군 → 파인트 판정보다 먼저 잡는다.
+  if (p === 'p바치') return 'pbachi';
   if (p.startsWith('jg') || p.includes('제과') || p.includes('블트하')) return 'jg';
   if (p.includes('jd')) return 'jd';
   if (p.startsWith('p')) return 'p';
@@ -74,6 +76,7 @@ export function productLabel(group) {
   if (group === 'jd') return '쫀득바';
   if (group === 'p') return '파인트';
   if (group === 'jg') return '제과';
+  if (group === 'pbachi') return 'P바치';
   return '기타';
 }
 
@@ -99,7 +102,10 @@ export function assigneeForTarget(target, assignees = {}) {
   const isOwned = category.includes('온드'); // 온드미디어
   const isOwnedYoutube = category.includes('소유'); // 소유 YouTube(자사 유튜브 채널)
   const isAwareness = category.includes('인지'); // 인지(메타) 광고 부정댓글 전용 담당자
-  if (group === 'jd') {
+  if (group === 'pbachi') {
+    // P바치는 카테고리 구분 없이 전 카테고리를 이재원 한 명으로 라우팅.
+    if (assignees.pbachi) return assignees.pbachi;
+  } else if (group === 'jd') {
     // 쫀득바는 위성채널만 별도 담당(김보나), 그 외 전 카테고리(인지광고·바이럴·협찬·온드·소유YouTube 등)는
     // 대표 담당(김바다) 하나로 라우팅. 위성은 base satellite로 폴백해 최소한 위성 담당이 유지되게 한다.
     if (isSatellite) return assignees.jd?.satellite || assignees.satellite || '';
