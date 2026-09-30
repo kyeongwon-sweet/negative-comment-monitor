@@ -13,7 +13,7 @@ const assignees = {
   jdBok: 'U_JDBOK',
   awareness: 'U_AWARENESS',
   sponsorship: 'U_SPONSORSHIP',
-  jd: { primary: 'U_JD_PRIMARY', satellite: 'U_JD_SAT' },
+  jd: { primary: 'U_JD_PRIMARY', viral: 'U_JD_VIRAL', satellite: 'U_JD_SAT' },
   p: { viralBanner: 'U_P_BANNER', viralVideo: 'U_P_VIDEO', powerChannel: 'U_P_POWER', sponsorship: 'U_P_SPON', awareness: 'U_P_AWARENESS', ownedYoutube: 'U_P_OWNED_YT' },
   jg: { primary: 'U_JG', additional: ['U_JG_2', 'U_JG_3', 'U_JG_4'] },
 };
@@ -138,9 +138,9 @@ test('alert card(바이럴): 소재명 제작자(extraAssignees)만 태그, 없�
   // 제작자 있으면 그 사람만(황경원/기타 base 제외)
   const withCreator = buildAlertBlocks({ url: 'https://example.com', channelCategory: '바이럴 (영상)', productName: 'JD멜', extraAssignees: ['U_VIDEO'] }, comment, undefined, assignees);
   assert.ok(withCreator.some((b) => b.text?.text === '*담당자*\n<@U_VIDEO>'));
-  // 제작자 매핑 없으면 base(쫀득바 대표 담당 김바다)로 폴백
+  // 제작자 매핑 없으면 base(쫀득바 바이럴 담당 김어진)로 폴백
   const noCreator = buildAlertBlocks({ url: 'https://example.com', channelCategory: '바이럴 (영상)', productName: 'JD멜', extraAssignees: [] }, comment, undefined, assignees);
-  assert.ok(noCreator.some((b) => b.text?.text === '*담당자*\n<@U_JD_PRIMARY>'));
+  assert.ok(noCreator.some((b) => b.text?.text === '*담당자*\n<@U_JD_VIRAL>'));
   // 배너도 동일
   const banner = buildAlertBlocks({ url: 'https://example.com', channelCategory: '바이럴 (배너)', productName: 'JD멜', extraAssignees: ['U_VIDEO'] }, comment, undefined, assignees);
   assert.ok(banner.some((b) => b.text?.text === '*담당자*\n<@U_VIDEO>'));
@@ -226,11 +226,11 @@ test('productLabel: jd=쫀득바, p=파인트, jg=제과, 그 외=기타', () =>
   assert.equal(productLabel('other'), '기타');
 });
 test('assigneeForTarget: 상품×카테고리 라우팅 + 미지정은 카테고리 기본값 폴백', () => {
-  // JD(쫀득바): 위성채널만 김보나(U_JD_SAT), 그 외 전 카테고리는 대표 담당(U_JD_PRIMARY).
+  // JD(쫀득바): 위성채널(U_JD_SAT)·바이럴(U_JD_VIRAL)=김어진, 그 외는 대표 담당(U_JD_PRIMARY).
   assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_JD_PRIMARY');
   assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (파워채널/매거진)' }, assignees), 'U_JD_PRIMARY');
-  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '바이럴 (배너)' }, assignees), 'U_JD_PRIMARY');
-  assert.equal(assigneeForTarget({ productName: 'JD망', channelCategory: '바이럴 (영상)' }, assignees), 'U_JD_PRIMARY');
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '바이럴 (배너)' }, assignees), 'U_JD_VIRAL');
+  assert.equal(assigneeForTarget({ productName: 'JD망', channelCategory: '바이럴 (영상)' }, assignees), 'U_JD_VIRAL');
   assert.equal(assigneeForTarget({ productName: 'JD', channelCategory: '온드미디어' }, assignees), 'U_JD_PRIMARY');
   assert.equal(assigneeForTarget({ productName: 'JD', channelCategory: '소유 YouTube' }, assignees), 'U_JD_PRIMARY');
   assert.equal(assigneeForTarget({ productName: 'JD멜', channelCategory: '위성채널' }, assignees), 'U_JD_SAT');
@@ -307,12 +307,12 @@ test('alert card label falls back to 기타 when product unknown', () => {
 });
 test('alert blocks mention the category assignee', () => {
   const blocks = buildAlertBlocks(
-    { row: 1, url: 'https://example.com', channelCategory: '바이럴(배너)', productName: 'JD멜' },
+    { row: 1, url: 'https://example.com', channelCategory: '바이럴 (배너)', productName: 'JD멜' },
     { id: 'c1', platform: 'instagram', text: '라라스윗 별로', risk: {} },
     undefined,
     assignees,
   );
-  assert.ok(blocks.some((block) => block.text?.text === '*담당자*\n<@U_JD_PRIMARY>'));
+  assert.ok(blocks.some((block) => block.text?.text === '*담당자*\n<@U_JD_VIRAL>'));
 });
 test('작성자는 메인 라인에만, 필드엔 중복 없음(B2)', () => {
   const blocks = buildAlertBlocks(

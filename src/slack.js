@@ -106,9 +106,10 @@ export function assigneeForTarget(target, assignees = {}) {
     // P바치는 카테고리 구분 없이 전 카테고리를 이재원 한 명으로 라우팅.
     if (assignees.pbachi) return assignees.pbachi;
   } else if (group === 'jd') {
-    // 쫀득바는 위성채널만 별도 담당(김보나), 그 외 전 카테고리(인지광고·바이럴·협찬·온드·소유YouTube 등)는
-    // 대표 담당(김바다) 하나로 라우팅. 위성은 base satellite로 폴백해 최소한 위성 담당이 유지되게 한다.
+    // 쫀득바: 위성채널·바이럴(배너/영상)=김어진, 그 외 전 카테고리(인지광고·협찬·온드·소유YouTube 등)는
+    // 대표 담당(김바다). 위성은 base satellite로 폴백해 최소한 위성 담당이 유지되게 한다.
     if (isSatellite) return assignees.jd?.satellite || assignees.satellite || '';
+    if ((isBanner || isVideo) && assignees.jd?.viral) return assignees.jd.viral;
     if (assignees.jd?.primary) return assignees.jd.primary;
   } else if (group === 'p') {
     if (isAwareness && assignees.p?.awareness) return assignees.p.awareness;           // 파인트 인지광고=박지원

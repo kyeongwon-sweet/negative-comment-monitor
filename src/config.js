@@ -41,8 +41,9 @@ export function loadSlackAssignees(env = process.env, now = Date.now()) {
     awareness: scheduledAssignee(env, 'SLACK_ASSIGNEE_AWARENESS', 'SLACK_ASSIGNEE_AWARENESS_NEXT', nextRoutingActive),
     sponsorship: String(env.SLACK_ASSIGNEE_SPONSORSHIP || '').trim(),
     jd: {
-      // 쫀득바는 위성채널만 별도 담당(satellite=김보나), 그 외 전 카테고리는 대표 담당(primary=김바다).
+      // 쫀득바: 위성채널·바이럴(배너/영상)=김어진, 그 외 전 카테고리는 대표 담당(primary=김바다).
       primary: String(env.SLACK_ASSIGNEE_JD_PRIMARY || '').trim(),
+      viral: String(env.SLACK_ASSIGNEE_JD_VIRAL || '').trim(),
       satellite: scheduledAssignee(env, 'SLACK_ASSIGNEE_JD_SATELLITE', 'SLACK_ASSIGNEE_JD_SATELLITE_NEXT', nextRoutingActive),
     },
     p: {

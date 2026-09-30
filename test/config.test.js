@@ -12,6 +12,7 @@ const BASE_ENV = {
   APIFY_TWITTER_ACTOR_ID: 'twitter',
   SLACK_ROUTING_EFFECTIVE_DATE_KST: '2026-08-17',
   SLACK_ASSIGNEE_JD_PRIMARY: 'U_JD_PRIMARY',
+  SLACK_ASSIGNEE_JD_VIRAL: 'U_JD_VIRAL',
   SLACK_ASSIGNEE_JD_POWER_CHANNEL: 'U09RCJ1B9ML',
   SLACK_ASSIGNEE_JD_SPONSORSHIP: 'OLD_SPONSORSHIP',
   SLACK_ASSIGNEE_JD_VIRAL_BANNER: 'OLD_BANNER',
@@ -36,12 +37,12 @@ test('scheduled routing switches exactly at 2026-08-17 00:00 KST', () => {
 test('JD routing keeps current assignees through Sunday and activates requested mapping Monday', () => {
   const before = loadConfig(BASE_ENV, Date.parse('2026-08-16T14:59:59Z'));
   assert.deepEqual(before.slackAssignees.jd, {
-    primary: 'U_JD_PRIMARY', satellite: 'OLD_SATELLITE',
+    primary: 'U_JD_PRIMARY', viral: 'U_JD_VIRAL', satellite: 'OLD_SATELLITE',
   });
 
   const after = loadConfig(BASE_ENV, Date.parse('2026-08-16T15:00:00Z'));
   assert.deepEqual(after.slackAssignees.jd, {
-    primary: 'U_JD_PRIMARY', satellite: 'U0BEVSGM2CD',
+    primary: 'U_JD_PRIMARY', viral: 'U_JD_VIRAL', satellite: 'U0BEVSGM2CD',
   });
   assert.equal(after.slackAssignees.other, 'U0B2Y0ZC8QZ');
   assert.equal(before.slackAssignees.awareness, 'U09RCJ1B9ML');
