@@ -20,6 +20,47 @@ const floorWakeWorkflow = readFileSync(
   new URL('../.github/workflows/monitor-floor-wake.yml', import.meta.url),
   'utf8',
 );
+const moderationWatchdogWorkflow = readFileSync(
+  new URL('../.github/workflows/moderation-execution-watchdog.yml', import.meta.url),
+  'utf8',
+);
+
+function assigneeEnvCount(workflow, variable) {
+  return (workflow.match(new RegExp(`${variable}:`, 'g')) || []).length;
+}
+function assertAssigneeEnv(workflow, variable, message) {
+  assert.match(workflow, new RegExp(`${variable}:\\s*\\$\\{\\{\\s*vars\\.${variable}\\s*\\}\\}`), message);
+}
+
+test('신규 상품군 담당자 변수를 라우팅 런타임에 전달한다(JD_PRIMARY·JD_VIRAL·PBACHI·P_OWNED_YOUTUBE)', () => {
+  // monitor(전 알림)·watchdog(미해결 재알림)는 모든 상품×카테고리 담당자를 계산하므로 4종을 넘겨야 한다.
+  for (const workflow of [monitorWorkflow, moderationWatchdogWorkflow]) {
+    for (const variable of [
+      'SLACK_ASSIGNEE_JD_PRIMARY',
+      'SLACK_ASSIGNEE_JD_VIRAL',
+      'SLACK_ASSIGNEE_PBACHI',
+      'SLACK_ASSIGNEE_P_OWNED_YOUTUBE',
+    ]) {
+      assertAssigneeEnv(workflow, variable);
+    }
+  }
+  // owner-channel 소유영상→인지광고 라우팅은 상품별 primary(김바다·이재원·모현진·박지원)를 모두 넘겨야
+  // 황경원 폴백을 막는다(2026-09-28 쫀득바 오태그와 동종). PBACHI는 JD_PRIMARY와 같은 스텝마다 동반돼야
+  // 하므로 등장 횟수가 일치해야 한다(owner_monitor 스텝 누락 방지).
+  for (const variable of [
+    'SLACK_ASSIGNEE_JD_PRIMARY',
+    'SLACK_ASSIGNEE_PBACHI',
+    'SLACK_ASSIGNEE_JG_PRIMARY',
+    'SLACK_ASSIGNEE_P_AWARENESS',
+  ]) {
+    assertAssigneeEnv(ownerChannelWorkflow, variable);
+  }
+  assert.equal(
+    assigneeEnvCount(ownerChannelWorkflow, 'SLACK_ASSIGNEE_PBACHI'),
+    assigneeEnvCount(ownerChannelWorkflow, 'SLACK_ASSIGNEE_JD_PRIMARY'),
+    'owner-channel: PBACHI must accompany JD_PRIMARY in every product-routing step',
+  );
+});
 
 test('협찬 파워채널 담당자 변수를 메인 감시 런타임에 전달한다', () => {
   assert.match(
