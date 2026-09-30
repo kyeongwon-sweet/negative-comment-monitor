@@ -32,6 +32,32 @@ function assertAssigneeEnv(workflow, variable, message) {
   assert.match(workflow, new RegExp(`${variable}:\\s*\\$\\{\\{\\s*vars\\.${variable}\\s*\\}\\}`), message);
 }
 
+function duplicateEnvKeys(workflow) {
+  const lines = workflow.split(/\r?\n/);
+  const duplicates = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const env = lines[i].match(/^(\s*)env:\s*$/);
+    if (!env) continue;
+    const envIndent = env[1].length;
+    const seen = new Set();
+    for (let j = i + 1; j < lines.length; j += 1) {
+      const line = lines[j];
+      if (!line.trim() || line.trimStart().startsWith('#')) continue;
+      const indent = line.match(/^\s*/)[0].length;
+      if (indent <= envIndent) break;
+      const key = line.match(/^\s*([A-Z][A-Z0-9_]+):/i)?.[1];
+      if (!key) continue;
+      if (seen.has(key)) duplicates.push(key);
+      seen.add(key);
+    }
+  }
+  return duplicates;
+}
+
+test('owner-channel workflow env 블록은 중복 키 없이 GitHub가 파싱 가능하다', () => {
+  assert.deepEqual(duplicateEnvKeys(ownerChannelWorkflow), []);
+});
+
 test('신규 상품군 담당자 변수를 라우팅 런타임에 전달한다(JD_PRIMARY·JD_VIRAL·PBACHI·P_OWNED_YOUTUBE)', () => {
   // monitor(전 알림)·watchdog(미해결 재알림)는 모든 상품×카테고리 담당자를 계산하므로 4종을 넘겨야 한다.
   for (const workflow of [monitorWorkflow, moderationWatchdogWorkflow]) {
