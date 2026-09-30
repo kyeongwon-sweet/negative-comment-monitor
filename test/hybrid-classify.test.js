@@ -260,6 +260,37 @@ test('pCRMnMYe3y8 회귀: 제품 폄하·AI 광고 거부와 운영 지정 경�
   assert.equal(llmAlert.engine, 'keyword-hard-owned');
 });
 
+test('YKZrq8o0xfU 회귀: 품절 컨셉 의심과 경쟁품 단독 찬양을 소유 지면에서 확정한다', async () => {
+  const normalLlm = async (items) => items.map(() => ({
+    alert: false, category: '정상댓글', reason: '', priority: 'normal',
+  }));
+  const missed = [
+    '컨셉이네... 나는 가는 지에스마다 있음',
+    '이거 편의점에 많던데.... 왜 품절이라는거야?? 갈때마다 있던데...',
+    '초딩인데 메로나가 존맛입니다',
+  ];
+  const risks = await classifyCommentsHybrid(
+    missed.map((text) => ({ text })),
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true },
+    { anthropicKey: 'key' }, normalLlm,
+  );
+  risks.forEach((risk, index) => {
+    assert.equal(risk.alert, true, `운영 확정 미탐: ${missed[index]}`);
+    assert.equal(risk.engine, 'keyword-hard-owned');
+  });
+
+  const neutral = [
+    '오늘 편의점에 있어서 드디어 사 먹었는데 맛있어요',
+    '메로나랑 쫀득바 둘 다 존맛이에요',
+  ];
+  const neutralRisks = await classifyCommentsHybrid(
+    neutral.map((text) => ({ text })),
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true },
+    { anthropicKey: 'key' }, normalLlm,
+  );
+  neutralRisks.forEach((risk, index) => assert.equal(risk.alert, false, `긍정 오탐: ${neutral[index]}`));
+});
+
 test('소유채널 승격(협소화 제거): 브랜드 언급 여부와 무관하게 LLM 정상건을 전부 강한 모델로 재판정', async () => {
   // 2026-09-22 ljeeeReiq1k 재발방지: 옛 A안은 본문에 브랜드/제품명이 있어야만 승격했는데,
   // 실제 미탐 대부분은 브랜드명을 안 부르는 경쟁제품 우위·광고 냉소류였다. 이제 소유 스코프의

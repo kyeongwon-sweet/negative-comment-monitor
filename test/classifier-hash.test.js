@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { computeClassifierHash } from '../src/classifier-hash.js';
 
 test('computeClassifierHash: 64자 hex, 동일 입력 시 동일', () => {
@@ -27,4 +28,10 @@ test('computeClassifierHash: LLM 공급자나 Gemini 모델이 바뀌면 캐시�
   const otherGemini = computeClassifierHash({ llmProvider: 'gemini', geminiModel: 'gemini-3.5-flash-lite' });
   assert.notEqual(anthropic, gemini);
   assert.notEqual(gemini, otherGemini);
+});
+
+test('분류 캐시 해시는 LLM 후처리와 소유채널 최종 억제 정책도 포함한다', () => {
+  const source = readFileSync(new URL('../src/classifier-hash.js', import.meta.url), 'utf8');
+  assert.match(source, /'hybrid-classify\.js'/);
+  assert.match(source, /'youtube-owner-risk\.js'/);
 });

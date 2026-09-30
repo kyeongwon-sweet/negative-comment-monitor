@@ -31,7 +31,20 @@ function flattenGroups(groups) {
 // 소유/광고 지면(ownedChannelBrandHostilityScope) 전용 '하드' 적대·광고거부 확정 매처.
 // 매칭되면 문맥과 무관하게 이 광고·브랜드를 향한 부정으로 확정한다(호출부가 LLM 정상 판정을 덮는 안전망).
 export function matchesOwnedHardHostility(text) {
-  return findMatches(text, OWNED_HARD_HOSTILITY_KEYWORDS).length > 0;
+  if (findMatches(text, OWNED_HARD_HOSTILITY_KEYWORDS).length > 0) return true;
+  const normalized = normalizeKoreanText(text);
+  // 소유/인지 광고의 핵심 연출(품절·희소성)을 실제 매장 재고와 대조해
+  // "설정/컨셉"이라고 부정하는 표현은 단순 재고 문의와 다르다. 일반 협찬에는
+  // 적용하지 않고 호출부의 ownedChannelBrandHostilityScope 안전망에서만 확정한다.
+  const scarcityPremiseAttack = [
+    /컨셉(?:이네|인가|같).*(?:지에스|gs|편의점|매장).*(?:있|많)/,
+    /왜.*품절.*(?:있|많)/,
+  ].some((pattern) => pattern.test(normalized));
+  // 광고 제품 대신 직접 경쟁품을 강하게 찬양하는 운영 확정 사례. "둘 다 맛있다"처럼
+  // 광고 제품도 함께 칭찬하는 문장은 제외해 단순 경쟁품 언급 오탐을 막는다.
+  const competitorPraise = /메로나(?:가|는)?(?:훨씬)?존맛/.test(normalized)
+    && !/(?:쫀득바|라라스윗).*(?:맛있|존맛|좋)/.test(normalized);
+  return scarcityPremiseAttack || competitorPraise;
 }
 
 const POSITIVE_CONTEXT = [
