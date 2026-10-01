@@ -14,7 +14,7 @@ const assignees = {
   awareness: 'U_AWARENESS',
   sponsorship: 'U_SPONSORSHIP',
   jd: { primary: 'U_JD_PRIMARY', viral: 'U_JD_VIRAL', satellite: 'U_JD_SAT' },
-  p: { viralBanner: 'U_P_BANNER', viralVideo: 'U_P_VIDEO', powerChannel: 'U_P_POWER', sponsorship: 'U_P_SPON', awareness: 'U_P_AWARENESS', ownedYoutube: 'U_P_OWNED_YT' },
+  p: { viralBanner: 'U_P_BANNER', viralVideo: 'U_P_VIDEO', powerChannel: 'U_P_POWER', sponsorship: 'U_P_SPON', awareness: 'U_P_AWARENESS', ownedYoutube: 'U_P_OWNED_YT', additional: ['U_P_ADD'] },
   jg: { primary: 'U_JG', additional: ['U_JG_2', 'U_JG_3', 'U_JG_4'] },
 };
 
@@ -163,13 +163,13 @@ test('alert card: 소재명에 JD복 포함 시 카테고리·제작자 무관 �
   const d = buildAlertBlocks({ url: 'https://x', channelCategory: '바이럴 (영상)', productName: 'JD멜', assetName: 'F_V_JD멜_빙과_정요한', extraAssignees: ['U_VIDEO'] }, comment, undefined, assignees);
   assert.ok(d.some((x) => x.text?.text === '*담당자*\n<@U_VIDEO>'));
 });
-test('alert card: 파인트 인지광고는 손유곤+박지원 동시 태그, JD복이 최우선', () => {
+test('alert card: 파인트 인지광고는 인지광고 팀(주담당+추가) 동시 태그, JD복이 최우선', () => {
   const comment = { id: 'c1', platform: 'youtube', text: '별로', risk: {} };
   const pint = buildAlertBlocks({
     url: 'https://x', channelCategory: '인지 광고', productName: 'P', source: 'youtube_ads',
     campaignName: '[빙과] 파인트 인지', adTitle: 'F_V_JD_인지_빙과_정요한', extraAssignees: ['U_VIDEO'],
   }, comment, undefined, assignees);
-  assert.ok(pint.some((x) => x.text?.text === '*담당자*\n<@U_P_SPON> <@U_P_VIDEO>'));
+  assert.ok(pint.some((x) => x.text?.text === '*담당자*\n<@U_P_AWARENESS> <@U_P_ADD>'));
   assert.ok(pint.some((x) => x.text?.text === '*[파인트] 인지 광고*'));
 
   // Meta는 campaignName이 없을 수 있어 adTitle의 파인트를 보조 신호로 사용한다.
@@ -177,7 +177,26 @@ test('alert card: 파인트 인지광고는 손유곤+박지원 동시 태그, J
     url: 'https://x', channelCategory: '인지 광고', productName: 'JD', source: 'meta_ads',
     adTitle: '[빙과_파인트] 인지 소재', extraAssignees: ['U_VIDEO'],
   }, { ...comment, platform: 'instagram' }, undefined, assignees);
-  assert.ok(metaFallback.some((x) => x.text?.text === '*담당자*\n<@U_P_SPON> <@U_P_VIDEO>'));
+  assert.ok(metaFallback.some((x) => x.text?.text === '*담당자*\n<@U_P_AWARENESS> <@U_P_ADD>'));
+
+  // 회귀 방지(2026-10-01): 협찬·바이럴 담당을 바꿔도 파인트 인지광고 카드는 영향받지 않아야 한다.
+  const decoupled = buildAlertBlocks({
+    url: 'https://x', channelCategory: '인지 광고', productName: 'P', source: 'youtube_ads',
+    campaignName: '[빙과] 파인트 인지', extraAssignees: [],
+  }, comment, undefined, { ...assignees, p: { ...assignees.p, sponsorship: 'U_OTHER_SPON', viralVideo: 'U_OTHER_VIDEO' } });
+  assert.ok(decoupled.some((x) => x.text?.text === '*담당자*\n<@U_P_AWARENESS> <@U_P_ADD>'));
+
+  // 파인트 소유 YouTube 카드도 주담당(ownedYoutube)+추가 담당을 함께 태그한다.
+  const ownedYt = buildAlertBlocks({
+    url: 'https://x', channelCategory: '소유 YouTube', productName: 'P', extraAssignees: [],
+  }, comment, undefined, assignees);
+  assert.ok(ownedYt.some((x) => x.text?.text === '*담당자*\n<@U_P_OWNED_YT> <@U_P_ADD>'));
+
+  // 파인트 바이럴·협찬 카드는 팀 태그 대상이 아니다(각 슬롯 담당 그대로).
+  const pintSpon = buildAlertBlocks({
+    url: 'https://x', channelCategory: '협찬 (인플루언서)', productName: 'P', extraAssignees: [],
+  }, comment, undefined, assignees);
+  assert.ok(pintSpon.some((x) => x.text?.text === '*담당자*\n<@U_P_SPON>'));
 
   const ordinary = buildAlertBlocks({
     url: 'https://x', channelCategory: '인지 광고', productName: 'JD', source: 'youtube_ads',

@@ -53,6 +53,10 @@ export function loadSlackAssignees(env = process.env, now = Date.now()) {
       sponsorship: String(env.SLACK_ASSIGNEE_P_SPONSORSHIP || '').trim(),
       awareness: String(env.SLACK_ASSIGNEE_P_AWARENESS || '').trim(),
       ownedYoutube: String(env.SLACK_ASSIGNEE_P_OWNED_YOUTUBE || '').trim(),
+      // 파인트 인지광고·소유YouTube 카드에 주담당(awareness/ownedYoutube)과 함께 태그할 추가 담당(쉼표 구분).
+      // 부모 스레드는 주담당 1명만 쓴다(제과 jg.additional과 같은 규칙).
+      additional: String(env.SLACK_ASSIGNEE_P_ADDITIONAL || '')
+        .split(',').map((value) => value.trim()).filter(Boolean),
     },
     jg: {
       primary: String(env.SLACK_ASSIGNEE_JG_PRIMARY || '').trim(),

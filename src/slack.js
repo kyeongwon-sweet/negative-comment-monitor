@@ -112,10 +112,10 @@ export function assigneeForTarget(target, assignees = {}) {
     if ((isBanner || isVideo) && assignees.jd?.viral) return assignees.jd.viral;
     if (assignees.jd?.primary) return assignees.jd.primary;
   } else if (group === 'p') {
-    if (isAwareness && assignees.p?.awareness) return assignees.p.awareness;           // 파인트 인지광고=박지원
-    if (isOwnedYoutube && assignees.p?.ownedYoutube) return assignees.p.ownedYoutube;  // 파인트 소유 YouTube=박지원
-    if (isPowerChannel && assignees.p?.powerChannel) return assignees.p.powerChannel;  // 파인트 협찬(파워채널/매거진)=박지원
-    if (isSponsorship && assignees.p?.sponsorship) return assignees.p.sponsorship;     // 파인트 협찬(인플루언서)=손유곤
+    if (isAwareness && assignees.p?.awareness) return assignees.p.awareness;           // 파인트 인지광고 주담당(카드엔 p.additional 동반)
+    if (isOwnedYoutube && assignees.p?.ownedYoutube) return assignees.p.ownedYoutube;  // 파인트 소유 YouTube 주담당(카드엔 p.additional 동반)
+    if (isPowerChannel && assignees.p?.powerChannel) return assignees.p.powerChannel;  // 파인트 협찬(파워채널/매거진)
+    if (isSponsorship && assignees.p?.sponsorship) return assignees.p.sponsorship;     // 파인트 협찬(인플루언서)
     if (isBanner && assignees.p?.viralBanner) return assignees.p.viralBanner;
     if (isVideo && assignees.p?.viralVideo) return assignees.p.viralVideo;
   } else if (group === 'jg') {
@@ -200,12 +200,21 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   const productName = String(target.productName || '');
   const jdBok = (/JD복/i.test(soje) || /JD복/i.test(productName)) ? (assignees.jdBok || '') : '';
   // 인지광고의 고정 productName(JD)보다 실제 캠페인명이 우선한다. 캠페인명에 '파인트'가
-  // 포함되면 손유곤(P 협찬)·박지원(P 바이럴 영상)을 함께 태그한다. Meta webhook은
-  // campaign_name을 주지 않으므로 adTitle을 안전한 보조 신호로 쓴다.
+  // 포함되면 파인트 인지광고 팀(주담당 p.awareness + 추가 p.additional)을 함께 태그한다.
+  // ⚠️ 협찬(p.sponsorship)·바이럴(p.viralVideo) 슬롯을 재사용하지 않는다 — 그 슬롯 담당을 바꾸면
+  // 인지광고 카드까지 함께 바뀌는 결합이 생긴다(2026-10-01 파인트 인지광고가 김보나로 샌 원인).
+  // Meta webhook은 campaign_name을 주지 않으므로 adTitle을 안전한 보조 신호로 쓴다.
   const awarenessIdentity = String(target.campaignName || target.adTitle || '');
   const isPintAwareness = /인지/.test(String(target.channelCategory || '')) && /파인트/i.test(awarenessIdentity);
   const pintAwarenessAssignees = isPintAwareness
-    ? [...new Set([assignees.p?.sponsorship, assignees.p?.viralVideo].filter(Boolean))]
+    ? [...new Set([assignees.p?.awareness, ...(assignees.p?.additional || [])].filter(Boolean))]
+    : [];
+  // 파인트 상품의 인지광고·소유YouTube 카드는 주담당(baseAssignee)과 추가 담당을 함께 태그한다.
+  // 부모 스레드는 assigneeForTarget의 주담당 1명만 사용한다(제과와 같은 규칙).
+  const pCategory = String(target.channelCategory || '');
+  const isPintTeamCard = productGroup(target.productName) === 'p' && (/인지/.test(pCategory) || /소유/.test(pCategory));
+  const pintTeamAssignees = isPintTeamCard
+    ? [...new Set([baseAssignee, ...(assignees.p?.additional || [])].filter(Boolean))]
     : [];
   // 제과 카드는 카테고리 구분 없이 모현진·김해솔·장수영·이선민을 함께 태그한다.
   // 부모 스레드는 assigneeForTarget의 주담당(모현진) 1명만 사용한다.
@@ -218,6 +227,8 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
     ? [jdBok]
     : pintAwarenessAssignees.length
       ? pintAwarenessAssignees
+      : pintTeamAssignees.length
+        ? pintTeamAssignees
       : jgAssignees.length
         ? jgAssignees
         : isCreatorCard
