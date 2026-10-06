@@ -12,22 +12,33 @@ import { loadMetaAdsConfig } from './meta-ads.js';
 import { pollMetaAdComments } from './meta-ads-poll.js';
 
 const HOUR = 3600 * 1000;
+const DAY = 24 * HOUR;
 function kstDate(now) { return new Date(now + 9 * HOUR).toISOString().slice(0, 10); }
 function fmtKst(ms) { return ms == null ? '없음' : new Date(ms + 9 * HOUR).toISOString().slice(0, 16).replace('T', ' ') + ' KST'; }
 
-// 아침 창 시작 순간(오늘 KST windowStart:00). 이 시각 '이전'에 수신된 이벤트는 창 안에 처리됐어야 한다.
-export function morningStartInstant(now, windowStart = 8) {
-  const hh = String(windowStart).padStart(2, '0');
-  return Date.parse(`${kstDate(now)}T${hh}:00:00+09:00`);
+// '이미 끝난' 가장 최근 아침 창의 시작 순간(KST windowStart:00). 이 시각 '이전'에 수신된 이벤트는
+// 그 창 안에 처리됐어야 한다. 오늘 창이 아직 끝나지 않았으면(창 전·창 도중) 어제 창을 기준으로 한다.
+// GitHub 크론이 수 시간 밀려 자정을 넘겨 돌면 '오늘 08:00'이 미래가 되어, 아직 처리 기회가 없던
+// 새벽 수신분을 배치 누락으로 오판했다(2026-10-06 00:35 KST 오탐).
+export function morningStartInstant(now, windowStart = 8, windowEnd = 11) {
+  const day = kstDate(now);
+  const start = Date.parse(`${day}T${String(windowStart).padStart(2, '0')}:00:00+09:00`);
+  const end = Date.parse(`${day}T${String(windowEnd).padStart(2, '0')}:00:00+09:00`);
+  return now >= end ? start : start - DAY;
 }
 
 // events: 미처리(processed_at=null) 웹훅 이벤트들. 창 시작 전 수신분이 남아있으면 backlog(=배치 누락).
-export function evaluateBacklog(events, now = Date.now(), windowStart = 8) {
-  const cutoff = morningStartInstant(now, windowStart);
+export function evaluateBacklog(events, now = Date.now(), windowStart = 8, windowEnd = 11) {
+  const cutoff = morningStartInstant(now, windowStart, windowEnd);
   const stale = (events || [])
     .map((e) => Date.parse(e.received_at || ''))
     .filter((t) => Number.isFinite(t) && t < cutoff);
-  return { stale: stale.length, oldest: stale.length ? Math.min(...stale) : null, total: (events || []).length };
+  return {
+    stale: stale.length,
+    oldest: stale.length ? Math.min(...stale) : null,
+    total: (events || []).length,
+    windowDate: kstDate(cutoff),
+  };
 }
 
 // 웹훅 수신 정지는 처리 backlog와 독립된 장애다. received_at이 실제 전달 시각의 정본이고,
@@ -134,7 +145,7 @@ export function buildBacklogMessage(now, res, assigneeOther = '') {
   const owner = String(assigneeOther || '').trim();
   return [
     '⚠️ *인지 광고 아침 배치 미실행 의심*',
-    `오늘(${kstDate(now)}) 아침 창(KST 8~11) 이전 수신 웹훅 댓글이 미처리로 남아 있습니다.`,
+    `${res.windowDate || kstDate(now)} 아침 창(KST 8~11) 이전 수신 웹훅 댓글이 미처리로 남아 있습니다.`,
     `미처리(창 전 수신) ${res.stale}건 · 가장 오래된 수신 ${fmtKst(res.oldest)} · 전체 미처리 ${res.total}건`,
     '자가치유: monitor.yml 강제 실행(META_ADS_FORCE)을 요청했습니다. 반영 안 되면 스케줄/큐를 확인하세요.',
     owner ? `담당자: <@${owner}>` : '',
@@ -250,12 +261,13 @@ async function postSlack(env, text, fetchImpl) {
 
 export async function runMetaBatchWatchdog(env = process.env, now = Date.now(), fetchImpl = fetch, deps = {}) {
   const windowStart = Number(env.META_ADS_WINDOW_START || 8);
+  const windowEnd = Number(env.META_ADS_WINDOW_END || 11);
   const staleHours = Number(env.META_INFLOW_STALE_HOURS || 48);
   const [events, lastEvent] = await Promise.all([
     fetchUnprocessed(env, fetchImpl),
     fetchLatestEvent(env, fetchImpl),
   ]);
-  const res = evaluateBacklog(events, now, windowStart);
+  const res = evaluateBacklog(events, now, windowStart, windowEnd);
   const inflow = evaluateInflow(lastEvent, now, staleHours);
   const pollFn = deps.pollMetaAdComments || pollMetaAdComments;
   let warned = false;

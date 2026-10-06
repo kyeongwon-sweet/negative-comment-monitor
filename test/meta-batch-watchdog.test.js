@@ -55,6 +55,28 @@ test('evaluateBacklog: 창 이후 수신만 있으면 stale 0 (정상 대기)', 
   assert.equal(r.total, 2);
 });
 
+test('morningStartInstant: 오늘 창이 끝나기 전(자정 넘긴 지연 실행·창 도중)이면 어제 창 기준', () => {
+  // 2026-10-06 00:35 KST — 크론이 밀려 자정을 넘겨 실행된 실제 사례
+  const lateRun = Date.parse('2026-10-05T15:35:00Z');
+  assert.equal(morningStartInstant(lateRun, 8, 11), Date.parse('2026-10-05T08:00:00+09:00'));
+  // 창 도중(09:30 KST)에도 오늘 창은 아직 처리 기회가 남아 있으므로 어제 기준
+  assert.equal(morningStartInstant(Date.parse('2026-10-06T00:30:00Z'), 8, 11), Date.parse('2026-10-05T08:00:00+09:00'));
+  // 창 종료(11:00 KST) 이후면 오늘 창 기준
+  assert.equal(morningStartInstant(Date.parse('2026-10-06T02:00:00Z'), 8, 11), Date.parse('2026-10-06T08:00:00+09:00'));
+});
+
+test('evaluateBacklog: 자정 넘긴 지연 실행에서 새벽 수신분을 누락으로 오판하지 않는다(10-06 오탐 회귀)', () => {
+  const lateRun = Date.parse('2026-10-05T15:35:00Z'); // 10-06 00:35 KST
+  const newDawn = [{ received_at: '2026-10-05T15:10:00Z' }]; // 10-06 00:10 KST — 오늘 창 전, 아직 처리 기회 없음
+  const r = evaluateBacklog(newDawn, lateRun, 8, 11);
+  assert.equal(r.stale, 0);
+  // 어제 아침 창 전에 들어와 아직 미처리면 진짜 누락
+  const missed = [{ received_at: '2026-10-04T22:00:00Z' }]; // 10-05 07:00 KST
+  const r2 = evaluateBacklog(missed, lateRun, 8, 11);
+  assert.equal(r2.stale, 1);
+  assert.equal(r2.windowDate, '2026-10-05');
+});
+
 test('evaluateBacklog: 미처리 없음 → stale 0', () => {
   assert.equal(evaluateBacklog([], NOW, 8).stale, 0);
 });
