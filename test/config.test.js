@@ -73,3 +73,32 @@ test('LLM 기본 공급자는 현재 무료 Gemini 안정 모델이고 Anthropic
   assert.equal(config.geminiKey, 'gemini');
   assert.equal(config.anthropicKey, 'anthropic');
 });
+
+test('기한부 담당자 override: 지정일(KST, 당일 포함)까지만 임시 담당, 지나면 자동 복귀', async () => {
+  const { overrideAssignee, loadSlackAssignees } = await import('../src/config.js');
+  const { loadMetaAdsConfig } = await import('../src/meta-ads.js');
+  const { assigneeForTarget } = await import('../src/slack.js');
+  const env = {
+    SLACK_ASSIGNEE_PBACHI: 'U_LEEJW',
+    SLACK_ASSIGNEE_PBACHI_OVERRIDE: 'U_KIMBN@2026-10-13',
+  };
+  const at = (iso) => Date.parse(iso);
+  // 10-06 KST(시작) · 10-13 23:59 KST(마지막 날) → 김보나
+  assert.equal(overrideAssignee(env, 'SLACK_ASSIGNEE_PBACHI', at('2026-10-06T09:00:00+09:00')), 'U_KIMBN');
+  assert.equal(overrideAssignee(env, 'SLACK_ASSIGNEE_PBACHI', at('2026-10-13T23:59:00+09:00')), 'U_KIMBN');
+  // 10-14 00:00 KST부터 자동으로 이재원
+  assert.equal(overrideAssignee(env, 'SLACK_ASSIGNEE_PBACHI', at('2026-10-14T00:00:00+09:00')), 'U_LEEJW');
+  // 형식 오류·미설정 → 기본 담당자
+  assert.equal(overrideAssignee({ ...env, SLACK_ASSIGNEE_PBACHI_OVERRIDE: 'U_KIMBN' }, 'SLACK_ASSIGNEE_PBACHI', at('2026-10-06T09:00:00+09:00')), 'U_LEEJW');
+  assert.equal(overrideAssignee({ SLACK_ASSIGNEE_PBACHI: 'U_LEEJW' }, 'SLACK_ASSIGNEE_PBACHI'), 'U_LEEJW');
+  // 일반 알림·광고 알림 라우팅 모두 반영(바치케 전 카테고리)
+  const adEnv = { ...env, SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc', SLACK_BOT_TOKEN: 'x' };
+  for (const now of [at('2026-10-06T09:00:00+09:00')]) {
+    for (const assignees of [loadSlackAssignees(env, now), loadMetaAdsConfig(adEnv, now).slackAssignees]) {
+      for (const c of ['인지 광고', '바이럴 (배너)', '협찬 (인플루언서)', '위성채널']) {
+        assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: c }, assignees), 'U_KIMBN', c);
+      }
+    }
+  }
+  assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: '인지 광고' }, loadSlackAssignees(env, at('2026-10-14T09:00:00+09:00'))), 'U_LEEJW');
+});

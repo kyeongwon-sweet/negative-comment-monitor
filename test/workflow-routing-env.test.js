@@ -192,3 +192,16 @@ test('floor waiter는 production concurrency 밖에서 절대시각까지 대기
   assert.match(floorWakeWorkflow, /MONITOR_CHAIN_FLOOR_MAX_PER_DAY:.*'12'/);
   assert.match(floorWakeWorkflow, /actions:\s*write/);
 });
+
+test('바치케 기한부 담당자(PBACHI_OVERRIDE)는 PBACHI를 넘기는 모든 스텝에 동반된다', () => {
+  // override가 빠진 스텝은 기한 중에도 기본 담당자(이재원)로 가버린다.
+  const dir = new URL('../.github/workflows/', import.meta.url);
+  for (const name of readdirSync(dir).filter((file) => file.endsWith('.yml'))) {
+    const workflow = readFileSync(new URL(name, dir), 'utf8');
+    assert.equal(
+      assigneeEnvCount(workflow, 'SLACK_ASSIGNEE_PBACHI_OVERRIDE'),
+      assigneeEnvCount(workflow, 'SLACK_ASSIGNEE_PBACHI'),
+      `${name}: SLACK_ASSIGNEE_PBACHI_OVERRIDE must accompany SLACK_ASSIGNEE_PBACHI`,
+    );
+  }
+});

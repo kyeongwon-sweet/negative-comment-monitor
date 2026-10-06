@@ -28,6 +28,17 @@ function scheduledAssignee(env, currentName, nextName, active) {
 // Slack 라우팅만 필요한 보조 작업도 메인 감시와 완전히 같은 정본을 쓴다.
 // loadConfig를 직접 부르면 GAS/Apify 등 무관한 필수 환경변수까지 요구하므로,
 // 담당자 설정을 독립 로더로 분리한다.
+// 기한부 임시 담당자: <base>_OVERRIDE = "U…@YYYY-MM-DD" 이면 그 날짜(KST, 당일 포함)까지만
+// 임시 담당자를 쓰고, 지나면 코드가 자동으로 기본 담당자로 되돌린다(사람이 되돌리는 걸 잊는 사고 방지).
+// 형식이 틀리면 무시하고 기본 담당자를 쓴다.
+export function overrideAssignee(env, baseName, now = Date.now()) {
+  const base = String(env[baseName] || '').trim();
+  const raw = String(env[`${baseName}_OVERRIDE`] || '').trim();
+  const match = raw.match(/^(U[A-Z0-9_]+)@(\d{4}-\d{2}-\d{2})$/);
+  if (!match) return base;
+  return kstDate(now) <= match[2] ? match[1] : base;
+}
+
 export function loadSlackAssignees(env = process.env, now = Date.now()) {
   const nextRoutingActive = scheduledRoutingActive(env.SLACK_ROUTING_EFFECTIVE_DATE_KST, now);
   return {
@@ -36,7 +47,7 @@ export function loadSlackAssignees(env = process.env, now = Date.now()) {
     viralVideoOwned: String(env.SLACK_ASSIGNEE_VIRAL_VIDEO_OWNED || '').trim(),
     other: String(env.SLACK_ASSIGNEE_OTHER || '').trim(),
     owned: String(env.SLACK_ASSIGNEE_OWNED || '').trim(),
-    pbachi: String(env.SLACK_ASSIGNEE_PBACHI || '').trim(), // P바치 상품군 전담(이재원)
+    pbachi: overrideAssignee(env, 'SLACK_ASSIGNEE_PBACHI', now), // 바치케(P바치) 전담(이재원). _OVERRIDE로 기한부 대체
     jdBok: String(env.SLACK_ASSIGNEE_JDBOK || '').trim(),
     awareness: scheduledAssignee(env, 'SLACK_ASSIGNEE_AWARENESS', 'SLACK_ASSIGNEE_AWARENESS_NEXT', nextRoutingActive),
     sponsorship: String(env.SLACK_ASSIGNEE_SPONSORSHIP || '').trim(),
