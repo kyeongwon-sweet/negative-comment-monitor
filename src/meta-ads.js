@@ -1,6 +1,6 @@
 import { loadMetaToken } from './meta-token.js';
 import { videoAssigneeFromAdTitle } from './slack.js';
-import { scheduledRoutingActive } from './config.js';
+import { loadSlackAssignees } from './config.js';
 import { awarenessProductName } from './ad-common.js';
 
 export const META_AD_SOURCE = 'meta_ads';
@@ -43,33 +43,17 @@ function headers(config, extra = {}) {
 
 // Meta 광고댓글 전용 실행은 Apify/GAS 설정을 요구하지 않는다.
 export function loadMetaAdsConfig(env = process.env, now = Date.now()) {
-  const currentAwareness = String(env.SLACK_ASSIGNEE_AWARENESS || '').trim();
-  const nextAwareness = String(env.SLACK_ASSIGNEE_AWARENESS_NEXT || '').trim();
-  const awareness = scheduledRoutingActive(env.SLACK_ROUTING_EFFECTIVE_DATE_KST, now) && nextAwareness
-    ? nextAwareness
-    : currentAwareness;
   return {
     supabaseUrl: required(env, 'SUPABASE_URL').replace(/\/$/, ''),
     supabaseKey: required(env, 'SUPABASE_SERVICE_ROLE_KEY'),
     slackChannelId: String(env.SLACK_CHANNEL_ID || 'C0BHD9S69JA').trim(),
     slackBotToken: required(env, 'SLACK_BOT_TOKEN'),
+    // 담당자 라우팅은 일반 알림과 같은 단일 정본(config.loadSlackAssignees)을 쓴다. 광고 경로가 자체
+    // 객체를 따로 들고 있어 jd(김바다)·pbachi(이재원)·p.additional이 빠졌고, 광고 알림만 황경원으로
+    // 폴백하던 사고(2026-09-23~10-06)가 있었다. other만 운영알림 기본값(황경원)을 유지한다.
     slackAssignees: {
-      // other = 비용경고 등 운영 알림 기본 담당자(황경원). 인지 광고 부정댓글 담당자는 awareness로 분리.
+      ...loadSlackAssignees(env, now),
       other: String(env.SLACK_ASSIGNEE_OTHER || 'U0B2Y0ZC8QZ').trim(),
-      jdBok: String(env.SLACK_ASSIGNEE_JDBOK || '').trim(),
-      awareness,
-      p: {
-        // 파인트 인지 광고 담당자(손유곤). 누락 시 assigneeForTarget이 일반 awareness(황경원)로
-        // 잘못 폴백한다. tiktok/youtube 광고 config도 이 base를 상속하므로 3개 플랫폼이 함께 고쳐진다.
-        awareness: String(env.SLACK_ASSIGNEE_P_AWARENESS || '').trim(),
-        sponsorship: String(env.SLACK_ASSIGNEE_P_SPONSORSHIP || '').trim(),
-        viralVideo: String(env.SLACK_ASSIGNEE_P_VIRAL_VIDEO || '').trim(),
-      },
-      jg: {
-        primary: String(env.SLACK_ASSIGNEE_JG_PRIMARY || '').trim(),
-        additional: String(env.SLACK_ASSIGNEE_JG_ADDITIONAL || '')
-          .split(',').map((value) => value.trim()).filter(Boolean),
-      },
     },
     managedChannelCategories: [],
     brandContext: String(env.BRAND_CONTEXT || '라라스윗 쫀득바').trim(),

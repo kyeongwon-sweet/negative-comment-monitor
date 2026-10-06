@@ -42,11 +42,7 @@ test('loadMetaAdsConfig only requires Supabase and Slack secrets', () => {
     SLACK_ASSIGNEE_P_SPONSORSHIP: 'U_P_SPON', SLACK_ASSIGNEE_P_VIRAL_VIDEO: 'U_P_VIDEO',
     SLACK_ASSIGNEE_JG_PRIMARY: 'U_JG',
     SLACK_ASSIGNEE_JG_ADDITIONAL: 'U_JG_2,U_JG_3,U_JG_4',
-  }).slackAssignees, {
-    other: 'U0B2Y0ZC8QZ', awareness: '', jdBok: 'U_JDBOK',
-    p: { awareness: 'U_P_AWARE', sponsorship: 'U_P_SPON', viralVideo: 'U_P_VIDEO' },
-    jg: { primary: 'U_JG', additional: ['U_JG_2', 'U_JG_3', 'U_JG_4'] },
-  });
+  }).slackAssignees.jg, { primary: 'U_JG', additional: ['U_JG_2', 'U_JG_3', 'U_JG_4'] });
   assert.equal(loadMetaAdsConfig({
     SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc',
     SLACK_BOT_TOKEN: 'xoxb-test', META_ADS_AUTO_HIDE: 'true',
@@ -68,8 +64,41 @@ test('파인트 인지 광고는 광고 config에서도 P awareness 담당자(�
   const { slackAssignees } = loadMetaAdsConfig(env);
   // 파인트(P) 인지 광고 → P awareness. 누락 시 일반 awareness(황경원)로 폴백하던 버그 회귀 방지.
   assert.equal(assigneeForTarget({ productName: 'P', channelCategory: '인지 광고' }, slackAssignees), 'U_P_AWARE');
-  // 쫀득바(JD) 인지 광고는 기존대로 일반 awareness.
+  // 쫀득바(JD) 대표 담당 미지정이면 일반 awareness로 폴백(설정 누락 시 안전망).
   assert.equal(assigneeForTarget({ productName: 'JD', channelCategory: '인지 광고' }, slackAssignees), 'U_AWARE');
+});
+
+test('광고 config 담당자는 일반 알림 config(loadSlackAssignees)와 같은 단일 정본이다', async () => {
+  // 2026-09-23~10-06: 광고 경로가 자체 담당자 객체를 들고 있어 jd·pbachi·p.additional이 빠졌고
+  // 쫀득바 인지광고·P바치 광고 알림이 황경원으로 폴백했다. 두 로더가 다시 갈라지면 실패해야 한다.
+  const { loadSlackAssignees } = await import('../src/config.js');
+  const env = {
+    SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc', SLACK_BOT_TOKEN: 'xoxb-test',
+    SLACK_ASSIGNEE_OTHER: 'U_OTHER', SLACK_ASSIGNEE_AWARENESS: 'U_AWARE',
+    SLACK_ASSIGNEE_JD_PRIMARY: 'U_KIMBADA', SLACK_ASSIGNEE_PBACHI: 'U_LEEJW',
+    SLACK_ASSIGNEE_P_AWARENESS: 'U_PARKCH', SLACK_ASSIGNEE_P_ADDITIONAL: 'U_HANSM',
+    SLACK_ASSIGNEE_JG_PRIMARY: 'U_JG',
+  };
+  const ad = loadMetaAdsConfig(env).slackAssignees;
+  assert.deepEqual(ad, { ...loadSlackAssignees(env), other: 'U_OTHER' });
+});
+
+test('광고 알림 실제 라우팅: 쫀득바→김바다, P바치→이재원, 파인트 인지광고 카드→주담당+추가', async () => {
+  const { assigneeForTarget, buildAlertBlocks } = await import('../src/slack.js');
+  const env = {
+    SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc', SLACK_BOT_TOKEN: 'xoxb-test',
+    SLACK_ASSIGNEE_OTHER: 'U_OTHER', SLACK_ASSIGNEE_AWARENESS: 'U_AWARE',
+    SLACK_ASSIGNEE_JD_PRIMARY: 'U_KIMBADA', SLACK_ASSIGNEE_PBACHI: 'U_LEEJW',
+    SLACK_ASSIGNEE_P_AWARENESS: 'U_PARKCH', SLACK_ASSIGNEE_P_ADDITIONAL: 'U_HANSM',
+  };
+  const { slackAssignees } = loadMetaAdsConfig(env);
+  assert.equal(assigneeForTarget({ productName: 'JD', channelCategory: '인지 광고' }, slackAssignees), 'U_KIMBADA');
+  assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: '인지 광고' }, slackAssignees), 'U_LEEJW');
+  const card = buildAlertBlocks({
+    url: 'https://x', channelCategory: '인지 광고', productName: 'P', source: 'meta_ads',
+    campaignName: '[빙과] 파인트 인지', extraAssignees: [],
+  }, { id: 'c', platform: 'instagram', text: 'x', risk: {} }, undefined, slackAssignees);
+  assert.ok(card.some((b) => b.text?.text === '*담당자*\n<@U_PARKCH> <@U_HANSM>'));
 });
 
 test('awareness routing switches to the next assignee at the configured KST date', () => {

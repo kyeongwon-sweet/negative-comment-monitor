@@ -76,7 +76,7 @@ export function productLabel(group) {
   if (group === 'jd') return '쫀득바';
   if (group === 'p') return '파인트';
   if (group === 'jg') return '제과';
-  if (group === 'pbachi') return 'P바치';
+  if (group === 'pbachi') return '바치케'; // 표기명(대표 지정). 상품코드는 여전히 정확히 'P바치'
   return '기타';
 }
 

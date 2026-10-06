@@ -76,7 +76,7 @@ test('P바치: 전 카테고리를 이재원(pbachi 슬롯)으로, 파인트와 
   for (const c of ['인지 광고', '바이럴 (배너)', '협찬 (인플루언서)', '온드미디어', '위성채널', '소유 YouTube']) {
     assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: c }, assignees), 'U_PBACHI', `P바치 ${c}`);
   }
-  assert.equal(productLabel(productGroup('P바치')), 'P바치');
+  assert.equal(productLabel(productGroup('P바치')), '바치케'); // 스레드·카드 표기는 [바치케]
   // 파인트는 영향 없음
   assert.equal(assigneeForTarget({ productName: 'P혼', channelCategory: '인지 광고' }, assignees), 'U_P_AWARENESS');
 });
