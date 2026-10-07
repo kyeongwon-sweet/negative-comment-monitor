@@ -120,7 +120,7 @@ export function loadConfig(env = process.env, now = Date.now()) {
     excludedChannelCategory: String(env.EXCLUDED_CHANNEL_CATEGORY || '무상시딩').trim(),
     managedChannelCategories: String(env.MANAGED_CHANNEL_CATEGORIES || '온드미디어,위성채널').split(',').map((value) => value.trim()).filter(Boolean),
     // GAS에서 evergreen(온드/위성) 보조 상한으로 쓰인다. 낮으면 전체 대상이 조용히 잘린다.
-    targetBatchSize: Number(env.TARGET_BATCH_SIZE || 1000),
+    targetBatchSize: Number(env.TARGET_BATCH_SIZE || 2000),
     // Apps Script가 간헐적으로 HTML 오류 페이지를 반환해도 한 회차 안에서 회복한다.
     gasFetchRetries: Number(env.GAS_FETCH_RETRIES || 8),
     notFoundSkipThreshold: Number(env.NOT_FOUND_SKIP_THRESHOLD || 2), // not_found 연속 N회 이상=죽은 링크로 보고 알림 제외

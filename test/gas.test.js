@@ -114,6 +114,42 @@ test('fetchTargets: v83에서 total=targets.length여도 상한 잘림은 rawEli
   );
 });
 
+test('fetchTargets: 대상 증가로 상한이 잘리면 다음 재시도에서 limit를 자동 확장한다', async () => {
+  const requestedLimits = [];
+  let calls = 0;
+  const fetchImpl = async (url) => {
+    calls += 1;
+    requestedLimits.push(Number(url.searchParams.get('limit')));
+    if (calls === 1) {
+      return {
+        ok: true,
+        text: async () => JSON.stringify({
+          ok: true,
+          result: {
+            targets: Array.from({ length: 1025 }, (_, i) => ({ url: `u${i}` })),
+            total: 1025,
+            meta: { rawEligibleCount: 1029, duplicateCount: 2 },
+          },
+        }),
+      };
+    }
+    return {
+      ok: true,
+      text: async () => JSON.stringify({
+        ok: true,
+        result: {
+          targets: Array.from({ length: 1027 }, (_, i) => ({ url: `u${i}` })),
+          total: 1027,
+          meta: { rawEligibleCount: 1029, duplicateCount: 2 },
+        },
+      }),
+    };
+  };
+  const out = await fetchTargets({ ...CFG, targetBatchSize: 1000, gasFetchRetries: 2 }, fetchImpl);
+  assert.equal(out.length, 1027);
+  assert.deepEqual(requestedLimits, [1000, 2000]);
+});
+
 test('fetchTargets: GAS가 HTML 오류 페이지 주면 원인 담긴 명확한 오류로 throw(#7 시트 헤더 등)', async () => {
   const html = '<!DOCTYPE html><html><head><title>오류</title></head><body><div class="errorMessage">Error: 필수 헤더 누락: 채널명 (\'Code\' 파일, 2054행)</div></body></html>';
   const fetchImpl = async () => ({ ok: true, text: async () => html });

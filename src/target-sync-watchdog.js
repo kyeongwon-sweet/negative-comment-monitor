@@ -69,7 +69,7 @@ export async function runTargetSyncWatchdog(env = process.env, now = Date.now(),
   const minGap = Number(env.TARGET_SYNC_MIN_GAP || 10);
   const gasConfig = {
     gasWebAppUrl: env.GAS_WEB_APP_URL, gasVerifyToken: env.GAS_VERIFY_TOKEN,
-    targetBatchSize: Number(env.TARGET_BATCH_SIZE || 1000), gasFetchRetries: Number(env.GAS_FETCH_RETRIES || 4),
+    targetBatchSize: Number(env.TARGET_BATCH_SIZE || 2000), gasFetchRetries: Number(env.GAS_FETCH_RETRIES || 4),
   };
   const targets = await fetchTargets(gasConfig, fetchImpl);
   const targetKeys = new Set(targets.map((t) => extractPostKey(t.url)).filter(Boolean));

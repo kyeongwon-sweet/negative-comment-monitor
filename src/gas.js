@@ -118,15 +118,16 @@ export async function fetchTargets(config, fetchImpl = fetch, now = Date.now()) 
   const baseUrl = endpoint(config.gasWebAppUrl, {
     action: 'sponsoredTargets',
     key: config.gasVerifyToken,
-    limit: config.targetBatchSize,
   });
   const maxAttempts = Math.max(1, Number(config.gasFetchRetries || 4));
+  let requestLimit = Math.max(1, Number(config.targetBatchSize) || 1000);
   let lastError;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       // 재시도마다 URL도 새로 만든다. 한 번 반환된 Apps Script HTML 오류 페이지가
       // 동일 URL에 재사용되면 no-cache 헤더만으로는 복구되지 않는 경우가 있다.
       const requestUrl = new URL(baseUrl);
+      requestUrl.searchParams.set('limit', String(requestLimit));
       requestUrl.searchParams.set('_cb', String((Date.now() * 10) + attempt));
       const response = await fetchImpl(requestUrl, {
         method: 'GET',
@@ -136,7 +137,7 @@ export async function fetchTargets(config, fetchImpl = fetch, now = Date.now()) 
       });
       const payload = await readJson(response);
       const targets = payload.result?.targets || [];
-      const cap = Number(config.targetBatchSize);
+      const cap = Number(requestLimit);
       // 기대 고유 타겟 수 = 원본 eligible − 중복(dedup). GAS v83부터 total=targets.length라
       // total로는 상한 잘림을 못 잡는다(항상 동일) → meta.rawEligibleCount − duplicateCount로 판정.
       // 구(舊) 응답 호환: meta 없으면 total(=dedup 전 개수)로 폴백.
@@ -147,17 +148,20 @@ export async function fetchTargets(config, fetchImpl = fetch, now = Date.now()) 
       // 진짜 상한(batch cap) truncation일 때만 전체 실패(699/817 재발 방지): 받은 대상이 상한에
       // 도달했는데 기대치가 그보다 크면 = 상한에 잘린 것 → fail-loud.
       if (Number.isFinite(expected) && expected > targets.length && Number.isFinite(cap) && targets.length >= cap) {
-        throw new Error(
-          `GAS 대상이 상한으로 잘렸습니다: returned=${targets.length}, expected=${expected}, limit=${config.targetBatchSize}. `
+        const error = new Error(
+          `GAS 대상이 상한으로 잘렸습니다: returned=${targets.length}, expected=${expected}, limit=${requestLimit}. `
           + 'TARGET_BATCH_SIZE를 올리거나 GAS evergreen 상한을 확인하세요.',
         );
+        error.code = 'GAS_TARGET_BATCH_TRUNCATED';
+        error.expected = expected;
+        throw error;
       }
       // 상한과 무관한 소량 불일치(dedup 외 원인으로 returned≪limit)는 전체 모니터링을 중단하지 않는다 —
       // 받은 대상으로 진행하고 경고만 남긴다(로그=비-침묵). 진짜 감시 누락은 target-sync-watchdog가
       // DB↔GAS 대조로 독립 감지·알림하므로 여기서 run을 죽일 필요가 없다. dedup만이면(expected==returned) 무경고.
       if (Number.isFinite(expected) && expected > targets.length) {
         console.error(
-          `[gas] 대상 일부 누락(상한 아님): returned=${targets.length}, expected=${expected}, limit=${config.targetBatchSize}. `
+          `[gas] 대상 일부 누락(상한 아님): returned=${targets.length}, expected=${expected}, limit=${requestLimit}. `
           + '받은 대상으로 진행합니다(감시 누락 감지는 target-sync-watchdog).',
         );
       }
@@ -167,8 +171,18 @@ export async function fetchTargets(config, fetchImpl = fetch, now = Date.now()) 
     } catch (error) {
       lastError = error;
       if (attempt >= maxAttempts) break;
+      // 대상 증가로 상한에 걸린 경우 같은 limit로 8번 반복해도 절대 회복되지 않는다.
+      // 다음 재시도는 기대치보다 여유 있게 자동 확장하고, GHA 변수는 안전한 초기값 역할만 한다.
+      if (error?.code === 'GAS_TARGET_BATCH_TRUNCATED') {
+        const expected = Number(error.expected);
+        requestLimit = Math.min(
+          20_000,
+          Math.max(requestLimit * 2, Number.isFinite(expected) ? expected + 100 : 0),
+        );
+      }
       const delayMs = Math.min(1500 * attempt, 5000);
-      console.error(`[gas] sponsoredTargets 조회 실패(${attempt}/${maxAttempts}) — ${delayMs}ms 후 재시도: ${error.message}`);
+      const limitNote = error?.code === 'GAS_TARGET_BATCH_TRUNCATED' ? ` · nextLimit=${requestLimit}` : '';
+      console.error(`[gas] sponsoredTargets 조회 실패(${attempt}/${maxAttempts}) — ${delayMs}ms 후 재시도${limitNote}: ${error.message}`);
       await sleep(delayMs);
     }
   }
