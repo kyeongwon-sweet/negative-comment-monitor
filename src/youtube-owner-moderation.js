@@ -210,11 +210,13 @@ export async function refreshAndVerifyOwner(config, owner, fetchImpl, maxRefresh
 // 요청 단위로: YouTube API 401이면 토큰을 새로 받아 그 요청만 1회 재시도한다.
 // 이후 요청도 새 토큰을 쓴다(호출부는 옛 토큰 문자열을 계속 넘기므로 헤더를 교체).
 // 재발급 자체가 실패하면(토큰 폐기 등) 그 오류를 그대로 올려 채널 실패로 기록된다.
-export function ownerAuthRetryFetch(config, owner, initialToken, fetchImpl = fetch, maxRefreshes = 2) {
+// 상한 5: 10-08 진단상 새 토큰도 수 초~수 분 내 무효화(tokeninfo invalid_token)되지만 재발급은 대부분 통과.
+// 영상 수백 개를 훑는 수집 루프는 한 채널에서 여러 번 걸릴 수 있어 2회로는 부족했다.
+export function ownerAuthRetryFetch(config, owner, initialToken, fetchImpl = fetch, maxRefreshes = 5) {
   const state = { token: initialToken, refreshes: 0, events: [] };
   const apiBase = String(config.youtubeApiBase || '');
   // 즉시 재시도가 같은 거부 구간에 걸리는 것을 피하려고 재발급 전 대기(2026-10-08: 새 토큰 3개 연속 401).
-  const delays = Array.isArray(config.youtubeOwnerAuthRetryDelaysMs) ? config.youtubeOwnerAuthRetryDelaysMs : [3000, 10000];
+  const delays = Array.isArray(config.youtubeOwnerAuthRetryDelaysMs) ? config.youtubeOwnerAuthRetryDelaysMs : [3000, 10000, 15000];
   const send = (url, init, token) => fetchImpl(url, {
     ...init,
     headers: { ...(init?.headers || {}), Authorization: `Bearer ${token}` },

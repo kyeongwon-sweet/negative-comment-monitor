@@ -420,11 +420,11 @@ test('owner collector caps token re-mints and records the channel failure when 4
   assert.equal(result.channelFailures.length, 1);
   assert.match(result.channelFailures[0].error, /playlistItems failed \(401\)/);
   const events = result.channelFailures[0].authEvents;
-  assert.equal(events.length, 2);
-  assert.deepEqual(events.map((e) => [e.endpoint, e.sameToken, e.retryStatus, e.tokeninfo.status, e.tokeninfo.youtubeScope]),
-    [['playlistItems', false, 401, 200, true], ['playlistItems', false, 401, 200, true]]);
+  assert.equal(events.length, 5);
+  assert.ok(events.every((e) => e.endpoint === 'playlistItems' && e.sameToken === false && e.retryStatus === 401
+    && e.tokeninfo.status === 200 && e.tokeninfo.youtubeScope === true));
   assert.ok(!JSON.stringify(events).includes('access-'), '토큰 값 비기록');
-  assert.ok(issued.length <= 3, `재발급 상한(최초 1 + 재시도 2) 초과: ${issued.length}`);
+  assert.equal(issued.length, 6, `재발급 상한(최초 1 + 재시도 5): ${issued.length}`);
 });
 
 test('owner token verify (channels mine) also re-mints once on 401, and failures carry the stage', async () => {
