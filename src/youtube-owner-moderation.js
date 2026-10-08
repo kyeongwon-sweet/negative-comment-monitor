@@ -174,13 +174,26 @@ async function googleJson(url, accessToken, fetchImpl) {
   return payload;
 }
 
-export async function refreshAndVerifyOwner(config, owner, fetchImpl) {
-  const accessToken = await refreshGoogleAccessToken(config, owner.refreshToken, fetchImpl);
+export async function refreshAndVerifyOwner(config, owner, fetchImpl, maxRefreshes = 2) {
+  let accessToken = await refreshGoogleAccessToken(config, owner.refreshToken, fetchImpl);
   const url = new URL(`${config.youtubeApiBase}/channels`);
   url.searchParams.set('part', 'id');
   url.searchParams.set('mine', 'true');
   url.searchParams.set('maxResults', '50');
-  const payload = await googleJson(url, accessToken, fetchImpl);
+  // 갓 발급한 토큰을 401로 거부하는 일시 현상(ownerAuthRetryFetch 주석) → 검증 호출도 재발급 후 재시도.
+  let payload;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      payload = await googleJson(url, accessToken, fetchImpl);
+      break;
+    } catch (error) {
+      if (error?.status !== 401 || attempt >= maxRefreshes) {
+        error.stage = 'verify';
+        throw error;
+      }
+      accessToken = await refreshGoogleAccessToken(config, owner.refreshToken, fetchImpl);
+    }
+  }
   const ownedIds = (payload.items || []).map((item) => String(item.id || '')).filter(Boolean);
   if (!ownedIds.includes(owner.channelId)) {
     throw new Error(`Stored YouTube owner token no longer exposes expected channel ${owner.channelId}`);

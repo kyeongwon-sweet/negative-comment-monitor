@@ -569,7 +569,12 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
       ownerAccessTokens.set(owner.channelId, ownerAuth.state.token);
       counts.authRefreshes += ownerAuth.state.refreshes;
     } catch (error) {
-      channelFailures.push({ channelId: owner.channelId, error: String(error?.message || error) });
+      // stage: verify(토큰 검증 channels mine) | collect(수집) — 401 원인 추적용.
+      channelFailures.push({
+        channelId: owner.channelId,
+        error: String(error?.message || error),
+        stage: error?.stage || 'collect',
+      });
     }
   }
   return {

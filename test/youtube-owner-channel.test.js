@@ -342,7 +342,7 @@ test('collector reports configured channels without owner OAuth instead of shrin
 
 // 2026-10-07~ 사고 재현: 방금 발급·검증된 토큰을 channels는 받아주고 playlistItems가 401(authError)로 거부.
 // 같은 커밋에서 회차마다 다른 채널·엔드포인트가 실패 → 요청 단위 토큰 재발급+1회 재시도로 흡수해야 한다.
-function authFlakyFetch({ rejectAlways = false } = {}) {
+function authFlakyFetch({ rejectAlways = false, rejectVerify = false } = {}) {
   const issued = [];
   const seen = [];
   const fetchImpl = async (input, init = {}) => {
@@ -359,7 +359,10 @@ function authFlakyFetch({ rejectAlways = false } = {}) {
     }
     const bearer = String(init.headers?.Authorization || '').replace(/^Bearer /, '');
     seen.push(`${url.pathname.split('/').at(-1)}:${bearer}`);
-    if (url.pathname.endsWith('/channels') && url.searchParams.get('mine') === 'true') return json({ items: [{ id: 'owner-1' }] });
+    if (url.pathname.endsWith('/channels') && url.searchParams.get('mine') === 'true') {
+      if (rejectVerify && bearer === 'access-1') return json({ error: { code: 401, errors: [{ reason: 'authError' }] } }, 401);
+      return json({ items: [{ id: 'owner-1' }] });
+    }
     if (url.pathname.endsWith('/channels')) return json({ items: [{
       id: 'owner-1', snippet: { title: '먹짱언니' }, contentDetails: { relatedPlaylists: { uploads: 'UU1' } },
     }] });
@@ -409,4 +412,17 @@ test('owner collector caps token re-mints and records the channel failure when 4
   assert.equal(result.channelFailures.length, 1);
   assert.match(result.channelFailures[0].error, /playlistItems failed \(401\)/);
   assert.ok(issued.length <= 3, `재발급 상한(최초 1 + 재시도 2) 초과: ${issued.length}`);
+});
+
+test('owner token verify (channels mine) also re-mints once on 401, and failures carry the stage', async () => {
+  const ok = authFlakyFetch({ rejectVerify: true });
+  // verify가 access-1 거부 → access-2로 통과. 이후 수집도 access-2라 정상.
+  const result = await collectYouTubeOwnerChannels(ok.config, ok.fetchImpl, Date.parse('2026-10-08T01:00:00Z'));
+  assert.deepEqual(result.channelFailures, []);
+  assert.equal(result.channels, 1);
+  assert.deepEqual(ok.seen.slice(0, 2), ['channels:access-1', 'channels:access-2']);
+
+  const dead = authFlakyFetch({ rejectAlways: true });
+  const failed = await collectYouTubeOwnerChannels(dead.config, dead.fetchImpl, Date.parse('2026-10-08T01:00:00Z'));
+  assert.equal(failed.channelFailures[0].stage, 'collect', 'verify(mine)는 통과, 수집 단계에서 실패');
 });
