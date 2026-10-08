@@ -342,10 +342,11 @@ test('collector reports configured channels without owner OAuth instead of shrin
 
 // 2026-10-07~ 사고 재현: 방금 발급·검증된 토큰을 channels는 받아주고 playlistItems가 401(authError)로 거부.
 // 같은 커밋에서 회차마다 다른 채널·엔드포인트가 실패 → 요청 단위 토큰 재발급+1회 재시도로 흡수해야 한다.
-function authFlakyFetch({ rejectAlways = false, rejectVerify = false } = {}) {
+function authFlakyFetch({ rejectAlways = false, rejectVerify = false, transientSameToken = false } = {}) {
   const issued = [];
   const seen = [];
   const tokeninfo = [];
+  let transientRejections = 0;
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(String(input));
     if (url.hostname === 'db.test' && url.pathname.endsWith('/youtube_owner_video_state')) return json([]);
@@ -372,7 +373,8 @@ function authFlakyFetch({ rejectAlways = false, rejectVerify = false } = {}) {
       id: 'owner-1', snippet: { title: '먹짱언니' }, contentDetails: { relatedPlaylists: { uploads: 'UU1' } },
     }] });
     // 첫 토큰(access-1)은 playlistItems부터 거부. rejectAlways면 어떤 토큰도 거부(실제 폐기).
-    const rejected = rejectAlways || bearer === 'access-1';
+    const rejected = rejectAlways
+      || (transientSameToken ? transientRejections++ === 0 : bearer === 'access-1');
     if (rejected) return json({ error: { code: 401, errors: [{ reason: 'authError' }] } }, 401);
     if (url.pathname.endsWith('/playlistItems')) return json({ items: [
       { contentDetails: { videoId: 'v1', videoPublishedAt: '2026-10-07T00:00:00Z' } },
@@ -404,7 +406,8 @@ test('owner collector re-mints the token once when YouTube rejects a just-verifi
   assert.deepEqual(issued, ['access-1', 'access-2']);
   // 거부된 요청은 새 토큰으로 재시도, 이후 요청(videos·commentThreads)도 새 토큰.
   assert.deepEqual(seen.filter((row) => !row.startsWith('channels')), [
-    'playlistItems:access-1', 'playlistItems:access-2', 'videos:access-2', 'commentThreads:access-2',
+    'playlistItems:access-1', 'playlistItems:access-1', 'playlistItems:access-2',
+    'videos:access-2', 'commentThreads:access-2',
   ]);
   assert.equal(result.entries.length, 1);
   assert.equal(result.stateUpdates.length, 1, '재시도가 중간 결과를 중복시키지 않는다');
@@ -422,9 +425,22 @@ test('owner collector caps token re-mints and records the channel failure when 4
   const events = result.channelFailures[0].authEvents;
   assert.equal(events.length, 5);
   assert.ok(events.every((e) => e.endpoint === 'playlistItems' && e.sameToken === false && e.retryStatus === 401
+    && e.sameTokenRetryStatus === 401 && e.refreshed === true
     && e.tokeninfo.status === 200 && e.tokeninfo.youtubeScope === true));
   assert.ok(!JSON.stringify(events).includes('access-'), '토큰 값 비기록');
   assert.equal(issued.length, 6, `재발급 상한(최초 1 + 재시도 5): ${issued.length}`);
+});
+
+test('tokeninfo상 유효한 토큰을 YouTube만 일시 거부하면 재발급 없이 같은 토큰으로 회복한다', async () => {
+  const harness = authFlakyFetch({ transientSameToken: true });
+  const result = await collectYouTubeOwnerChannels(
+    harness.config, harness.fetchImpl, Date.parse('2026-10-08T01:00:00Z'),
+  );
+  assert.deepEqual(result.channelFailures, []);
+  assert.equal(result.channels, 1);
+  assert.equal(result.authRefreshes, 0, '유효 토큰을 불필요하게 재발급하지 않는다');
+  assert.deepEqual(harness.issued, ['access-1']);
+  assert.equal(result.ownerAccessTokens.get('owner-1'), 'access-1');
 });
 
 test('owner token verify (channels mine) also re-mints once on 401, and failures carry the stage', async () => {

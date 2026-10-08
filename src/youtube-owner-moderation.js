@@ -207,7 +207,9 @@ export async function refreshAndVerifyOwner(config, owner, fetchImpl, maxRefresh
 // 소유채널 수집 중 YouTube가 방금 발급·검증한 토큰을 401(authError)로 거부하는 일이 있다
 // (2026-10-07~ 같은 커밋에서 회차마다 다른 채널·다른 엔드포인트가 1~2건씩 실패).
 // 채널 루프는 중간 결과(stateUpdates·entries)를 쌓으므로 채널 전체를 재시도하면 중복된다 →
-// 요청 단위로: YouTube API 401이면 토큰을 새로 받아 그 요청만 1회 재시도한다.
+// 요청 단위로: YouTube API 401이면 Google tokeninfo로 토큰 상태를 먼저 확인한다.
+// tokeninfo가 유효한데 YouTube만 거부한 경우에는 backoff 뒤 같은 토큰으로 한 번 더 시도한다.
+// 실제 무효이거나 같은 토큰 재시도도 401이면 새 토큰을 받아 그 요청만 다시 시도한다.
 // 이후 요청도 새 토큰을 쓴다(호출부는 옛 토큰 문자열을 계속 넘기므로 헤더를 교체).
 // 재발급 자체가 실패하면(토큰 폐기 등) 그 오류를 그대로 올려 채널 실패로 기록된다.
 // 상한 5: 10-08 진단상 새 토큰도 수 초~수 분 내 무효화(tokeninfo invalid_token)되지만 재발급은 대부분 통과.
@@ -215,7 +217,8 @@ export async function refreshAndVerifyOwner(config, owner, fetchImpl, maxRefresh
 export function ownerAuthRetryFetch(config, owner, initialToken, fetchImpl = fetch, maxRefreshes = 5) {
   const state = { token: initialToken, refreshes: 0, events: [] };
   const apiBase = String(config.youtubeApiBase || '');
-  // 즉시 재시도가 같은 거부 구간에 걸리는 것을 피하려고 재발급 전 대기(2026-10-08: 새 토큰 3개 연속 401).
+  // 즉시 재시도가 같은 거부 구간에 걸리는 것을 피한다. 유효 토큰은 대기 후 그대로 재시도하고,
+  // invalid_token이면 새 토큰을 먼저 받은 뒤 전파 대기 후 재시도한다.
   const delays = Array.isArray(config.youtubeOwnerAuthRetryDelaysMs) ? config.youtubeOwnerAuthRetryDelaysMs : [3000, 10000, 15000];
   const send = (url, init, token) => fetchImpl(url, {
     ...init,
@@ -231,12 +234,27 @@ export function ownerAuthRetryFetch(config, owner, initialToken, fetchImpl = fet
         tokeninfo: await probeTokenInfo(state.token, fetchImpl),
       };
       const delayMs = Math.max(0, Number(delays[state.refreshes] ?? delays.at(-1) ?? 0));
-      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      const tokenLooksValid = event.tokeninfo.status === 200 && event.tokeninfo.youtubeScope === true;
+      if (tokenLooksValid) {
+        if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+        response = await send(url, init, state.token);
+        event.sameTokenRetryStatus = response.status;
+        if (response.status !== 401) {
+          event.refreshed = false;
+          event.sameToken = true;
+          event.delayMs = delayMs;
+          event.retryStatus = response.status;
+          state.events.push(event);
+          break;
+        }
+      }
       state.refreshes += 1;
       const previous = state.token;
       state.token = await refreshGoogleAccessToken(config, owner.refreshToken, fetchImpl);
       event.sameToken = state.token === previous;
+      event.refreshed = true;
       event.delayMs = delayMs;
+      if (!tokenLooksValid && delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
       response = await send(url, init, state.token);
       event.retryStatus = response.status;
       state.events.push(event);
