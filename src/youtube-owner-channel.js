@@ -468,11 +468,12 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
 
   for (const owner of owners) {
     const channel = configured.get(owner.channelId);
+    let ownerAuth = null;
     try {
       const accessToken = await refreshAndVerifyOwner(config, owner, fetchImpl);
       ownerAccessTokens.set(owner.channelId, accessToken);
       // 이 채널의 YouTube 호출은 401 시 토큰 재발급+1회 재시도하는 fetch로 보낸다(ownerAuthRetryFetch 주석).
-      const ownerAuth = ownerAuthRetryFetch(config, owner, accessToken, fetchImpl);
+      ownerAuth = ownerAuthRetryFetch(config, owner, accessToken, fetchImpl);
       const channelFetch = ownerAuth.fetch;
       const collected = await fetchRecentOwnerUploads(config, channel, accessToken, channelFetch, now);
       counts.channels += 1;
@@ -568,12 +569,16 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
       // 재발급됐다면 이후 과부하 프로브도 새 토큰을 쓴다.
       ownerAccessTokens.set(owner.channelId, ownerAuth.state.token);
       counts.authRefreshes += ownerAuth.state.refreshes;
+      if (ownerAuth.state.events.length) {
+        console.error(`[youtube-owner-channel:auth-retry] ${owner.channelId} recovered ${JSON.stringify(ownerAuth.state.events)}`);
+      }
     } catch (error) {
       // stage: verify(토큰 검증 channels mine) | collect(수집) — 401 원인 추적용.
       channelFailures.push({
         channelId: owner.channelId,
         error: String(error?.message || error),
         stage: error?.stage || 'collect',
+        ...(ownerAuth?.state.events.length ? { authEvents: ownerAuth.state.events } : {}),
       });
     }
   }

@@ -345,12 +345,17 @@ test('collector reports configured channels without owner OAuth instead of shrin
 function authFlakyFetch({ rejectAlways = false, rejectVerify = false } = {}) {
   const issued = [];
   const seen = [];
+  const tokeninfo = [];
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(String(input));
     if (url.hostname === 'db.test' && url.pathname.endsWith('/youtube_owner_video_state')) return json([]);
     if (url.hostname === 'db.test' && url.pathname.endsWith('/negative_comment_alerts')) return json([]);
     if (url.hostname === 'db.test' && url.pathname.endsWith('/meta_tokens')) {
       return json([{ kind: 'youtube_owner:owner-1', token: 'refresh', expires_at: '2099-01-01T00:00:00Z' }]);
+    }
+    if (url.hostname === 'oauth2.googleapis.com' && url.pathname === '/tokeninfo') {
+      tokeninfo.push(new URLSearchParams(String(init.body)).get('access_token'));
+      return json({ expires_in: '3500', scope: 'https://www.googleapis.com/auth/youtube.force-ssl' });
     }
     if (url.hostname === 'oauth2.googleapis.com') {
       const token = `access-${issued.length + 1}`;
@@ -386,11 +391,12 @@ function authFlakyFetch({ rejectAlways = false, rejectVerify = false } = {}) {
     YOUTUBE_OWNER_CHANNELS_JSON: JSON.stringify([{ name: '먹짱언니', channelId: 'owner-1', channelCategory: '소유 YouTube' }]),
   });
   config.youtubeOwnerChannels = config.youtubeOwnerChannels.filter((row) => row.channelId === 'owner-1');
-  return { fetchImpl, config, issued, seen };
+  config.youtubeOwnerAuthRetryDelaysMs = [0];
+  return { fetchImpl, config, issued, seen, tokeninfo };
 }
 
 test('owner collector re-mints the token once when YouTube rejects a just-verified token with 401', async () => {
-  const { fetchImpl, config, issued, seen } = authFlakyFetch();
+  const { fetchImpl, config, issued, seen, tokeninfo } = authFlakyFetch();
   const result = await collectYouTubeOwnerChannels(config, fetchImpl, Date.parse('2026-10-08T01:00:00Z'));
   assert.deepEqual(result.channelFailures, []);
   assert.equal(result.channels, 1);
@@ -403,6 +409,8 @@ test('owner collector re-mints the token once when YouTube rejects a just-verifi
   assert.equal(result.entries.length, 1);
   assert.equal(result.stateUpdates.length, 1, '재시도가 중간 결과를 중복시키지 않는다');
   assert.equal(result.ownerAccessTokens.get('owner-1'), 'access-2', '과부하 프로브도 새 토큰');
+  // 진단: 거부된 토큰(access-1)만 tokeninfo로 조회.
+  assert.deepEqual(tokeninfo, ['access-1']);
 });
 
 test('owner collector caps token re-mints and records the channel failure when 401 persists', async () => {
@@ -411,6 +419,11 @@ test('owner collector caps token re-mints and records the channel failure when 4
   assert.equal(result.channels, 0);
   assert.equal(result.channelFailures.length, 1);
   assert.match(result.channelFailures[0].error, /playlistItems failed \(401\)/);
+  const events = result.channelFailures[0].authEvents;
+  assert.equal(events.length, 2);
+  assert.deepEqual(events.map((e) => [e.endpoint, e.sameToken, e.retryStatus, e.tokeninfo.status, e.tokeninfo.youtubeScope]),
+    [['playlistItems', false, 401, 200, true], ['playlistItems', false, 401, 200, true]]);
+  assert.ok(!JSON.stringify(events).includes('access-'), '토큰 값 비기록');
   assert.ok(issued.length <= 3, `재발급 상한(최초 1 + 재시도 2) 초과: ${issued.length}`);
 });
 

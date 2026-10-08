@@ -191,6 +191,9 @@ export async function refreshAndVerifyOwner(config, owner, fetchImpl, maxRefresh
         error.stage = 'verify';
         throw error;
       }
+      const delays = Array.isArray(config.youtubeOwnerAuthRetryDelaysMs) ? config.youtubeOwnerAuthRetryDelaysMs : [3000, 10000];
+      const delayMs = Math.max(0, Number(delays[attempt] ?? delays.at(-1) ?? 0));
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
       accessToken = await refreshGoogleAccessToken(config, owner.refreshToken, fetchImpl);
     }
   }
@@ -208,21 +211,57 @@ export async function refreshAndVerifyOwner(config, owner, fetchImpl, maxRefresh
 // 이후 요청도 새 토큰을 쓴다(호출부는 옛 토큰 문자열을 계속 넘기므로 헤더를 교체).
 // 재발급 자체가 실패하면(토큰 폐기 등) 그 오류를 그대로 올려 채널 실패로 기록된다.
 export function ownerAuthRetryFetch(config, owner, initialToken, fetchImpl = fetch, maxRefreshes = 2) {
-  const state = { token: initialToken, refreshes: 0 };
+  const state = { token: initialToken, refreshes: 0, events: [] };
   const apiBase = String(config.youtubeApiBase || '');
+  // 즉시 재시도가 같은 거부 구간에 걸리는 것을 피하려고 재발급 전 대기(2026-10-08: 새 토큰 3개 연속 401).
+  const delays = Array.isArray(config.youtubeOwnerAuthRetryDelaysMs) ? config.youtubeOwnerAuthRetryDelaysMs : [3000, 10000];
   const send = (url, init, token) => fetchImpl(url, {
     ...init,
     headers: { ...(init?.headers || {}), Authorization: `Bearer ${token}` },
   });
   const wrapped = async (url, init = {}) => {
     if (!apiBase || !String(url).startsWith(apiBase)) return fetchImpl(url, init);
-    const response = await send(url, init, state.token);
-    if (response.status !== 401 || state.refreshes >= maxRefreshes) return response;
-    state.refreshes += 1;
-    state.token = await refreshGoogleAccessToken(config, owner.refreshToken, fetchImpl);
-    return send(url, init, state.token);
+    let response = await send(url, init, state.token);
+    while (response.status === 401 && state.refreshes < maxRefreshes) {
+      // 진단: 거부된 토큰이 Google 기준으로도 무효인지(폐기) vs 유효한데 YouTube만 거부하는지.
+      const event = {
+        endpoint: new URL(String(url)).pathname.split('/').filter(Boolean).at(-1) || '',
+        tokeninfo: await probeTokenInfo(state.token, fetchImpl),
+      };
+      const delayMs = Math.max(0, Number(delays[state.refreshes] ?? delays.at(-1) ?? 0));
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      state.refreshes += 1;
+      const previous = state.token;
+      state.token = await refreshGoogleAccessToken(config, owner.refreshToken, fetchImpl);
+      event.sameToken = state.token === previous;
+      event.delayMs = delayMs;
+      response = await send(url, init, state.token);
+      event.retryStatus = response.status;
+      state.events.push(event);
+    }
+    return response;
   };
   return { fetch: wrapped, state };
+}
+
+// tokeninfo: 토큰 값은 기록하지 않고 유효 여부·남은 시간·youtube 스코프 유무만 남긴다.
+async function probeTokenInfo(token, fetchImpl) {
+  try {
+    const response = await fetchImpl('https://oauth2.googleapis.com/tokeninfo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ access_token: token }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    return {
+      status: response.status,
+      expiresIn: Number(payload.expires_in) || null,
+      youtubeScope: /youtube/.test(String(payload.scope || '')),
+      error: String(payload.error || payload.error_description || ''),
+    };
+  } catch (error) {
+    return { status: 0, error: String(error?.message || error) };
+  }
 }
 
 export async function mapVideosToOwners(config, alerts, owners, accessTokens, fetchImpl = fetch) {
