@@ -339,3 +339,74 @@ test('collector reports configured channels without owner OAuth instead of shrin
     name: '미연결', channelId: 'missing', channelCategory: '소유 YouTube',
   }]);
 });
+
+// 2026-10-07~ 사고 재현: 방금 발급·검증된 토큰을 channels는 받아주고 playlistItems가 401(authError)로 거부.
+// 같은 커밋에서 회차마다 다른 채널·엔드포인트가 실패 → 요청 단위 토큰 재발급+1회 재시도로 흡수해야 한다.
+function authFlakyFetch({ rejectAlways = false } = {}) {
+  const issued = [];
+  const seen = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    if (url.hostname === 'db.test' && url.pathname.endsWith('/youtube_owner_video_state')) return json([]);
+    if (url.hostname === 'db.test' && url.pathname.endsWith('/negative_comment_alerts')) return json([]);
+    if (url.hostname === 'db.test' && url.pathname.endsWith('/meta_tokens')) {
+      return json([{ kind: 'youtube_owner:owner-1', token: 'refresh', expires_at: '2099-01-01T00:00:00Z' }]);
+    }
+    if (url.hostname === 'oauth2.googleapis.com') {
+      const token = `access-${issued.length + 1}`;
+      issued.push(token);
+      return json({ access_token: token });
+    }
+    const bearer = String(init.headers?.Authorization || '').replace(/^Bearer /, '');
+    seen.push(`${url.pathname.split('/').at(-1)}:${bearer}`);
+    if (url.pathname.endsWith('/channels') && url.searchParams.get('mine') === 'true') return json({ items: [{ id: 'owner-1' }] });
+    if (url.pathname.endsWith('/channels')) return json({ items: [{
+      id: 'owner-1', snippet: { title: '먹짱언니' }, contentDetails: { relatedPlaylists: { uploads: 'UU1' } },
+    }] });
+    // 첫 토큰(access-1)은 playlistItems부터 거부. rejectAlways면 어떤 토큰도 거부(실제 폐기).
+    const rejected = rejectAlways || bearer === 'access-1';
+    if (rejected) return json({ error: { code: 401, errors: [{ reason: 'authError' }] } }, 401);
+    if (url.pathname.endsWith('/playlistItems')) return json({ items: [
+      { contentDetails: { videoId: 'v1', videoPublishedAt: '2026-10-07T00:00:00Z' } },
+    ] });
+    if (url.pathname.endsWith('/videos')) return json({ items: [
+      { id: 'v1', snippet: { channelId: 'owner-1', channelTitle: '먹짱언니', title: '쫀득바', publishedAt: '2026-10-07T00:00:00Z' }, statistics: { commentCount: '1' } },
+    ] });
+    if (url.pathname.endsWith('/commentThreads')) return json({ pageInfo: { totalResults: 1 }, items: [{
+      snippet: { totalReplyCount: 0, topLevelComment: { id: 'c1', snippet: { authorDisplayName: 'u', textOriginal: '별로', publishedAt: '2026-10-07T01:00:00Z' } } },
+    }] });
+    throw new Error(`unexpected ${url}`);
+  };
+  const config = loadYouTubeOwnerChannelConfig({
+    SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'db', SLACK_BOT_TOKEN: 'slack',
+    GOOGLE_ADS_CLIENT_ID: 'client', GOOGLE_ADS_CLIENT_SECRET: 'secret',
+    YOUTUBE_OWNER_CHANNELS_JSON: JSON.stringify([{ name: '먹짱언니', channelId: 'owner-1', channelCategory: '소유 YouTube' }]),
+  });
+  config.youtubeOwnerChannels = config.youtubeOwnerChannels.filter((row) => row.channelId === 'owner-1');
+  return { fetchImpl, config, issued, seen };
+}
+
+test('owner collector re-mints the token once when YouTube rejects a just-verified token with 401', async () => {
+  const { fetchImpl, config, issued, seen } = authFlakyFetch();
+  const result = await collectYouTubeOwnerChannels(config, fetchImpl, Date.parse('2026-10-08T01:00:00Z'));
+  assert.deepEqual(result.channelFailures, []);
+  assert.equal(result.channels, 1);
+  assert.equal(result.authRefreshes, 1);
+  assert.deepEqual(issued, ['access-1', 'access-2']);
+  // 거부된 요청은 새 토큰으로 재시도, 이후 요청(videos·commentThreads)도 새 토큰.
+  assert.deepEqual(seen.filter((row) => !row.startsWith('channels')), [
+    'playlistItems:access-1', 'playlistItems:access-2', 'videos:access-2', 'commentThreads:access-2',
+  ]);
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.stateUpdates.length, 1, '재시도가 중간 결과를 중복시키지 않는다');
+  assert.equal(result.ownerAccessTokens.get('owner-1'), 'access-2', '과부하 프로브도 새 토큰');
+});
+
+test('owner collector caps token re-mints and records the channel failure when 401 persists', async () => {
+  const { fetchImpl, config, issued } = authFlakyFetch({ rejectAlways: true });
+  const result = await collectYouTubeOwnerChannels(config, fetchImpl, Date.parse('2026-10-08T01:00:00Z'));
+  assert.equal(result.channels, 0);
+  assert.equal(result.channelFailures.length, 1);
+  assert.match(result.channelFailures[0].error, /playlistItems failed \(401\)/);
+  assert.ok(issued.length <= 3, `재발급 상한(최초 1 + 재시도 2) 초과: ${issued.length}`);
+});

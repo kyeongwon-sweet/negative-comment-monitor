@@ -1,6 +1,6 @@
 import { loadMetaAdsConfig } from './meta-ads.js';
 import { fetchYouTubeVideoCommentsWithMeta } from './youtube-ads.js';
-import { loadYouTubeOwnerTokens, refreshAndVerifyOwner } from './youtube-owner-moderation.js';
+import { loadYouTubeOwnerTokens, ownerAuthRetryFetch, refreshAndVerifyOwner } from './youtube-owner-moderation.js';
 import { YOUTUBE_SATELLITE_CHANNELS } from './youtube-satellite-oauth.js';
 import { extractPostKey } from './delta.js';
 
@@ -463,6 +463,7 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
     zeroBaseline: 0,
     noSignal: 0,
     comments: 0,
+    authRefreshes: 0,
   };
 
   for (const owner of owners) {
@@ -470,7 +471,10 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
     try {
       const accessToken = await refreshAndVerifyOwner(config, owner, fetchImpl);
       ownerAccessTokens.set(owner.channelId, accessToken);
-      const collected = await fetchRecentOwnerUploads(config, channel, accessToken, fetchImpl, now);
+      // 이 채널의 YouTube 호출은 401 시 토큰 재발급+1회 재시도하는 fetch로 보낸다(ownerAuthRetryFetch 주석).
+      const ownerAuth = ownerAuthRetryFetch(config, owner, accessToken, fetchImpl);
+      const channelFetch = ownerAuth.fetch;
+      const collected = await fetchRecentOwnerUploads(config, channel, accessToken, channelFetch, now);
       counts.channels += 1;
       counts.videos += collected.videos.length;
       const plans = prioritizeOwnerVideoPlans(collected.videos.map((video) => {
@@ -522,7 +526,7 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
           : decision.highComment
             ? { ...config, youtubeAdsMaxThreadPages: config.youtubeOwnerQuickMaxThreadPages }
             : config;
-        let scan = await fetchYouTubeVideoCommentsWithMeta(scanConfig, videoId, accessToken, fetchImpl);
+        let scan = await fetchYouTubeVideoCommentsWithMeta(scanConfig, videoId, accessToken, channelFetch);
         const observedCount = ownerCommentEvidence(decision.current, scan);
         const statisticsUnderstated = decision.highComment !== true
           && Number.isFinite(observedCount)
@@ -536,7 +540,7 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
               { ...config, youtubeAdsMaxThreadPages: config.youtubeOwnerDeepMaxThreadPages },
               videoId,
               accessToken,
-              fetchImpl,
+              channelFetch,
             );
           }
         }
@@ -561,6 +565,9 @@ export async function collectYouTubeOwnerChannels(config, fetchImpl = fetch, now
           comments,
         });
       }
+      // 재발급됐다면 이후 과부하 프로브도 새 토큰을 쓴다.
+      ownerAccessTokens.set(owner.channelId, ownerAuth.state.token);
+      counts.authRefreshes += ownerAuth.state.refreshes;
     } catch (error) {
       channelFailures.push({ channelId: owner.channelId, error: String(error?.message || error) });
     }

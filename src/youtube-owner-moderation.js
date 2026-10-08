@@ -188,6 +188,30 @@ export async function refreshAndVerifyOwner(config, owner, fetchImpl) {
   return accessToken;
 }
 
+// 소유채널 수집 중 YouTube가 방금 발급·검증한 토큰을 401(authError)로 거부하는 일이 있다
+// (2026-10-07~ 같은 커밋에서 회차마다 다른 채널·다른 엔드포인트가 1~2건씩 실패).
+// 채널 루프는 중간 결과(stateUpdates·entries)를 쌓으므로 채널 전체를 재시도하면 중복된다 →
+// 요청 단위로: YouTube API 401이면 토큰을 새로 받아 그 요청만 1회 재시도한다.
+// 이후 요청도 새 토큰을 쓴다(호출부는 옛 토큰 문자열을 계속 넘기므로 헤더를 교체).
+// 재발급 자체가 실패하면(토큰 폐기 등) 그 오류를 그대로 올려 채널 실패로 기록된다.
+export function ownerAuthRetryFetch(config, owner, initialToken, fetchImpl = fetch, maxRefreshes = 2) {
+  const state = { token: initialToken, refreshes: 0 };
+  const apiBase = String(config.youtubeApiBase || '');
+  const send = (url, init, token) => fetchImpl(url, {
+    ...init,
+    headers: { ...(init?.headers || {}), Authorization: `Bearer ${token}` },
+  });
+  const wrapped = async (url, init = {}) => {
+    if (!apiBase || !String(url).startsWith(apiBase)) return fetchImpl(url, init);
+    const response = await send(url, init, state.token);
+    if (response.status !== 401 || state.refreshes >= maxRefreshes) return response;
+    state.refreshes += 1;
+    state.token = await refreshGoogleAccessToken(config, owner.refreshToken, fetchImpl);
+    return send(url, init, state.token);
+  };
+  return { fetch: wrapped, state };
+}
+
 export async function mapVideosToOwners(config, alerts, owners, accessTokens, fetchImpl = fetch) {
   const unresolved = new Set(alerts.map(videoIdFromAlert).filter(Boolean));
   const ownerByVideo = new Map();

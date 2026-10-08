@@ -121,6 +121,7 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
     zeroBaseline: collected.zeroBaseline,
     noSignal: collected.noSignal,
     comments: collected.comments,
+    authRefreshes: collected.authRefreshes || 0,
     entries: collected.entries.length,
     sentAlerts: 0,
     overloadCandidates: 0,
@@ -300,7 +301,7 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
       kstDate: kstDateKey(now), apifyUsd: 0, anthropicUsd: estimatedUsd,
     }, fetchImpl);
   }
-  console.error(`[youtube-owner-channel] channels=${summary.channels}/${summary.totalConfiguredChannels} authenticated=${summary.authenticatedChannels} missingOAuth=${summary.oauthCoverage.missing} videos=${summary.videos} due=${summary.due} deepDue=${summary.deepDue} spikeDue=${summary.spikeDue} paginationDeepDue=${summary.paginationDeepDue} riskDue=${summary.riskDue} riskSignals=${summary.riskSignals} unchanged=${summary.unchanged} noSignal=${summary.noSignal} comments=${summary.comments} alerts=${summary.sentAlerts} overloadCandidates=${summary.overloadCandidates} overloadWarnings=${summary.overloadWarnings} overloadSuppressed=${summary.overloadSuppressedDisabled} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} fallback=${llmStats.keywordFallbackComments || 0} deferred=${llmStats.llmDeferredComments || 0} failures=${summary.channelFailures.length} softDegraded=${summary.softDegraded.length} est=$${estimatedUsd.toFixed(5)}`);
+  console.error(`[youtube-owner-channel] channels=${summary.channels}/${summary.totalConfiguredChannels} authenticated=${summary.authenticatedChannels} missingOAuth=${summary.oauthCoverage.missing} videos=${summary.videos} due=${summary.due} deepDue=${summary.deepDue} spikeDue=${summary.spikeDue} paginationDeepDue=${summary.paginationDeepDue} riskDue=${summary.riskDue} riskSignals=${summary.riskSignals} unchanged=${summary.unchanged} noSignal=${summary.noSignal} comments=${summary.comments} alerts=${summary.sentAlerts} overloadCandidates=${summary.overloadCandidates} overloadWarnings=${summary.overloadWarnings} overloadSuppressed=${summary.overloadSuppressedDisabled} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} fallback=${llmStats.keywordFallbackComments || 0} deferred=${llmStats.llmDeferredComments || 0} failures=${summary.channelFailures.length} authRefreshes=${summary.authRefreshes} softDegraded=${summary.softDegraded.length} est=$${estimatedUsd.toFixed(5)}`);
   if (summary.channelFailures.length) {
     summary.degraded.push({
       stage: 'collection',
