@@ -1,3 +1,6 @@
+import { extractPostKey } from './delta.js';
+import { isEvergreenCategory } from './schedule.js';
+
 function endpoint(base, params) {
   const url = new URL(base);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
@@ -114,6 +117,58 @@ export async function loadTargetCache(config, fetchImpl = fetch) {
   }
 }
 
+// GAS evergreen 상한에 잘린 온드/위성 대상을 DB(sponsored_posts, 시트의 원천=pullFromDB)에서 보충한다.
+// 온드/위성 정책은 단순(활성 + 카테고리, 나이 무관)이라 재현 갭이 작다. GAS 응답 필드 모양을 그대로 맞추고
+// 상품명 등은 기존처럼 delta.js가 DB에서 붙인다. 실패해도 GAS 대상만으로 진행(fail-open).
+const EVERGREEN_PLATFORMS = new Set(['instagram', 'youtube', 'tiktok', 'twitter']);
+function platformOfUrl(url) {
+  const host = (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } })();
+  if (/(^|\.)instagram\.com$/.test(host)) return 'instagram';
+  if (/(^|\.)(youtube\.com|youtu\.be)$/.test(host)) return 'youtube';
+  if (/(^|\.)tiktok\.com$/.test(host)) return 'tiktok';
+  if (/(^|\.)(x\.com|twitter\.com)$/.test(host)) return 'twitter';
+  return '';
+}
+
+export async function supplementEvergreenTargets(config, targets, fetchImpl = fetch) {
+  if (!config.supabaseUrl || !config.supabaseKey) return [];
+  const have = new Set(targets.map((t) => extractPostKey(t.url)).filter(Boolean));
+  const rows = [];
+  try {
+    for (let offset = 0; ; offset += 1000) {
+      const res = await fetchImpl(
+        `${config.supabaseUrl}/rest/v1/sponsored_posts?select=id,url,channel_type,account_name,posted_at`
+          + `&ended_at=is.null&order=id.asc&offset=${offset}&limit=1000`,
+        { headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}` } },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const page = await res.json();
+      rows.push(...page);
+      if (page.length < 1000) break;
+    }
+  } catch (error) {
+    console.error('[gas] evergreen 보충 조회 실패(무시, GAS 대상만 사용):', error.message);
+    return [];
+  }
+  const added = [];
+  for (const row of rows) {
+    const category = String(row.channel_type || '').trim();
+    if (!isEvergreenCategory(category)) continue;
+    const url = String(row.url || '').trim();
+    const platform = platformOfUrl(url);
+    const key = extractPostKey(url);
+    if (!key || !EVERGREEN_PLATFORMS.has(platform) || have.has(key)) continue;
+    have.add(key);
+    const postedAt = row.posted_at ? new Date(row.posted_at).toISOString() : '';
+    added.push({
+      row: null, url, channelName: String(row.account_name || '').trim(), channelCategory: category,
+      platform, company: '', uploadedAt: postedAt, publishedAt: postedAt, postedAt,
+      source: 'db-evergreen-supplement',
+    });
+  }
+  return added;
+}
+
 export async function fetchTargets(config, fetchImpl = fetch, now = Date.now()) {
   const baseUrl = endpoint(config.gasWebAppUrl, {
     action: 'sponsoredTargets',
@@ -178,8 +233,14 @@ export async function fetchTargets(config, fetchImpl = fetch, now = Date.now()) 
         );
       }
       const resolved = await resolveTargetUrls(targets, fetchImpl);
+      if (evergreenCapped) {
+        const supplement = await supplementEvergreenTargets(config, resolved, fetchImpl);
+        resolved.push(...supplement);
+        evergreenCapped.supplemented = supplement.length;
+        resolved.evergreenCapped = evergreenCapped;
+        console.error(`[gas] evergreen 상한 초과분 DB 보충: +${supplement.length}건 (총 ${resolved.length})`);
+      }
       await saveTargetCache(config, resolved, fetchImpl, now); // 성공분 캐시(장애 대비). best-effort.
-      if (evergreenCapped) resolved.evergreenCapped = evergreenCapped;
       return resolved;
     } catch (error) {
       lastError = error;

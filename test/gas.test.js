@@ -244,8 +244,67 @@ test('GAS evergreen 상한 초과는 원인을 명시하고 대상에 표시한�
   };
   const out = await fetchTargets({ gasWebAppUrl: 'https://gas.test/exec', gasVerifyToken: 'k', targetBatchSize: 2000, gasFetchRetries: 1 }, fetchImpl);
   assert.equal(out.length, 1029);
-  assert.deepEqual(out.evergreenCapped, { evergreenCount: 1096, evergreenLimit: 1000, dropped: 96 });
+  assert.deepEqual(out.evergreenCapped, { evergreenCount: 1096, evergreenLimit: 1000, dropped: 96, supplemented: 0 });
   const msg = buildGapMessage(Date.parse('2026-10-11T03:00:00Z'), [{ channel_type: '위성채널' }], 'U1', out.evergreenCapped);
   assert.match(msg, /evergreen 1096건 > 상한 1000/);
   assert.doesNotMatch(buildGapMessage(Date.now(), [{ channel_type: '위성채널' }], 'U1'), /원인 확인됨/);
+});
+
+test('evergreen 상한 초과분은 DB 활성 온드/위성 글로 보충한다(중복·비evergreen·비지원 플랫폼 제외)', async () => {
+  const { fetchTargets } = await import('../src/gas.js');
+  const gasTargets = [
+    { row: 10, url: 'https://www.tiktok.com/@a/video/111/', channelName: '썰박스(틱톡)', channelCategory: '위성채널', platform: 'tiktok', company: '' },
+  ];
+  const meta = { evergreenCount: 1096, evergreenLimit: 1000, rawEligibleCount: 1126, returnedCount: 1, duplicateCount: 5 };
+  const dbRows = [
+    { id: 1, url: 'https://www.tiktok.com/@a/video/111/', channel_type: '위성채널', account_name: '썰박스 (틱톡)', posted_at: '2026-10-05T00:00:00Z' }, // 이미 있음
+    { id: 2, url: 'https://www.tiktok.com/@b/photo/222/', channel_type: '위성채널', account_name: '', posted_at: '2026-10-11T00:00:00Z' },
+    { id: 3, url: 'https://www.youtube.com/watch?v=abcDEF12345', channel_type: '위성채널', account_name: '썰박스 (유튜브)', posted_at: null },
+    { id: 4, url: 'https://www.instagram.com/p/XYZ/', channel_type: '바이럴 (배너)', account_name: 'x', posted_at: null }, // 비evergreen
+    { id: 5, url: 'https://www.threads.net/@c/post/1', channel_type: '위성채널', account_name: 'y', posted_at: null }, // 비지원 플랫폼
+    { id: 6, url: 'https://www.instagram.com/reel/OWN1/', channel_type: '온드미디어', account_name: 'lm', posted_at: null },
+  ];
+  const fetchImpl = async (input) => {
+    const url = new URL(String(input));
+    const ok = (body) => ({ ok: true, status: 200, headers: { get: () => 'application/json' }, text: async () => JSON.stringify(body), json: async () => body });
+    if (url.hostname === 'gas.test') return ok({ ok: true, result: { total: 1, targets: gasTargets, meta } });
+    if (url.hostname === 'db.test' && url.pathname.endsWith('/sponsored_posts')) {
+      assert.equal(url.searchParams.get('ended_at'), 'is.null');
+      return ok(Number(url.searchParams.get('offset')) === 0 ? dbRows : []);
+    }
+    if (url.hostname === 'db.test') return ok([]); // 캐시 저장
+    throw new Error(`unexpected ${url}`);
+  };
+  const out = await fetchTargets({
+    gasWebAppUrl: 'https://gas.test/exec', gasVerifyToken: 'k', targetBatchSize: 2000, gasFetchRetries: 1,
+    supabaseUrl: 'https://db.test', supabaseKey: 'svc',
+  }, fetchImpl);
+  assert.deepEqual(out.map((t) => t.url), [
+    'https://www.tiktok.com/@a/video/111/',
+    'https://www.tiktok.com/@b/photo/222/',
+    'https://www.youtube.com/watch?v=abcDEF12345',
+    'https://www.instagram.com/reel/OWN1/',
+  ]);
+  assert.equal(out.evergreenCapped.supplemented, 3);
+  const yt = out.find((t) => t.platform === 'youtube');
+  assert.equal(yt.channelCategory, '위성채널');
+  assert.equal(yt.channelName, '썰박스 (유튜브)');
+  assert.equal(yt.source, 'db-evergreen-supplement');
+});
+
+test('evergreen 상한 미초과면 DB 보충을 하지 않는다', async () => {
+  const { fetchTargets } = await import('../src/gas.js');
+  let dbCalls = 0;
+  const fetchImpl = async (input) => {
+    const url = new URL(String(input));
+    const ok = (body) => ({ ok: true, status: 200, headers: { get: () => 'application/json' }, text: async () => JSON.stringify(body), json: async () => body });
+    if (url.hostname === 'gas.test') return ok({ ok: true, result: { total: 1, targets: [{ url: 'https://www.tiktok.com/@a/video/1/', channelCategory: '위성채널', platform: 'tiktok' }],
+      meta: { evergreenCount: 900, evergreenLimit: 1000, rawEligibleCount: 1, returnedCount: 1, duplicateCount: 0 } } });
+    if (url.pathname.endsWith('/sponsored_posts')) dbCalls += 1;
+    return ok([]);
+  };
+  const out = await fetchTargets({ gasWebAppUrl: 'https://gas.test/exec', gasVerifyToken: 'k', targetBatchSize: 2000, gasFetchRetries: 1, supabaseUrl: 'https://db.test', supabaseKey: 'svc' }, fetchImpl);
+  assert.equal(out.length, 1);
+  assert.equal(dbCalls, 0);
+  assert.equal(out.evergreenCapped, undefined);
 });

@@ -72,6 +72,9 @@ export async function runTargetSyncWatchdog(env = process.env, now = Date.now(),
   const gasConfig = {
     gasWebAppUrl: env.GAS_WEB_APP_URL, gasVerifyToken: env.GAS_VERIFY_TOKEN,
     targetBatchSize: Number(env.TARGET_BATCH_SIZE || 2000), gasFetchRetries: Number(env.GAS_FETCH_RETRIES || 4),
+    // 봇 run과 같은 대상(=evergreen 상한 초과분 DB 보충 포함)으로 대조해야 실제 감시 누락만 잡는다.
+    supabaseUrl: String(env.SUPABASE_URL || '').trim().replace(/\/$/, ''),
+    supabaseKey: String(env.SUPABASE_SERVICE_ROLE_KEY || '').trim(),
   };
   const targets = await fetchTargets(gasConfig, fetchImpl);
   const targetKeys = new Set(targets.map((t) => extractPostKey(t.url)).filter(Boolean));
