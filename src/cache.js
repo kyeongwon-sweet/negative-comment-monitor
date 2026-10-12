@@ -30,6 +30,13 @@ export function classificationCacheFingerprint(target, comment) {
 
 // reviewItems: [{ index, fingerprint }]. 반환: Map<index, {alert,category,reason,priority}>(히트만).
 // 어떤 오류든 부분 반영 없이 빈 Map으로 폴백한다.
+//
+// 이월(carry-forward, 2026-10-12 결정 '새 기준은 새 댓글에만'): 현재 classifier_hash 행이 없으면
+// 이전 해시의 가장 최근 판정을 그대로 쓴다. 주간 예시 갱신·분류기 코드 변경으로 해시가 바뀔 때마다
+// 이미 판정한 옛 댓글 ~750건을 재판정하면, 비결정 LLM 탓에 ~20%가 뒤집혀 며칠 공개돼 있던 댓글이
+// 월요일에 일괄 숨김(10-05 164건·10-12 130건)되고 Gemini 한도도 터졌다. 이월 히트는 carriedFromHash로
+// 표시돼 호출부가 현재 해시로 다시 저장한다(90일 정리에 사라지지 않게). 본문이 편집되면 지문이 달라
+// 이월되지 않고 새로 판정한다. config.classificationCacheCarryForward === false면 예전 동작(현재 해시만).
 export async function lookupCache(config, reviewItems, classifierHash, fetchImpl = fetch) {
   const hits = new Map();
   if (!cacheEnabled(config) || !classifierHash || !reviewItems.length) return hits;
@@ -39,13 +46,23 @@ export async function lookupCache(config, reviewItems, classifierHash, fetchImpl
     for (let i = 0; i < fps.length; i += READ_CHUNK) {
       const chunk = fps.slice(i, i + READ_CHUNK);
       const encoded = chunk.map((v) => `"${v}"`).join(',');
+      const carryForward = config.classificationCacheCarryForward !== false;
       const url = `${config.supabaseUrl}/rest/v1/comment_classification_cache`
-        + '?select=fingerprint,alert,category,reason,priority'
-        + `&classifier_hash=eq.${encodeURIComponent(classifierHash)}`
-        + `&fingerprint=in.(${encodeURIComponent(encoded)})`;
+        + '?select=fingerprint,classifier_hash,alert,category,reason,priority,created_at'
+        + (carryForward ? '' : `&classifier_hash=eq.${encodeURIComponent(classifierHash)}`)
+        + `&fingerprint=in.(${encodeURIComponent(encoded)})`
+        + '&order=created_at.desc';
       const res = await fetchImpl(url, { headers: headers(config) });
       if (!res.ok) return new Map(); // 조회 실패 → 전부 미스 취급(폴백)
+      // 지문별로 현재 해시 행 우선, 없으면 가장 최근(created_at desc 첫 행) 이전 해시 행.
+      const chosen = new Map();
       for (const row of await res.json()) {
+        const prev = chosen.get(row.fingerprint);
+        if (!prev || (prev.classifier_hash !== classifierHash && row.classifier_hash === classifierHash)) {
+          chosen.set(row.fingerprint, row);
+        }
+      }
+      for (const row of chosen.values()) {
         const index = indexByFp.get(row.fingerprint);
         if (index != null) {
           hits.set(index, {
@@ -53,6 +70,7 @@ export async function lookupCache(config, reviewItems, classifierHash, fetchImpl
             category: row.category || (row.alert ? '부정언급' : '정상댓글'),
             reason: row.alert ? String(row.reason || '') : '',
             priority: row.priority || 'normal',
+            ...(row.classifier_hash !== classifierHash ? { carriedFromHash: String(row.classifier_hash || '') } : {}),
           });
         }
       }

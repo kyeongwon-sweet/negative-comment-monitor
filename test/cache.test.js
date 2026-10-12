@@ -31,12 +31,14 @@ test('cacheEnabled: url+key 있어야 true', () => {
 test('lookupCache: 히트를 index별로 반환하고 alert/reason 정규화', async () => {
   const fetchImpl = async (url) => {
     assert.match(url, /comment_classification_cache/);
-    assert.match(url, /classifier_hash=eq\./);
+    // 이월(carry-forward) 기본: 해시로 거르지 않고 지문 전체 이력을 최신순으로 읽는다.
+    assert.doesNotMatch(url, /classifier_hash=eq\./);
+    assert.match(url, /order=created_at\.desc/);
     return {
       ok: true,
       json: async () => [
-        { fingerprint: 'fp1', alert: true, category: '제품 불만', reason: '맛 혹평', priority: 'normal' },
-        { fingerprint: 'fp2', alert: false, category: '정상댓글', reason: '', priority: 'normal' },
+        { fingerprint: 'fp1', classifier_hash: HASH, alert: true, category: '제품 불만', reason: '맛 혹평', priority: 'normal' },
+        { fingerprint: 'fp2', classifier_hash: HASH, alert: false, category: '정상댓글', reason: '', priority: 'normal' },
       ],
     };
   };
@@ -98,4 +100,27 @@ test('purgeCache: cutoff 이전 행 DELETE, 실패는 무시', async () => {
   assert.match(url, /created_at=lt\./);
   assert.match(decodeURIComponent(url), /2026-04-23/); // 90일 전
   assert.equal(await purgeCache(CFG, async () => { throw new Error('x'); }), 0);
+});
+
+test('lookupCache 이월: 현재 해시 행이 없으면 이전 해시의 최신 판정을 쓰고 carriedFromHash로 표시', async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    json: async () => [
+      // created_at desc 순서(최신 먼저)
+      { fingerprint: 'old-only', classifier_hash: 'prev-2', alert: false, category: '정상댓글', reason: '', priority: 'normal', created_at: '2026-10-05' },
+      { fingerprint: 'old-only', classifier_hash: 'prev-1', alert: true, category: '제품 불만', reason: 'x', priority: 'normal', created_at: '2026-09-28' },
+      { fingerprint: 'both', classifier_hash: 'prev-2', alert: true, category: '광고/바이럴 의심', reason: 'y', priority: 'normal', created_at: '2026-10-05' },
+      { fingerprint: 'both', classifier_hash: HASH, alert: false, category: '정상댓글', reason: '', priority: 'normal', created_at: '2026-09-01' },
+    ],
+  });
+  const hits = await lookupCache(CFG, [{ index: 0, fingerprint: 'old-only' }, { index: 1, fingerprint: 'both' }], HASH, fetchImpl);
+  assert.deepEqual(hits.get(0), { alert: false, category: '정상댓글', reason: '', priority: 'normal', carriedFromHash: 'prev-2' }, '가장 최근 이전 판정 유지');
+  assert.deepEqual(hits.get(1), { alert: false, category: '정상댓글', reason: '', priority: 'normal' }, '현재 해시 행이 있으면 그게 우선');
+});
+
+test('lookupCache 이월 끄기(classificationCacheCarryForward=false)면 예전처럼 현재 해시만', async () => {
+  let seenUrl = '';
+  const fetchImpl = async (url) => { seenUrl = url; return { ok: true, json: async () => [] }; };
+  await lookupCache({ ...CFG, classificationCacheCarryForward: false }, [{ index: 0, fingerprint: 'fp' }], HASH, fetchImpl);
+  assert.match(seenUrl, /classifier_hash=eq\./);
 });

@@ -587,3 +587,37 @@ test('gXfkWldB0u4 하드넷: 광고 짜증 표현과 안사먹 오타 변형', a
   assert.equal(matchesOwnedHardHostility('광고 짜증나요'), true);
   assert.equal(matchesOwnedHardHostility('맛피아는 배민애서 배달 돼요 😂'), false);
 });
+
+test('분류기 해시가 바뀌어도 이미 판정한 옛 댓글은 재판정하지 않고 이전 판정을 현재 해시로 이월 저장', async () => {
+  const comments = [{ id: 'c-old', text: '라라스윗 이거 광고인가요?' }, { id: 'c-new', text: '라라스윗 이거 광고인가요??' }];
+  const target = { platform: 'youtube', url: 'https://www.youtube.com/watch?v=abc', brandName: '라라스윗', fullContextReview: true };
+  const oldFp = classificationCacheFingerprint(target, comments[0]);
+  const writes = [];
+  const fetchImpl = async (url, init = {}) => {
+    if ((init.method || 'GET') === 'POST') { writes.push(...JSON.parse(init.body)); return { ok: true, json: async () => [] }; }
+    // 옛 댓글만 이전 해시(prev)로 '정상' 판정 이력이 있다. 실제 DB처럼 classifier_hash 필터를 존중한다.
+    const rows = [{ fingerprint: oldFp, classifier_hash: 'prev-hash', alert: false, category: '정상댓글', reason: '', priority: 'normal', created_at: '2026-10-05' }];
+    const hashFilter = decodeURIComponent(String(url)).match(/classifier_hash=eq\.([^&]+)/)?.[1];
+    return { ok: true, json: async () => rows.filter((row) => !hashFilter || row.classifier_hash === hashFilter) };
+  };
+  const sent = [];
+  const llm = async (items) => {
+    sent.push(...items.map((i) => i.text));
+    return items.map(() => ({ alert: true, category: '광고/바이럴 의심', reason: 'z', priority: 'normal' }));
+  };
+  const stats = {};
+  const [risks] = await classifyTargetsBatched([{ comments, target }], CACHE_CFG, llm, stats, fetchImpl);
+  assert.deepEqual(sent, ['라라스윗 이거 광고인가요??'], '새 댓글만 LLM으로');
+  assert.equal(risks[0].alert, false, '옛 댓글은 이전 판정(정상) 유지 — 월요일 일괄 숨김 방지');
+  assert.equal(risks[0].engine, 'llm-cache');
+  assert.equal(risks[1].alert, true, '새 댓글은 새 기준으로 판정');
+  assert.equal(stats.cacheCarriedForward, 1);
+  assert.ok(writes.some((row) => row.fingerprint === oldFp && row.alert === false), '이월 판정을 현재 해시로 재저장(90일 정리 대비)');
+});
+
+test('안전장치: 분류기가 category=정상으로 낸 결과는 alert=true여도 알림·숨김하지 않는다', async () => {
+  const llm = async (items) => items.map(() => ({ alert: true, category: '정상', reason: '광고 흐름을 흐리는 무관한 잡담', priority: 'normal' }));
+  const [risk] = await classifyCommentsHybrid([{ text: '라라스윗 갈비찜 레시피 쓰이겠네' }], { brandName: '라라스윗', fullContextReview: true }, { anthropicKey: 'key' }, llm);
+  assert.equal(risk.alert, false);
+  assert.equal(risk.normalCategoryGuard, true);
+});

@@ -101,9 +101,16 @@ async function prepareLocal(comments, target, config, stats, fetchImpl) {
       cacheHits = new Map();
     }
   }
+  // 이전 해시 판정을 이월한 히트는 현재 해시로 다시 저장한다(cache.js lookupCache 주석).
+  const carryForward = [];
   for (const index of reviewIndexes) {
-    if (cacheHits.has(index)) out[index] = { ...cacheHits.get(index), entity: { matched: true }, engine: 'llm-cache' };
+    if (!cacheHits.has(index)) continue;
+    const { carriedFromHash, ...hit } = cacheHits.get(index);
+    out[index] = { ...hit, entity: { matched: true }, engine: 'llm-cache' };
+    const fingerprint = cacheFingerprintByIndex.get(index);
+    if (carriedFromHash && fingerprint) carryForward.push({ fingerprint, result: hit });
   }
+  if (stats && carryForward.length) stats.cacheCarriedForward = (stats.cacheCarriedForward || 0) + carryForward.length;
   const missIndexes = reviewIndexes.filter((index) => !cacheHits.has(index));
   if (stats) {
     stats.cacheHits = (stats.cacheHits || 0) + cacheHits.size;
@@ -115,7 +122,7 @@ async function prepareLocal(comments, target, config, stats, fetchImpl) {
     cacheFingerprint: cacheFingerprintByIndex.get(index) || null,
     alertFingerprint: alertFingerprintByIndex.get(index) || commentFingerprint(target, comments[index]),
   }));
-  return { out, pending, classifierHash };
+  return { out, pending, classifierHash, carryForward };
 }
 
 // 여러 게시물을 한 번에 분류. 문맥 후보(캐시 미스)를 실행 전체에서 25개 단위로 통합해 LLM에 보낸다.
@@ -312,6 +319,7 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
   }
 
   // 감사/진단 실행은 기존 FP·캐시를 읽되 운영 캐시는 변경하지 않는 진짜 read-only 모드다.
+  for (const p of prepared) if (Array.isArray(p.carryForward)) toStore.push(...p.carryForward);
   if (classifierHash && toStore.length && config.classificationCacheReadOnly !== true) {
     await storeCache(config, toStore, classifierHash, fetchImpl);
   }
@@ -336,6 +344,17 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
         entity: { matched: true },
         engine: 'keyword-hard-owned',
       };
+    });
+  }
+
+  // 안전장치: 분류기가 스스로 '정상'으로 분류한 결과는 alert가 true여도 알림·숨김하지 않는다
+  // (10-12 인지광고: category=정상인데 숨겨진 9건 — 잡담/긍정 후기 오숨김). 하드넷·사람 FP는 제외.
+  for (const p of prepared) {
+    p.out.forEach((risk, index) => {
+      if (!risk || risk.alert !== true || risk.engine === 'keyword-hard-owned') return;
+      const category = String(risk.category || '').replace(/\s+/g, '');
+      if (category !== '정상' && category !== '정상댓글') return;
+      p.out[index] = { ...risk, alert: false, normalCategoryGuard: true };
     });
   }
 
