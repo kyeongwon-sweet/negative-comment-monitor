@@ -16,7 +16,9 @@
 //   "postUrl": "https://www.youtube.com/watch?v=...",
 //   "platform": "youtube",              // youtube | instagram | tiktok
 //   "productName": "JD",                 // productGroup으로 라벨 산출(예: JD→쫀득바)
-//   "channelCategory": "소유 YouTube",   // 스레드 스코프 카테고리
+//   "channelCategory": "소유 YouTube",   // 알림 행 channel_category(카드 카테고리)
+//   "threadCategory": "인지 광고",       // 선택. 스레드 스코프 카테고리(기본=channelCategory).
+//                                        // 소유 YouTube는 봇과 같이 '[상품] 인지 광고' 스레드로 묶는다(threadRouteForOwnerTarget).
 //   "channelName": "먹는김에",
 //   "category": "브랜드 적대/조롱",       // 알림 category(선택)
 //   "assignee": "U0B2Y0ZC8QZ",           // 스레드 담당자 멘션(선택, 없으면 멘션 없음)
@@ -69,7 +71,8 @@ async function main() {
   const channelCategory = String(batch.channelCategory || '').trim();
   const productName = String(batch.productName || '').trim();
   const label = productLabel(productGroup(productName));
-  const scopeKey = `${label}|${channelCategory}`;
+  const threadCategory = String(batch.threadCategory || channelCategory).trim();
+  const scopeKey = `${label}|${threadCategory}`;
   const kstDate = String(batch.kstDate || kstToday()).trim();
   const target = { platform, url: postUrl };
   const comments = Array.isArray(batch.comments) ? batch.comments : [];
@@ -100,7 +103,7 @@ async function main() {
     console.log('\n[DRY-RUN] 실제 쓰기 없음. 계획:');
     console.log(' 1) ensureDailyThread 로 정규 스레드 확보(없으면 생성)');
     console.log(' 2) 요약을 스레드 답글로 게시');
-    console.log(' 3) 위 답글 ts를 slack_ts로 17행 적재');
+    console.log(` 3) 위 답글 ts를 slack_ts로 ${rows.length}행 적재`);
     console.log(' 4) 아래 gh 명령으로 owner OAuth 숨김 실행');
     console.log(`    gh workflow run youtube-owner-comment-hide.yml -f slack_channel_id=${config.slackChannelId} -f slack_ts=<답글ts> -f alert_scope=organic_satellite`);
     console.log('\n실행하려면 --commit 을 붙이세요.');
@@ -109,7 +112,7 @@ async function main() {
 
   // 1) 정규 데일리 스레드(상품×카테고리) 확보 — 절대 최상위 단독 카드 금지.
   const parentTs = await ensureDailyThread(config, {
-    kstDate, scopeKey, productLabel: label, category: channelCategory, assignee: String(batch.assignee || ''),
+    kstDate, scopeKey, productLabel: label, category: threadCategory, assignee: String(batch.assignee || ''),
   });
   if (!parentTs) throw new Error('ensureDailyThread 실패(스레드 미확보) — 최상위 게시로 폴백하지 않고 중단.');
   console.log('스레드 parent ts:', parentTs);
