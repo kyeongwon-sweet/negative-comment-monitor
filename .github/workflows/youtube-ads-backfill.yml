@@ -33,7 +33,8 @@ jobs:
           LLM_PROVIDER: gemini
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.1-flash-lite
-          GEMINI_REQUEST_INTERVAL_MS: '1500'
+          # 대량 재처리도 무료 Gemini 한도(12 RPM 이하)를 넘지 않게 한다.
+          GEMINI_REQUEST_INTERVAL_MS: '5000'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5-20251001
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}

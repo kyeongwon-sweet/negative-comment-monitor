@@ -24,6 +24,10 @@ const moderationWatchdogWorkflow = readFileSync(
   new URL('../.github/workflows/moderation-execution-watchdog.yml', import.meta.url),
   'utf8',
 );
+const youtubeAdsBackfillWorkflow = readFileSync(
+  new URL('../.github/workflows/youtube-ads-backfill.yml', import.meta.url),
+  'utf8',
+);
 
 function assigneeEnvCount(workflow, variable) {
   return (workflow.match(new RegExp(`${variable}:`, 'g')) || []).length;
@@ -152,6 +156,19 @@ test('Meta 자동숨김 제외 계정 변수를 정기·수동 실행 모두에 
   const pattern = /META_AUTO_HIDE_EXCLUDED_IG_USER_IDS:\s*\$\{\{\s*vars\.META_AUTO_HIDE_EXCLUDED_IG_USER_IDS\s*\}\}/;
   assert.match(monitorWorkflow, pattern);
   assert.match(awarenessAutoHideWorkflow, pattern);
+});
+
+test('YouTube 인지광고 분류는 무료 Gemini 429를 피하도록 12 RPM 이하로 제한한다', () => {
+  const monitorYoutubeAds = monitorWorkflow.match(
+    /- name: Poll YouTube awareness ad comments[\s\S]*?GEMINI_REQUEST_INTERVAL_MS:\s*'(\d+)'/,
+  );
+  const backfillYoutubeAds = youtubeAdsBackfillWorkflow.match(
+    /- name: Publish unseen YouTube awareness-ad alerts[\s\S]*?GEMINI_REQUEST_INTERVAL_MS:\s*'(\d+)'/,
+  );
+  assert.ok(monitorYoutubeAds, 'monitor YouTube ads Gemini interval missing');
+  assert.ok(backfillYoutubeAds, 'backfill YouTube ads Gemini interval missing');
+  assert.ok(Number(monitorYoutubeAds[1]) >= 5000, 'monitor YouTube ads must stay at or below 12 RPM');
+  assert.ok(Number(backfillYoutubeAds[1]) >= 5000, 'backfill YouTube ads must stay at or below 12 RPM');
 });
 
 test('메인 감시는 예약 run 내부 15분 간격 4회 루프를 사용한다', () => {
