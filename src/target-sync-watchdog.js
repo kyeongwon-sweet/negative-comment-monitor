@@ -23,7 +23,7 @@ export function evaluateTargetSyncGap({ posts, commentSet, targetKeys, monitored
   });
 }
 
-export function buildGapMessage(now, gaps, assigneeOther = '') {
+export function buildGapMessage(now, gaps, assigneeOther = '', evergreenCapped = null) {
   const byCat = {};
   for (const g of gaps) { const c = g.channel_type || '?'; byCat[c] = (byCat[c] || 0) + 1; }
   const owner = String(assigneeOther || '').trim();
@@ -31,7 +31,9 @@ export function buildGapMessage(now, gaps, assigneeOther = '') {
     '⚠️ *신규글 감시 누락 의심 (DB↔모니터링 시트 동기화 갭)*',
     `오늘(${kstDate(now)}) DB엔 있고 댓글도 있는데 봇 GAS 타겟엔 없는 신규 활성글 ${gaps.length}건 (유예 초과).`,
     '채널별: ' + Object.entries(byCat).map(([c, n]) => `${c} ${n}`).join(' · '),
-    'DB→시트 동기화(pullFromDB) 지연/실패 또는 GAS 대상 상한·엔드포인트 불일치를 확인하세요.',
+    evergreenCapped
+      ? `원인 확인됨: GAS evergreen(온드/위성) 상한 초과 — evergreen ${evergreenCapped.evergreenCount}건 > 상한 ${evergreenCapped.evergreenLimit} → 약 ${evergreenCapped.dropped}건 미전달. Apps Script sponsoredTargets 상한 상향 필요.`
+      : 'DB→시트 동기화(pullFromDB) 지연/실패 또는 GAS 대상 상한·엔드포인트 불일치를 확인하세요.',
     owner ? `담당자: <@${owner}>` : '',
   ].filter(Boolean).join('\n');
 }
@@ -85,7 +87,7 @@ export async function runTargetSyncWatchdog(env = process.env, now = Date.now(),
     console.log(`[target-sync-watchdog] OK — 갭 ${gaps.length}건(임계 ${minGap} 미만), GAS타겟 ${targets.length}`);
     return { warned: false, gaps: gaps.length };
   }
-  await postSlack(env, buildGapMessage(now, gaps, env.SLACK_ASSIGNEE_OTHER), fetchImpl);
+  await postSlack(env, buildGapMessage(now, gaps, env.SLACK_ASSIGNEE_OTHER, targets.evergreenCapped || null), fetchImpl);
   console.error(`[target-sync-watchdog] GAP — 신규 미감시 ${gaps.length}건 → 경고 발송 (GAS타겟 ${targets.length})`);
   return { warned: true, gaps: gaps.length };
 }

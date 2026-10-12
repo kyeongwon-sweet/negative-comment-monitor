@@ -226,3 +226,26 @@ test('resolveTargetUrls: TikTok vt/vm short URLs are replaced with canonical red
     { url: 'https://www.tiktok.com/@u/video/7656707663044185364', channelCategory: '협찬' },
   ]);
 });
+
+test('GAS evergreen 상한 초과는 원인을 명시하고 대상에 표시한다(요청 limit로 못 올림)', async () => {
+  const { fetchTargets } = await import('../src/gas.js');
+  const { buildGapMessage } = await import('../src/target-sync-watchdog.js');
+  const targets = Array.from({ length: 1029 }, (_, i) => ({ url: `https://www.youtube.com/watch?v=v${i}`, channelCategory: '위성채널' }));
+  const fetchImpl = async (input) => {
+    const url = new URL(String(input));
+    if (url.hostname === 'gas.test') {
+      return { ok: true, status: 200, headers: { get: () => 'application/json' },
+        text: async () => JSON.stringify({ ok: true, result: { total: 1029, targets,
+          meta: { evergreenCount: 1096, evergreenLimit: 1000, rawEligibleCount: 1126, returnedCount: 1029, duplicateCount: 5 } } }),
+        json: async () => ({ ok: true, result: { total: 1029, targets,
+          meta: { evergreenCount: 1096, evergreenLimit: 1000, rawEligibleCount: 1126, returnedCount: 1029, duplicateCount: 5 } } }) };
+    }
+    return { ok: false, status: 404, headers: { get: () => '' }, text: async () => '', json: async () => ({}) };
+  };
+  const out = await fetchTargets({ gasWebAppUrl: 'https://gas.test/exec', gasVerifyToken: 'k', targetBatchSize: 2000, gasFetchRetries: 1 }, fetchImpl);
+  assert.equal(out.length, 1029);
+  assert.deepEqual(out.evergreenCapped, { evergreenCount: 1096, evergreenLimit: 1000, dropped: 96 });
+  const msg = buildGapMessage(Date.parse('2026-10-11T03:00:00Z'), [{ channel_type: '위성채널' }], 'U1', out.evergreenCapped);
+  assert.match(msg, /evergreen 1096건 > 상한 1000/);
+  assert.doesNotMatch(buildGapMessage(Date.now(), [{ channel_type: '위성채널' }], 'U1'), /원인 확인됨/);
+});

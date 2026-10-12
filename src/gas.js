@@ -159,7 +159,19 @@ export async function fetchTargets(config, fetchImpl = fetch, now = Date.now()) 
       // 상한과 무관한 소량 불일치(dedup 외 원인으로 returned≪limit)는 전체 모니터링을 중단하지 않는다 —
       // 받은 대상으로 진행하고 경고만 남긴다(로그=비-침묵). 진짜 감시 누락은 target-sync-watchdog가
       // DB↔GAS 대조로 독립 감지·알림하므로 여기서 run을 죽일 필요가 없다. dedup만이면(expected==returned) 무경고.
-      if (Number.isFinite(expected) && expected > targets.length) {
+      // GAS 내부 evergreen(온드/위성) 상한은 요청 limit와 별개로 고정(2026-10-12 실측 evergreenLimit=1000,
+      // evergreen 1096 → 신규 위성글 ~96건 조용히 누락). 요청 파라미터로 못 올리므로 원인을 명시해 남긴다.
+      const evergreenLimit = Number(meta.evergreenLimit);
+      const evergreenCount = Number(meta.evergreenCount);
+      const evergreenCapped = Number.isFinite(evergreenLimit) && Number.isFinite(evergreenCount) && evergreenCount > evergreenLimit
+        ? { evergreenCount, evergreenLimit, dropped: evergreenCount - evergreenLimit }
+        : null;
+      if (evergreenCapped) {
+        console.error(
+          `[gas] GAS evergreen(온드/위성) 상한 초과: evergreen=${evergreenCount} > evergreenLimit=${evergreenLimit} → `
+          + `약 ${evergreenCapped.dropped}건 미전달. Apps Script sponsoredTargets의 evergreen 상한 상향 필요(요청 limit로는 못 올림).`,
+        );
+      } else if (Number.isFinite(expected) && expected > targets.length) {
         console.error(
           `[gas] 대상 일부 누락(상한 아님): returned=${targets.length}, expected=${expected}, limit=${requestLimit}. `
           + '받은 대상으로 진행합니다(감시 누락 감지는 target-sync-watchdog).',
@@ -167,6 +179,7 @@ export async function fetchTargets(config, fetchImpl = fetch, now = Date.now()) 
       }
       const resolved = await resolveTargetUrls(targets, fetchImpl);
       await saveTargetCache(config, resolved, fetchImpl, now); // 성공분 캐시(장애 대비). best-effort.
+      if (evergreenCapped) resolved.evergreenCapped = evergreenCapped;
       return resolved;
     } catch (error) {
       lastError = error;
