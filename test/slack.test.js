@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { actionDefinitions, assigneeForChannelCategory, assigneeForTarget, buildAlertBlocks, buildViralCopyMessage, commentDeepLink, hasProductName, productGroup, productLabel, sendAlert, verifySlackSignature, videoAssigneeFromAdTitle } from '../src/slack.js';
+import { actionDefinitions, assigneeForChannelCategory, assigneeForTarget, buildAlertBlocks, buildViralCopyMessage, commentDeepLink, hasProductName, postSlackMessageWithRetry, productGroup, productLabel, sendAlert, verifySlackSignature, videoAssigneeFromAdTitle } from '../src/slack.js';
 
 const assignees = {
   satellite: 'U_SATELLITE',
@@ -387,4 +387,28 @@ test('sendAlert: 기존 완료 스레드에 새 답글을 달기 전에 완료 �
   assert.equal(calls[0].body.name, '완료느낌표');
   assert.match(calls[1].url, /chat\.postMessage/);
   assert.equal(calls[1].body.thread_ts, '555.666');
+});
+
+test('Slack postMessage 429는 Retry-After 뒤 재시도하고 메시지를 유실하지 않는다', async () => {
+  let attempts = 0;
+  const sleeps = [];
+  const payload = await postSlackMessageWithRetry(
+    { slackBotToken: 'tok' },
+    { channel: 'C1', text: '과부하 권고' },
+    async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return {
+          status: 429,
+          headers: { get: (name) => (String(name).toLowerCase() === 'retry-after' ? '2' : null) },
+          json: async () => ({ ok: false, error: 'ratelimited' }),
+        };
+      }
+      return { status: 200, headers: { get: () => null }, json: async () => ({ ok: true, ts: '1.2' }) };
+    },
+    { sleep: async (ms) => { sleeps.push(ms); } },
+  );
+  assert.equal(payload.ts, '1.2');
+  assert.equal(attempts, 2);
+  assert.deepEqual(sleeps, [2000]);
 });

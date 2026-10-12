@@ -9,6 +9,42 @@ const metaAdActions = [['숨김', 'hide', 'danger'], ['🙈 무시', 'ignore']];
 const tiktokAdActions = [['숨김', 'hide', 'danger'], ['숨김해제', 'unhide'], ['🙈 무시', 'ignore']];
 const manualHideActions = [['수동 숨김 필요', 'manual_hide_required', 'danger'], ['보류', 'hold'], ['🙈 무시', 'ignore']];
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryAfterMs(response, attempt, fallbackMs) {
+  const seconds = Number(response?.headers?.get?.('retry-after'));
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  return fallbackMs * (attempt + 1);
+}
+
+// Slack은 HTTP 429뿐 아니라 HTTP 200 + { ok:false, error:'ratelimited' }도 반환한다.
+// 과부하 권고처럼 보조 메시지가 순간 버스트 뒤에 붙는 경로도 유실되지 않도록
+// Retry-After를 우선 존중하고, 헤더가 없으면 짧은 선형 백오프로 재시도한다.
+export async function postSlackMessageWithRetry(
+  config,
+  body,
+  fetchImpl = fetch,
+  { maxRetries = 5, fallbackDelayMs = 1100, sleep = wait } = {},
+) {
+  let lastError = 'unknown_error';
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    const response = await fetchImpl('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${config.slackBotToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (payload.ok) return payload;
+    lastError = payload.error || `http_${response.status || 'unknown'}`;
+    const rateLimited = response.status === 429 || lastError === 'ratelimited';
+    if (!rateLimited || attempt === maxRetries) throw new Error(`Slack API: ${lastError}`);
+    await sleep(retryAfterMs(response, attempt, fallbackDelayMs));
+  }
+  throw new Error(`Slack API: ${lastError}`);
+}
+
 function button([text, actionId, style], value) {
   return { type: 'button', text: { type: 'plain_text', text }, action_id: actionId, value, ...(style ? { style } : {}) };
 }
@@ -314,21 +350,17 @@ export async function postThreadText(config, threadTs, text, fetchImpl = fetch) 
 
 // 스레드에 Block Kit 답글 발송. text는 알림/접근성용 fallback으로 항상 함께 보낸다.
 export async function postThreadBlocks(config, threadTs, text, blocks, fetchImpl = fetch) {
-  const res = await fetchImpl('https://slack.com/api/chat.postMessage', {
-    method: 'POST',
-    headers: { authorization: `Bearer ${config.slackBotToken}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      channel: config.slackChannelId,
-      text,
-      blocks,
-      thread_ts: threadTs,
-      unfurl_links: false,
-      unfurl_media: false,
-    }),
+  return postSlackMessageWithRetry(config, {
+    channel: config.slackChannelId,
+    text,
+    blocks,
+    thread_ts: threadTs,
+    unfurl_links: false,
+    unfurl_media: false,
+  }, fetchImpl, {
+    maxRetries: 5,
+    fallbackDelayMs: 1100,
   });
-  const payload = await res.json();
-  if (!payload.ok) throw new Error(`Slack API: ${payload.error || 'unknown_error'}`);
-  return payload;
 }
 
 export function verifySlackSignature({ signingSecret, timestamp, signature, rawBody, now = Date.now() }) {

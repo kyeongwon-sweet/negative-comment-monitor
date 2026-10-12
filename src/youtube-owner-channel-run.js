@@ -221,6 +221,10 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
           }
         }
         const route = ownerThreadRoute(target, config.slackAssignees);
+        // 신규 댓글 카드 직후 과부하 권고가 이어져 Slack 채널 버스트 제한에 걸리지 않도록
+        // 권고 시도 자체도 카드와 같은 간격으로 직렬화한다. 실제 429는 postThreadBlocks가
+        // Retry-After 기준으로 재시도한다.
+        if (config.youtubeOwnerAlertDelayMs > 0) await wait(config.youtubeOwnerAlertDelayMs);
         const overload = await maybeWarnOwnerCommentOverload(
           config,
           target,
@@ -232,7 +236,6 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
         );
         if (overload.alerted) {
           summary.overloadWarnings += 1;
-          if (config.youtubeOwnerAlertDelayMs > 0) await wait(config.youtubeOwnerAlertDelayMs);
         }
         if (overload.error) throw new Error(overload.error);
       }
