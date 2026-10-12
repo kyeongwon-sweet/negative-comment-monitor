@@ -18,6 +18,11 @@ export function isHighConfidenceOwnerRisk(target, comment, risk) {
   // 결정적으로 복구한다. 여기서 다시 일반 키워드 규칙으로 심사하면 안전망을
   // 무효화해 같은 댓글을 영구적으로 놓치므로 그대로 고신뢰로 인정한다.
   if (risk.engine === 'keyword-hard-owned') return true;
+  // 강한 모델 2차 판정이 부정으로 확인한 건(hybrid-classify 승격)도 고신뢰다. 이 게이트(09-01)는
+  // '약한 LLM 톤만으로' 조치하지 않으려는 것이고, 09-22 결정상 소유채널의 광고 냉소·경쟁품 우위는
+  // 브랜드명 없이도 부정이다 → 강한 모델이 동의하면 카테고리와 무관하게 통과시킨다.
+  // (전엔 승격 결과도 여기서 '브랜드 적대/조롱+명시 단어'가 아니면 다시 억제돼 승격이 무력화됐다.)
+  if (risk.engine === 'llm-strong-owned') return true;
   const strict = classifyNegativeComment(comment, {
     ...(target || {}),
     ownedChannelBrandHostilityScope: false,

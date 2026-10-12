@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { classifyCommentsHybrid, classifyTargetsBatched, deferredEntryKeys } from '../src/hybrid-classify.js';
 import { commentFingerprint } from '../src/dedup.js';
 import { classificationCacheFingerprint } from '../src/cache.js';
+import { suppressLowConfidenceOwnerRisks } from '../src/youtube-owner-risk.js';
 
 const CACHE_CFG = { anthropicKey: 'key', supabaseUrl: 'https://db.example', supabaseKey: 'svc' };
 
@@ -541,4 +542,48 @@ test('read-only 감사 분류는 실분류해도 운영 캐시를 쓰지 않는�
 
   assert.equal(result.engine, 'llm');
   assert.equal(writes, 0);
+});
+
+test('gXfkWldB0u4 재발방지: 약한 LLM 부정이 소유 게이트에 억제될 건은 강한 모델이 동의하면 최종까지 살아남는다', async () => {
+  const target = { brandName: '라라스윗', ownedChannelBrandHostilityScope: true, fullContextReview: true };
+  const comments = [{ text: '허니버터만하겠냐?' }, { text: '광고 의 신개념.' }];
+  // 1차(약한)=둘 다 부정(브랜드 미명시라 게이트 억제 대상), 2차(강한)=첫째만 부정.
+  let call = 0;
+  const staged = async (items) => {
+    call += 1;
+    if (call === 1) return items.map(() => ({ alert: true, category: '경쟁품 비교', reason: '경쟁품과 비교 폄하', priority: 'high' }));
+    return items.map((item) => (item.text.includes('허니버터')
+      ? { alert: true, category: '경쟁품 비교', reason: '경쟁품 우위로 제품 폄하', priority: 'high' }
+      : { alert: false, category: '정상댓글', reason: '', priority: 'normal' }));
+  };
+  const risks = await classifyCommentsHybrid(comments, target, { anthropicKey: 'key', ownedBrandEscalationModel: 'claude-strong' }, staged);
+  assert.equal(call, 2, '게이트 억제 대상은 강한 모델 2차 판정을 받아야 함');
+  // 실제 운영 경로처럼 소유 게이트까지 통과시켜 최종 결정을 본다(전엔 여기서 억제돼 공개 잔존).
+  const finalRisks = suppressLowConfidenceOwnerRisks(target, comments, risks);
+  assert.equal(finalRisks[0].alert, true, '강한 모델이 동의한 경쟁품 폄하는 숨김 대상');
+  assert.equal(finalRisks[0].engine, 'llm-strong-owned');
+  assert.equal(finalRisks[1].alert, false, '강한 모델이 동의하지 않으면 게이트가 억제(가십 오탐 방지 유지)');
+  assert.equal(finalRisks[1].ownerLowConfidenceSuppressed, true);
+});
+
+test('기존 승격(약한 정상→강한 부정)도 소유 게이트에서 다시 억제되지 않는다', async () => {
+  const target = { brandName: '라라스윗', ownedChannelBrandHostilityScope: true, fullContextReview: true };
+  const comments = [{ text: '이거 어디서 살 수 있는지 궁금하긴 하네요' }];
+  let call = 0;
+  const staged = async (items) => {
+    call += 1;
+    return items.map(() => (call === 1
+      ? { alert: false, category: '정상댓글', reason: '', priority: 'normal' }
+      : { alert: true, category: '광고/바이럴 의심', reason: '광고 냉소', priority: 'high' }));
+  };
+  const risks = await classifyCommentsHybrid(comments, target, { anthropicKey: 'key', ownedBrandEscalationModel: 'claude-strong' }, staged);
+  const [finalRisk] = suppressLowConfidenceOwnerRisks(target, comments, risks);
+  assert.equal(finalRisk.alert, true);
+});
+
+test('gXfkWldB0u4 하드넷: 광고 짜증 표현과 안사먹 오타 변형', async () => {
+  const { matchesOwnedHardHostility } = await import('../src/classify.js');
+  assert.equal(matchesOwnedHardHostility('정말 짜증나게 광고하네. 절대 안시먹는다'), true);
+  assert.equal(matchesOwnedHardHostility('광고 짜증나요'), true);
+  assert.equal(matchesOwnedHardHostility('맛피아는 배민애서 배달 돼요 😂'), false);
 });

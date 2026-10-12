@@ -10,6 +10,7 @@ import {
 } from './cache.js';
 import { loadFalsePositives } from './review.js';
 import { isAdCommentSource } from './routing.js';
+import { isHighConfidenceOwnerRisk } from './youtube-owner-risk.js';
 
 // 사람이 오탐(false_positive)으로 표시한 지문의 강제 정상 결과(분류기 해시와 무관하게 최우선).
 function humanFalsePositiveResult() {
@@ -254,10 +255,14 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
       if (entries[e]?.target?.ownedChannelBrandHostilityScope !== true) continue;
       const comments = Array.isArray(entries[e].comments) ? entries[e].comments : [];
       prepared[e].out.forEach((risk, index) => {
-        // 이 회차 LLM으로 새로 분류돼 '정상'이 된 건만. 사람 FP·보류·캐시 히트·키워드는 제외.
-        if (!risk || risk.engine !== 'llm' || risk.alert === true) return;
+        // 이 회차 LLM으로 새로 분류된 건만. 사람 FP·보류·캐시 히트·키워드는 제외.
+        // ① 약한 LLM '정상' → 미탐 구제. ② 약한 LLM '부정'인데 소유 게이트(isHighConfidenceOwnerRisk)가
+        // 억제할 건(광고 냉소·경쟁품 비교 등 브랜드 미명시) → 강한 모델이 동의할 때만 살린다
+        // (2026-10-12 gXfkWldB0u4: '짜증나게 광고하네…'·'허니버터만하겠냐?'가 약한 LLM 부정→게이트 억제로 공개 잔존).
+        if (!risk || risk.engine !== 'llm') return;
         const comment = comments[index];
         if (!comment) return;
+        if (risk.alert === true && isHighConfidenceOwnerRisk(entries[e].target, comment, risk)) return;
         // 소유채널 미탐은 대부분 우리 브랜드명을 안 부르는 미묘 부정(경쟁제품 우위·짝퉁, 광고 냉소·피로,
         // "알고리즘에서 나가"류)이다. 브랜드 본문언급 여부와 무관하게, 이 회차 LLM '정상'이 된 소유댓글은
         // 전부 강한 모델로 2차 판정한다. 하드넷(engine!=='llm')·캐시 히트·기알림은 위에서 이미 제외돼
