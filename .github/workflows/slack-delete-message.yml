@@ -1,0 +1,41 @@
+name: Delete one guarded Slack message
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel_id:
+        description: Slack channel ID
+        required: true
+        type: string
+      message_ts:
+        description: Exact Slack message timestamp
+        required: true
+        type: string
+      expected_text:
+        description: Text fragment that must be present
+        required: true
+        type: string
+      confirm:
+        description: DELETE <channel_id> <message_ts>
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: node scripts/slack-delete-message.mjs
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_DELETE_CHANNEL_ID: ${{ inputs.channel_id }}
+          SLACK_DELETE_MESSAGE_TS: ${{ inputs.message_ts }}
+          SLACK_DELETE_EXPECTED_TEXT: ${{ inputs.expected_text }}
+          SLACK_DELETE_CONFIRM: ${{ inputs.confirm }}

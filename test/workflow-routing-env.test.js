@@ -192,6 +192,13 @@ test('메인 감시는 예약 run 내부 15분 간격 4회 루프를 사용한�
   assert.match(monitorWorkflow, /cron:\s*'9,39 6-16 \* \* \*'/);
 });
 
+test('Anthropic 진단 실패는 일반 모니터 장애로 Slack에 발화하지 않는다', () => {
+  assert.match(
+    monitorWorkflow,
+    /- name: Notify Slack on failure\s+#[\s\S]*?if:\s*\$\{\{ failure\(\) && !\(github\.event_name == 'workflow_dispatch' && inputs\.verify_anthropic\) \}\}/,
+  );
+});
+
 test('하트비트는 하루 두 번을 유지하며 3.5시간 공백 임계를 전달한다', () => {
   assert.equal((heartbeatWorkflow.match(/- cron:/g) || []).length, 2);
   assert.match(heartbeatWorkflow, /HEARTBEAT_MAX_GAP_MINUTES:\s*\$\{\{ inputs\.max_gap_minutes \|\| '210' \}\}/);

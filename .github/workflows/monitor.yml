@@ -396,7 +396,9 @@ jobs:
           SLACK_ASSIGNEE_P_OWNED_YOUTUBE: ${{ vars.SLACK_ASSIGNEE_P_OWNED_YOUTUBE }}
           SLACK_ASSIGNEE_JD_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JD_PRIMARY }}
       - name: Notify Slack on failure
-        if: ${{ failure() }}
+        # verify_anthropic=true is an operator diagnostic. A failed credit/key probe is
+        # already visible in Actions and must not masquerade as a collection outage.
+        if: ${{ failure() && !(github.event_name == 'workflow_dispatch' && inputs.verify_anthropic) }}
         continue-on-error: true
         run: node src/notify-failure.js
         env:
