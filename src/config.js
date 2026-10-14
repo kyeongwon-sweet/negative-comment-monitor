@@ -100,8 +100,10 @@ export function loadConfig(env = process.env, now = Date.now()) {
     brandContext: String(env.BRAND_CONTEXT || '라라스윗').trim(),
     // 업로드 후 N일이 지나면 댓글 트래킹 중단(사용자 지시: 7일).
     trackingDays: Number(env.TRACKING_DAYS || 7),
-    // LLM 분류(의미 기반). 기본은 Gemini 무료 티어, 실패 시 Anthropic, 최종 키워드 폴백.
+    // LLM 분류(의미 기반). 기본은 Gemini 무료 티어 단독, 실패분은 보류 후 다음 회차 재분류.
+    // 폴백 공급자는 LLM_FALLBACK_PROVIDER로 명시할 때만(Anthropic 크레딧 미충전, 2026-10-14).
     llmProvider: String(env.LLM_PROVIDER || 'gemini').trim().toLowerCase(),
+    llmFallbackProvider: String(env.LLM_FALLBACK_PROVIDER || '').trim().toLowerCase(),
     geminiKey: String(env.GEMINI_API_KEY || '').trim(),
     geminiModel: String(env.GEMINI_MODEL || 'gemini-3.1-flash-lite').trim(),
     geminiRequestIntervalMs: Math.max(0, Number(env.GEMINI_REQUEST_INTERVAL_MS || 1500)),

@@ -296,7 +296,7 @@ test('Gemini 영구 실패 시 Anthropic으로 폴백하고 키워드 폴백은 
   const stats = {};
   const out = await classifyCommentsLLM(
     [{ text: '검토' }],
-    { llmProvider: 'gemini', geminiKey: 'bad', anthropicKey: 'anthropic', geminiRequestIntervalMs: 0 },
+    { llmProvider: 'gemini', llmFallbackProvider: 'anthropic', geminiKey: 'bad', anthropicKey: 'anthropic', geminiRequestIntervalMs: 0 },
     async (url) => {
       urls.push(String(url));
       if (String(url).includes('generativelanguage')) return {
@@ -323,8 +323,39 @@ test('Gemini 영구 실패 시 Anthropic으로 폴백하고 키워드 폴백은 
 });
 
 test('공급자 설정 감지는 Gemini 단독·Anthropic 단독·무키를 구분한다', () => {
-  assert.deepEqual(configuredLlmProviders({ llmProvider: 'gemini', geminiKey: 'g', anthropicKey: 'a' }), ['gemini', 'anthropic']);
+  // 폴백은 명시할 때만(2026-10-14). 키가 있어도 기본은 1순위 단독.
+  assert.deepEqual(configuredLlmProviders({ llmProvider: 'gemini', geminiKey: 'g', anthropicKey: 'a' }), ['gemini']);
+  assert.deepEqual(configuredLlmProviders({ llmProvider: 'gemini', llmFallbackProvider: 'anthropic', geminiKey: 'g', anthropicKey: 'a' }), ['gemini', 'anthropic']);
   assert.deepEqual(configuredLlmProviders({ anthropicKey: 'a' }), ['anthropic']);
   assert.equal(hasConfiguredLlmProvider({ geminiKey: 'g' }), true);
   assert.equal(hasConfiguredLlmProvider({}), false);
+});
+
+test('2026-10-14 결정: 운영 로더는 두 키가 다 있어도 Gemini 단독, Gemini 실패 시 Anthropic을 호출하지 않는다', async () => {
+  const { loadConfig } = await import('../src/config.js');
+  const { loadMetaAdsConfig } = await import('../src/meta-ads.js');
+  const env = {
+    GAS_WEB_APP_URL: 'https://gas.test/exec', GAS_VERIFY_TOKEN: 'g', APIFY_API_TOKEN: 'a',
+    APIFY_INSTAGRAM_ACTOR_ID: 'i', APIFY_YOUTUBE_ACTOR_ID: 'y', APIFY_TIKTOK_ACTOR_ID: 't', APIFY_TWITTER_ACTOR_ID: 'x',
+    SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'svc', SLACK_BOT_TOKEN: 'x',
+    GEMINI_API_KEY: 'gemini', ANTHROPIC_API_KEY: 'anthropic',
+  };
+  assert.deepEqual(configuredLlmProviders(loadConfig(env)), ['gemini']);
+  assert.deepEqual(configuredLlmProviders(loadMetaAdsConfig(env)), ['gemini']);
+  assert.deepEqual(configuredLlmProviders(loadConfig({ ...env, LLM_FALLBACK_PROVIDER: 'anthropic' })), ['gemini', 'anthropic'], '충전 시 변수로 복구');
+
+  const urls = [];
+  const stats = {};
+  const out = await classifyCommentsLLM(
+    [{ text: '검토' }],
+    { ...loadConfig(env), geminiRequestIntervalMs: 0, geminiRetryBaseMs: 0, geminiMaxAttempts: 1 },
+    async (url) => {
+      urls.push(String(url));
+      return { ok: false, status: 503, json: async () => ({ error: { status: 'UNAVAILABLE', message: 'overloaded' } }) };
+    },
+    stats,
+  );
+  assert.equal(out, null, 'Gemini 실패분은 보류(다음 회차 재분류)');
+  assert.ok(urls.length > 0 && urls.every((u) => u.includes('generativelanguage')), 'Anthropic 호출 없음');
+  assert.equal(stats.persistentFailures || 0, 0, '죽은 폴백의 credit 영구오류가 생기지 않음');
 });

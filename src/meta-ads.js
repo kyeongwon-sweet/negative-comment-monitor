@@ -58,6 +58,7 @@ export function loadMetaAdsConfig(env = process.env, now = Date.now()) {
     managedChannelCategories: [],
     brandContext: String(env.BRAND_CONTEXT || '라라스윗 쫀득바').trim(),
     llmProvider: String(env.LLM_PROVIDER || 'gemini').trim().toLowerCase(),
+    llmFallbackProvider: String(env.LLM_FALLBACK_PROVIDER || '').trim().toLowerCase(),
     geminiKey: String(env.GEMINI_API_KEY || '').trim(),
     geminiModel: String(env.GEMINI_MODEL || 'gemini-3.1-flash-lite').trim(),
     geminiRequestIntervalMs: Math.max(0, Number(env.GEMINI_REQUEST_INTERVAL_MS || 1500)),

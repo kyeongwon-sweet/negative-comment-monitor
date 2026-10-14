@@ -91,7 +91,7 @@ test('Gemini 429 폴백 경고는 무료 한도 원인과 공급자를 구분한
     candidateComments: 8, keywordFallbackComments: 8,
   });
   assert.match(text, /Gemini 무료 한도\/호출 제한 초과/);
-  assert.match(text, /Gemini 키·무료 한도와 Anthropic 폴백 상태/);
+  assert.match(text, /Gemini 키·무료 한도를 확인/);
 });
 
 test('1순위 Gemini 일시 오류 + 폴백 Anthropic 크레딧 부족은 즉시 경고하지 않고 3회 연속에서만 알린다', async () => {

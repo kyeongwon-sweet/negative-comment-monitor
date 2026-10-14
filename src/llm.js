@@ -37,9 +37,14 @@ function boundedAttempts(value, fallback = 4) {
   return Math.max(1, Math.min(5, Number(value || fallback)));
 }
 
+// 1순위 공급자만 기본 사용한다. 폴백은 llmFallbackProvider(LLM_FALLBACK_PROVIDER)로 명시할 때만.
+// 2026-10-14 결정: Anthropic은 2026-08-25 크레딧 소진 후 미충전이라 폴백이 매번 'credit' 영구 오류로
+// 실패만 했다(보류 결과는 동일, 오히려 즉시 경고 오탐 유발). 크레딧 충전 시 LLM_FALLBACK_PROVIDER=anthropic.
 function providerOrder(config = {}) {
   const requested = String(config.llmProvider || (config.geminiKey ? 'gemini' : 'anthropic')).trim().toLowerCase();
-  return requested === 'anthropic' ? ['anthropic', 'gemini'] : ['gemini', 'anthropic'];
+  const primary = requested === 'anthropic' ? 'anthropic' : 'gemini';
+  const fallback = String(config.llmFallbackProvider || '').trim().toLowerCase();
+  return ['gemini', 'anthropic'].includes(fallback) && fallback !== primary ? [primary, fallback] : [primary];
 }
 
 function providerConfigured(provider, config = {}) {

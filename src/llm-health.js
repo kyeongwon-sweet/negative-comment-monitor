@@ -74,7 +74,7 @@ export function buildLlmDegradedMessage(scope, health, owner = '') {
     `원인: ${cause}${fallbackText}`,
     `LLM 대상 ${health.candidateComments}건 중 ${deferredComments}건은 문맥 판정을 보류했고, 명백 부정 ${immediateComments}건만 키워드로 즉시 처리했습니다.`,
     `LLM 장애로 ${deferredComments}건 문맥판정 보류 중 — 알림·숨김·정상 캐시·seen 기록 없이 복구 후 자동 재분류합니다.`,
-    'Gemini 키·무료 한도와 Anthropic 폴백 상태를 확인해 주세요.',
+    'Gemini 키·무료 한도를 확인해 주세요(폴백 공급자 없음, 보류분은 다음 회차 자동 재분류).',
     owner ? `담당자: <@${owner}>` : '',
   ].filter(Boolean).join('\n');
 }
