@@ -12,7 +12,19 @@ export function summarizeLlmHealth(stats = {}, totalComments = 0) {
     ? Math.max(0, fallbackComments - immediateComments)
     : Number(stats.llmDeferredComments || 0);
   const candidateComments = Number(stats.cacheHits || 0) + Number(stats.cacheMiss || 0) + Number(stats.missingKey ? fallbackComments : 0);
-  const persistent = Boolean(stats.missingKey || Number(stats.persistentFailures || 0) > 0);
+  // 영구(즉시 경고)는 '일시 오류 없이 영구 오류만' 난 경우. 1순위(Gemini)가 5xx·429 같은 일시 오류로
+  // 실패해 폴백(Anthropic)으로 넘어갔다가 크레딧 부족으로 실패한 경우는 1순위 복구 시 자동 회복되므로
+  // 일시 오류로 보고 연속 임계(기본 3회)를 따른다(10-12·10-14: 보류 1~25건이 즉시 경고로 나간 오탐).
+  const transientSeen = Number(stats.transientFailures || 0) > 0;
+  const persistent = Boolean(stats.missingKey || (Number(stats.persistentFailures || 0) > 0 && !transientSeen));
+  const byProvider = stats.providerLastFailure || {};
+  const transientEntry = Object.entries(byProvider).find(([, f]) => f?.kind === 'transient');
+  const persistentEntry = Object.entries(byProvider).find(([, f]) => f?.kind === 'persistent');
+  // 원인 표시는 일시 오류가 있으면 그 공급자 기준, 영구 오류 난 폴백은 부가 정보로.
+  const primary = transientSeen && transientEntry ? transientEntry : null;
+  const fallbackNote = primary && persistentEntry && persistentEntry[0] !== primary[0]
+    ? { provider: persistentEntry[0], code: String(persistentEntry[1]?.code || '') }
+    : null;
   return {
     totalComments: Math.max(0, Number(totalComments || 0)),
     candidateComments,
@@ -28,9 +40,12 @@ export function summarizeLlmHealth(stats = {}, totalComments = 0) {
     llmDeferredComments: deferredComments,
     llmDeferredBatches: Number(stats.llmDeferredBatches || 0),
     persistent,
-    failureProvider: String(stats.lastFailureProvider || ''),
+    failureProvider: primary ? primary[0] : String(stats.lastFailureProvider || ''),
     successfulProvider: String(stats.lastSuccessfulProvider || ''),
-    failureCode: String(stats.lastFailureCode || (stats.missingKey ? 'missing_key' : '')),
+    failureCode: primary
+      ? String(primary[1]?.code || '')
+      : String(stats.lastFailureCode || (stats.missingKey ? 'missing_key' : '')),
+    fallbackFailure: fallbackNote,
     degraded: fallbackComments > 0,
   };
 }
@@ -46,12 +61,17 @@ export function buildLlmDegradedMessage(scope, health, owner = '') {
   const cause = health.failureCode === 'credit' ? 'Anthropic 크레딧 부족'
     : health.failureCode === 'auth' || ['missing_key', 'missing_llm_key'].includes(health.failureCode) ? `${provider} 인증/키 설정 오류`
       : health.failureCode === 'rate_limit' ? `${provider} 무료 한도/호출 제한 초과`
-        : health.persistent ? `${provider} 영구 요청 오류`
-          : `${provider} 일시 오류 재시도 소진`;
+        : health.failureCode === 'server' ? `${provider} 서버 오류(5xx) 재시도 소진`
+          : health.persistent ? `${provider} 영구 요청 오류`
+            : `${provider} 일시 오류 재시도 소진`;
+  const fb = health.fallbackFailure;
+  const fallbackText = fb
+    ? ` (폴백 ${fb.provider === 'anthropic' ? 'Anthropic' : 'Gemini'}도 실패: ${fb.code === 'credit' ? '크레딧 부족' : fb.code || '영구 오류'})`
+    : '';
   return [
     '⚠️ *LLM 분류 degraded — 문맥 판정 보류 중*',
     `구간: ${scope}`,
-    `원인: ${cause}`,
+    `원인: ${cause}${fallbackText}`,
     `LLM 대상 ${health.candidateComments}건 중 ${deferredComments}건은 문맥 판정을 보류했고, 명백 부정 ${immediateComments}건만 키워드로 즉시 처리했습니다.`,
     `LLM 장애로 ${deferredComments}건 문맥판정 보류 중 — 알림·숨김·정상 캐시·seen 기록 없이 복구 후 자동 재분류합니다.`,
     'Gemini 키·무료 한도와 Anthropic 폴백 상태를 확인해 주세요.',

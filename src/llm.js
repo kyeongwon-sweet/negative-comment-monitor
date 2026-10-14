@@ -91,6 +91,10 @@ function recordFailure(stats, failure) {
   stats.lastFailureStatus = failure.status;
   stats.lastFailureCode = failure.code;
   stats.lastFailureKind = failure.kind;
+  // 공급자별 마지막 실패(코드·종류). 1순위가 일시 오류인데 폴백이 영구 오류(크레딧 소진 등)일 때
+  // 원인 보고·경고 임계를 1순위 기준으로 판단하기 위해 남긴다(llm-health.summarizeLlmHealth).
+  stats.providerLastFailure ||= {};
+  stats.providerLastFailure[failure.provider] = { code: failure.code, kind: failure.kind };
 }
 
 function openPersistentCircuit(stats, provider) {

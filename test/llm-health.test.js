@@ -93,3 +93,33 @@ test('Gemini 429 폴백 경고는 무료 한도 원인과 공급자를 구분한
   assert.match(text, /Gemini 무료 한도\/호출 제한 초과/);
   assert.match(text, /Gemini 키·무료 한도와 Anthropic 폴백 상태/);
 });
+
+test('1순위 Gemini 일시 오류 + 폴백 Anthropic 크레딧 부족은 즉시 경고하지 않고 3회 연속에서만 알린다', async () => {
+  const db = statefulFetch();
+  // 10-14 실사례: Gemini 5xx로 실패 → Anthropic 폴백이 크레딧 부족 → 1건 보류. 다음 회차 자동 재분류된다.
+  const stats = {
+    calls: 0, cacheHits: 0, cacheMiss: 1,
+    failedAttempts: 3, transientFailures: 2, persistentFailures: 1,
+    lastFailureProvider: 'anthropic', lastFailureCode: 'credit',
+    providerLastFailure: { gemini: { code: 'server', kind: 'transient' }, anthropic: { code: 'credit', kind: 'persistent' } },
+    keywordFallbackComments: 1, keywordFallbackBatches: 1, llmDeferredComments: 1,
+  };
+  const one = await monitorLlmHealth(CONFIG, stats, { scope: 'core', label: '일반 모니터', totalComments: 1 }, db.fetchImpl, 1_000);
+  assert.equal(one.persistent, false);
+  assert.equal(one.alerted, false, '첫 회차 즉시 경고 금지(1순위 복구 시 자동 회복)');
+  assert.equal(one.failureProvider, 'gemini');
+  assert.equal(one.failureCode, 'server');
+  await monitorLlmHealth(CONFIG, stats, { scope: 'core', label: '일반 모니터', totalComments: 1 }, db.fetchImpl, 2_000);
+  const three = await monitorLlmHealth(CONFIG, stats, { scope: 'core', label: '일반 모니터', totalComments: 1 }, db.fetchImpl, 3_000);
+  assert.equal(three.alerted, true, '3회 연속이면 경고');
+  assert.match(db.messages[0], /Gemini 서버 오류\(5xx\)/);
+  assert.match(db.messages[0], /폴백 Anthropic도 실패: 크레딧 부족/);
+});
+
+test('영구 오류만 있으면(일시 오류 없음) 여전히 즉시 경고', () => {
+  const out = summarizeLlmHealth({
+    persistentFailures: 2, providerLastFailure: { gemini: { code: 'auth', kind: 'persistent' }, anthropic: { code: 'credit', kind: 'persistent' } },
+    lastFailureCode: 'credit', keywordFallbackComments: 3,
+  });
+  assert.equal(out.persistent, true);
+});
