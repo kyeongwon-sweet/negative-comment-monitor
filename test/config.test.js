@@ -102,3 +102,22 @@ test('기한부 담당자 override: 지정일(KST, 당일 포함)까지만 임�
   }
   assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: '인지 광고' }, loadSlackAssignees(env, at('2026-10-14T09:00:00+09:00'))), 'U_LEEJW');
 });
+
+test('바치케 협찬 (파워채널/먹스타)만 PBACHI_MUKSTAR(김보나), 나머지 바치케는 전담(이재원) — 일반·광고 로더 공통', async () => {
+  const { loadSlackAssignees } = await import('../src/config.js');
+  const { loadMetaAdsConfig } = await import('../src/meta-ads.js');
+  const { assigneeForTarget } = await import('../src/slack.js');
+  const env = { SLACK_ASSIGNEE_PBACHI: 'U_LEEJW', SLACK_ASSIGNEE_PBACHI_MUKSTAR: 'U_KIMBN', SLACK_ASSIGNEE_OTHER: 'U_OTHER' };
+  const adEnv = { ...env, SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc', SLACK_BOT_TOKEN: 'x' };
+  const now = Date.parse('2026-10-15T09:00:00+09:00');
+  for (const assignees of [loadSlackAssignees(env, now), loadMetaAdsConfig(adEnv, now).slackAssignees]) {
+    assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: '협찬 (파워채널/먹스타)' }, assignees), 'U_KIMBN');
+    for (const c of ['협찬 (파워채널/매거진)', '협찬 (인플루언서)', '인지 광고', '바이럴 (배너)', '위성채널']) {
+      assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: c }, assignees), 'U_LEEJW', c);
+    }
+    // 다른 상품군 먹스타는 영향 없음
+    assert.notEqual(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (파워채널/먹스타)' }, assignees), 'U_KIMBN');
+  }
+  // 변수 비면 바치케 전담으로 폴백
+  assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: '협찬 (파워채널/먹스타)' }, loadSlackAssignees({ SLACK_ASSIGNEE_PBACHI: 'U_LEEJW' }, now)), 'U_LEEJW');
+});

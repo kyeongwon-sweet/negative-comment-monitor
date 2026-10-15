@@ -139,7 +139,9 @@ export function assigneeForTarget(target, assignees = {}) {
   const isOwnedYoutube = category.includes('소유'); // 소유 YouTube(자사 유튜브 채널)
   const isAwareness = category.includes('인지'); // 인지(메타) 광고 부정댓글 전용 담당자
   if (group === 'pbachi') {
-    // P바치는 카테고리 구분 없이 전 카테고리를 이재원 한 명으로 라우팅.
+    // 바치케: 협찬 (파워채널/먹스타)만 별도 담당(김보나), 그 외 전 카테고리는 바치케 전담(이재원).
+    // '먹스타'로 한정 — 협찬 (파워채널/매거진)·(인플루언서)는 바치케 전담 유지.
+    if (isSponsorship && category.includes('먹스타') && assignees.pbachiMukstar) return assignees.pbachiMukstar;
     if (assignees.pbachi) return assignees.pbachi;
   } else if (group === 'jd') {
     // 쫀득바: 위성채널·바이럴(배너/영상)=김어진, 그 외 전 카테고리(인지광고·협찬·온드·소유YouTube 등)는

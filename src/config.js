@@ -48,6 +48,8 @@ export function loadSlackAssignees(env = process.env, now = Date.now()) {
     other: String(env.SLACK_ASSIGNEE_OTHER || '').trim(),
     owned: String(env.SLACK_ASSIGNEE_OWNED || '').trim(),
     pbachi: overrideAssignee(env, 'SLACK_ASSIGNEE_PBACHI', now), // 바치케(P바치) 전담(이재원). _OVERRIDE로 기한부 대체
+    // 바치케 협찬 (파워채널/먹스타)만 별도 담당(2026-10-15 대표 지정: 김보나). 비면 바치케 전담으로.
+    pbachiMukstar: String(env.SLACK_ASSIGNEE_PBACHI_MUKSTAR || '').trim(),
     jdBok: String(env.SLACK_ASSIGNEE_JDBOK || '').trim(),
     awareness: scheduledAssignee(env, 'SLACK_ASSIGNEE_AWARENESS', 'SLACK_ASSIGNEE_AWARENESS_NEXT', nextRoutingActive),
     sponsorship: String(env.SLACK_ASSIGNEE_SPONSORSHIP || '').trim(),
