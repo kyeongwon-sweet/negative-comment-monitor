@@ -41,12 +41,16 @@ export function buildYouTubeAuthorBanUrl(youtubeApiBase, commentId) {
   return url;
 }
 
-export async function persistBanEvidence(config, alertId, fetchImpl, now) {
-  // 사람이 이미 남긴 완료/오탐 등의 결정을 덮지 않는다. 미결 행만 서비스 계정의
-  // 실제 API 성공 결과로 author_banned 처리한다. 'hidden'(자동숨김)과 구분해,
-  // 밴 끝난 작성자가 상습 악플러 리포트에 다시 오르지 않게 한다.
+export async function persistBanEvidence(config, alertIds, fetchImpl, now) {
+  // banAuthor는 그 작성자의 이 채널 댓글을 모두 숨긴다 → 후보의 모든 alert 행을 author_banned로
+  // 맞춘다(bulk-ban persistAuthorBanned와 동일 계약). candidate.alertIds는 리포트 단계에서 이미
+  // 사람 keep 결정(오탐·무시·승인·숨김해제)을 뺀 행만이라 사람 판단을 덮지 않는다.
+  // ⚠️ 전엔 증거 1행만, 그것도 review_decision=is.null일 때만 갱신 → 이미 자동숨김('hidden')된
+  // 악플러는 밴해도 기록이 안 남아 다음 리포트에 계속 후보로 재등장했다(2026-10-15 UC1jnDc…).
+  const ids = [...new Set((Array.isArray(alertIds) ? alertIds : [alertIds]).map(Number).filter(Number.isSafeInteger))];
+  if (!ids.length) return;
   const response = await fetchImpl(
-    `${config.supabaseUrl}/rest/v1/negative_comment_alerts?id=eq.${alertId}&review_decision=is.null`,
+    `${config.supabaseUrl}/rest/v1/negative_comment_alerts?id=in.(${ids.join(',')})`,
     {
       method: 'PATCH',
       headers: headers(config, { 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
@@ -90,7 +94,7 @@ export async function banYouTubeRepeatOffender(
   if (response.status !== 204) {
     throw new Error(`YouTube author ban failed (${response.status})`);
   }
-  await persistBanEvidence(config, config.alertId, fetchImpl, now);
+  await persistBanEvidence(config, candidate.alertIds, fetchImpl, now);
   return {
     banned: true,
     candidateCommentCount: candidate.commentCount,

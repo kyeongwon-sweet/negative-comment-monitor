@@ -40,6 +40,16 @@ test('이미 author_banned인 작성자는 후보에서 빠지고 hidden 작성�
   assert.deepEqual(candidates.map((r) => r.authorChannelId), ['UC_HIDDEN']);
 });
 
+test('2026-10-15 재발방지: 밴된 작성자는 그 채널의 나머지 hidden 행이 남아 있어도 후보에서 통째로 빠진다', () => {
+  const candidates = buildRepeatOffenderCandidates([
+    // 증거 1행만 author_banned, 나머지는 자동숨김 hidden(이전 단일밴이 남기던 상태)
+    row(1, 'UC_BANNED', 'video1', 'author_banned'), row(2, 'UC_BANNED', 'video2'), row(3, 'UC_BANNED', 'video3'), row(4, 'UC_BANNED', 'video4'),
+    // 같은 작성자라도 다른 소유 채널은 별개 밴 단위 → 그 채널 기준으로 다시 판단
+    row(5, 'UC_BANNED', 'video5', 'hidden', '악플러', 'UC_OTHER'), row(6, 'UC_BANNED', 'video6', 'hidden', '악플러', 'UC_OTHER'),
+  ], { minComments: 3, minVideos: 2 });
+  assert.deepEqual(candidates.map((r) => [r.ownerChannelId, r.authorChannelId]), [['UC_OTHER', 'UC_BANNED']]);
+});
+
 test('작성자별 3건 이상 또는 서로 다른 영상 2개 이상을 후보로 집계한다', () => {
   const candidates = buildRepeatOffenderCandidates([
     row(1, 'UC_A', 'video1'), row(2, 'UC_A', 'video1'), row(3, 'UC_A', 'video1'),

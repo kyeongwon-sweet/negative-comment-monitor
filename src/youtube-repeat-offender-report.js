@@ -78,8 +78,15 @@ export function buildRepeatOffenderCandidates(alerts, options = {}) {
   const minVideos = positiveInt(options.minVideos, 2, 10_000);
   const maxExamples = positiveInt(options.maxExamples, 2, 5);
   const byAuthor = new Map();
+  // 채널에서 숨김(밴) 끝난 작성자는 그 소유 채널에선 나머지 댓글 행이 'hidden'으로 남아 있어도
+  // 후보에서 통째로 뺀다(밴이 이미 전 댓글을 숨김, 재-밴은 실패할 뿐). 밴 단위=소유채널×작성자.
+  const authorKey = (alert) => `${clean(alert.owner_channel_id || alert.ownerChannelId)}\u001f${clean(alert.author_channel_id || alert.authorChannelId)}`;
+  const bannedAuthors = new Set((alerts || [])
+    .filter((alert) => clean(alert?.review_decision).toLowerCase() === 'author_banned')
+    .map(authorKey));
   for (const alert of alerts || []) {
     if (!isNegativeAlertForOffenderReport(alert)) continue;
+    if (bannedAuthors.has(authorKey(alert))) continue;
     const authorChannelId = clean(alert.author_channel_id || alert.authorChannelId);
     const ownerChannelId = clean(alert.owner_channel_id || alert.ownerChannelId);
     const commentId = clean(alert.comment_id);
