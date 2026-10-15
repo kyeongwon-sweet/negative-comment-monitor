@@ -89,6 +89,8 @@ test('executeBulkBan live: 후보를 밴하고 모든 alert 행을 author_banned
   );
   assert.equal(out.banned, 1);
   assert.equal(out.failed.length, 0);
+  assert.equal(out.moderationRequests, 1);
+  assert.equal(out.estimatedQuotaUnits, 50);
   assert.equal(banUrls.length, 1);
   assert.match(banUrls[0], /banAuthor=true/);
   assert.match(banUrls[0], /moderationStatus=rejected/);
@@ -97,6 +99,83 @@ test('executeBulkBan live: 후보를 밴하고 모든 alert 행을 author_banned
   assert.match(patched[0], /id=in\.\(10,11\)/);
   assert.doesNotMatch(patched[0], /review_decision=is\.null/);
   assert.equal(patchedBodies[0].review_decision, 'author_banned');
+});
+
+test('executeBulkBan live: 같은 소유채널 후보 최대 50명을 한 quota 요청으로 묶는다', async () => {
+  const candidates = Array.from({ length: 51 }, (_, index) => candidate({
+    authorChannelId: `AUTHOR${index + 1}`,
+    alertIds: [index + 1],
+    evidenceAlertId: index + 1,
+  }));
+  const banUrls = [];
+  let patchCount = 0;
+  const fetchImpl = async (input, init = {}) => {
+    const url = String(input);
+    if (url.includes('select=id,comment_id')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => candidates.map((row) => ({
+          id: row.evidenceAlertId,
+          comment_id: `CMT${row.evidenceAlertId}`,
+        })),
+      };
+    }
+    if (url.includes('/comments/setModerationStatus')) {
+      banUrls.push(url);
+      return { ok: true, status: 204, json: async () => ({}) };
+    }
+    if (url.includes('/rest/v1/negative_comment_alerts') && init.method === 'PATCH') {
+      patchCount += 1;
+      return { ok: true, status: 204, json: async () => [] };
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+
+  const out = await executeBulkBan(
+    { dryRun: false, allowedAlertIds: new Set(), youtubeApiBase: 'https://yt', supabaseUrl: baseEnv.SUPABASE_URL, supabaseKey: 'srk', actor: 'test', banDelayMs: 0 },
+    { candidates, accessTokens: new Map([['OWNER1', 'tok']]) },
+    fetchImpl,
+  );
+
+  assert.equal(out.banned, 51);
+  assert.equal(out.moderationRequests, 2);
+  assert.equal(out.estimatedQuotaUnits, 100);
+  assert.equal(patchCount, 51);
+  assert.equal(new URL(banUrls[0]).searchParams.get('id').split(',').length, 50);
+  assert.equal(new URL(banUrls[1]).searchParams.get('id'), 'CMT51');
+});
+
+test('executeBulkBan live: 소유채널이 다르면 OAuth별 요청으로 분리한다', async () => {
+  const candidates = [
+    candidate({ ownerChannelId: 'OWNER1', authorChannelId: 'AUTHOR1', alertIds: [1], evidenceAlertId: 1 }),
+    candidate({ ownerChannelId: 'OWNER2', authorChannelId: 'AUTHOR2', alertIds: [2], evidenceAlertId: 2 }),
+  ];
+  const authHeaders = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = String(input);
+    if (url.includes('select=id,comment_id')) {
+      return { ok: true, status: 200, json: async () => [{ id: 1, comment_id: 'CMT1' }, { id: 2, comment_id: 'CMT2' }] };
+    }
+    if (url.includes('/comments/setModerationStatus')) {
+      authHeaders.push(init.headers.Authorization);
+      return { ok: true, status: 204, json: async () => ({}) };
+    }
+    if (url.includes('/rest/v1/negative_comment_alerts') && init.method === 'PATCH') {
+      return { ok: true, status: 204, json: async () => [] };
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+
+  const out = await executeBulkBan(
+    { dryRun: false, allowedAlertIds: new Set(), youtubeApiBase: 'https://yt', supabaseUrl: baseEnv.SUPABASE_URL, supabaseKey: 'srk', actor: 'test', banDelayMs: 0 },
+    { candidates, accessTokens: new Map([['OWNER1', 'tok1'], ['OWNER2', 'tok2']]) },
+    fetchImpl,
+  );
+
+  assert.equal(out.banned, 2);
+  assert.equal(out.moderationRequests, 2);
+  assert.deepEqual(authHeaders.sort(), ['Bearer tok1', 'Bearer tok2']);
 });
 
 test('executeBulkBan live: 토큰/댓글ID 없으면 밴하지 않고 skip', async () => {

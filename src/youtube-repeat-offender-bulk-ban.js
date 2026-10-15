@@ -120,6 +120,14 @@ async function persistAuthorBanned(config, alertIds, fetchImpl, now) {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function chunks(items, size = 50) {
+  const out = [];
+  for (let offset = 0; offset < items.length; offset += size) {
+    out.push(items.slice(offset, offset + size));
+  }
+  return out;
+}
+
 // prepared = { candidates, accessTokens }. dryRun이면 인벤토리만 반환하고 아무것도 밴하지 않는다.
 export async function executeBulkBan(config, prepared, fetchImpl = fetch, now = Date.now()) {
   const selected = selectBulkBanCandidates(prepared.candidates, config.allowedAlertIds);
@@ -136,30 +144,70 @@ export async function executeBulkBan(config, prepared, fetchImpl = fetch, now = 
   const evidenceIds = selected.map((row) => Number(row.evidenceAlertId)).filter(Number.isSafeInteger);
   const commentByAlert = await commentIdsByAlert(config, evidenceIds, fetchImpl);
   let banned = 0;
+  let moderationRequests = 0;
   const failed = [];
   const skipped = [];
+  const actionableByOwner = new Map();
   for (const candidate of selected) {
     const token = prepared.accessTokens?.get(candidate.ownerChannelId);
     const commentId = commentByAlert.get(Number(candidate.evidenceAlertId));
     if (!token) { skipped.push({ authorChannelId: candidate.authorChannelId, reason: 'no-owner-token' }); continue; }
     if (!commentId) { skipped.push({ authorChannelId: candidate.authorChannelId, reason: 'no-comment-id' }); continue; }
-    try {
-      const response = await fetchImpl(buildYouTubeAuthorBanUrl(config.youtubeApiBase, commentId), {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (response.status !== 204) {
-        failed.push({ authorChannelId: candidate.authorChannelId, status: response.status });
+
+    const ownerKey = clean(candidate.ownerChannelId);
+    const ownerItems = actionableByOwner.get(ownerKey) || [];
+    ownerItems.push({ candidate, commentId, token });
+    actionableByOwner.set(ownerKey, ownerItems);
+  }
+
+  // comments.setModerationStatus는 id를 최대 50개까지 한 요청에 받을 수 있고,
+  // 요청당 50 quota unit을 쓴다. 후보마다 호출하면 168명 차단에 8,400 unit을
+  // 소진해 같은 프로젝트의 읽기 모니터가 quotaExceeded로 멈춘다. 소유 채널별로
+  // 묶어 호출하면 banAuthor가 각 댓글 작성자에게 적용되면서 같은 작업이 약 4회다.
+  for (const ownerItems of actionableByOwner.values()) {
+    for (const batch of chunks(ownerItems, 50)) {
+      const commentIds = batch.map((item) => item.commentId).join(',');
+      let response;
+      try {
+        response = await fetchImpl(buildYouTubeAuthorBanUrl(config.youtubeApiBase, commentIds), {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${batch[0].token}` },
+        });
+        moderationRequests += 1;
+      } catch (error) {
+        for (const { candidate } of batch) {
+          failed.push({ authorChannelId: candidate.authorChannelId, error: clean(error?.message || error).slice(0, 200) });
+        }
         continue;
       }
-      await persistAuthorBanned(config, candidate.alertIds, fetchImpl, now);
-      banned += 1;
+
+      if (response.status !== 204) {
+        for (const { candidate } of batch) {
+          failed.push({ authorChannelId: candidate.authorChannelId, status: response.status });
+        }
+        continue;
+      }
+
+      for (const { candidate } of batch) {
+        try {
+          await persistAuthorBanned(config, candidate.alertIds, fetchImpl, now);
+          banned += 1;
+        } catch (error) {
+          // 플랫폼 차단은 성공했지만 감사 원장 갱신이 실패한 경우를 숨기지 않는다.
+          failed.push({ authorChannelId: candidate.authorChannelId, error: clean(error?.message || error).slice(0, 200) });
+        }
+      }
       if (config.banDelayMs > 0) await wait(config.banDelayMs);
-    } catch (error) {
-      failed.push({ authorChannelId: candidate.authorChannelId, error: clean(error?.message || error).slice(0, 200) });
     }
   }
-  return { ...base, banned, failed, skipped };
+  return {
+    ...base,
+    banned,
+    failed,
+    skipped,
+    moderationRequests,
+    estimatedQuotaUnits: moderationRequests * 50,
+  };
 }
 
 export async function banAllYouTubeRepeatOffenders(
