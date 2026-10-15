@@ -136,11 +136,18 @@ jobs:
           SLACK_ASSIGNEE_PBACHI_OVERRIDE: ${{ vars.SLACK_ASSIGNEE_PBACHI_OVERRIDE }}
           SLACK_ASSIGNEE_P_OWNED_YOUTUBE: ${{ vars.SLACK_ASSIGNEE_P_OWNED_YOUTUBE }}
           SLACK_ASSIGNEE_JD_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JD_PRIMARY }}
-      - name: Notify Slack of auxiliary degraded state
-        if: ${{ steps.schema.outcome == 'failure' || steps.owner_monitor.outcome == 'failure' }}
+      - name: Record owner-channel auxiliary outcome
+        if: ${{ always() }}
         continue-on-error: true
-        run: node src/notify-auxiliary-degraded.js
+        run: node src/record-auxiliary-outcome.js
         env:
+          AUXILIARY_HEALTH_KEY: youtube_owner_channel
+          AUXILIARY_OUTCOME: ${{ steps.schema.outcome == 'success' && steps.owner_monitor.outcome == 'success' && 'success' || 'failure' }}
+          # 단발성 quota/API 흔들림은 원장에만 남기고, 2회 연속 실패부터 24시간에 한 번 알린다.
+          AUXILIARY_FAILURE_THRESHOLD: '2'
+          AUXILIARY_ALERT_COOLDOWN_HOURS: '24'
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}

@@ -199,6 +199,16 @@ test('Anthropic 진단 실패는 일반 모니터 장애로 Slack에 발화하�
   );
 });
 
+test('소유채널 보조 실패는 건강 원장으로 2회 임계·24시간 쿨다운 후 알린다', () => {
+  const source = readFileSync(new URL('../.github/workflows/youtube-owner-channel.yml', import.meta.url), 'utf8');
+  assert.match(source, /name: Record owner-channel auxiliary outcome/);
+  assert.match(source, /run: node src\/record-auxiliary-outcome\.js/);
+  assert.match(source, /AUXILIARY_HEALTH_KEY: youtube_owner_channel/);
+  assert.match(source, /AUXILIARY_FAILURE_THRESHOLD: '2'/);
+  assert.match(source, /AUXILIARY_ALERT_COOLDOWN_HOURS: '24'/);
+  assert.doesNotMatch(source, /run: node src\/notify-auxiliary-degraded\.js/);
+});
+
 test('하트비트는 하루 두 번을 유지하며 3.5시간 공백 임계를 전달한다', () => {
   assert.equal((heartbeatWorkflow.match(/- cron:/g) || []).length, 2);
   assert.match(heartbeatWorkflow, /HEARTBEAT_MAX_GAP_MINUTES:\s*\$\{\{ inputs\.max_gap_minutes \|\| '210' \}\}/);
