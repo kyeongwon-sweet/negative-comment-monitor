@@ -57,6 +57,8 @@ export function loadMetaAdsConfig(env = process.env, now = Date.now()) {
     },
     managedChannelCategories: [],
     brandContext: String(env.BRAND_CONTEXT || '라라스윗 쫀득바').trim(),
+    // 알림 카드 발송 최소 간격(slack.js paceSlackPost). Slack 채널 게시 ≈초당 1건 권장.
+    slackPostMinIntervalMs: Math.max(0, Number(env.SLACK_POST_MIN_INTERVAL_MS ?? 1100) || 0),
     llmProvider: String(env.LLM_PROVIDER || 'gemini').trim().toLowerCase(),
     llmFallbackProvider: String(env.LLM_FALLBACK_PROVIDER || '').trim().toLowerCase(),
     geminiKey: String(env.GEMINI_API_KEY || '').trim(),

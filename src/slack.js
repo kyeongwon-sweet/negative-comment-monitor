@@ -286,8 +286,23 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   ];
 }
 
+// 같은 프로세스의 알림 카드 발송 최소 간격(전 경로 공통: 일반·메타·틱톡·유튜브·소유).
+// 2026-10-16 08:17~18 유튜브 인지광고 아침 배치가 간격 0으로 카드 ~97개를 2분에 몰아 올려
+// Slack이 "Due to a high volume of activity, we are not displaying some messages" 안내로 대체했다.
+// Slack 채널 게시 권장 한도(≈초당 1건)를 지키도록 config.slackPostMinIntervalMs(운영 로더 기본 1100) 보장.
+let lastSlackPostAt = 0;
+async function paceSlackPost(config) {
+  const gap = Number(config?.slackPostMinIntervalMs || 0);
+  if (gap > 0) {
+    const waitMs = lastSlackPostAt + gap - Date.now();
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+  lastSlackPostAt = Date.now();
+}
+
 export async function sendAlert(config, target, comment, fetchImpl = fetch, threadTs = null) {
   if (!config.slackBotToken) throw new Error('Missing environment variable: SLACK_BOT_TOKEN');
+  await paceSlackPost(config);
   const blocks = buildAlertBlocks(target, comment, config.managedChannelCategories, config.slackAssignees);
   if (threadTs) {
     await fetchImpl('https://slack.com/api/reactions.remove', {

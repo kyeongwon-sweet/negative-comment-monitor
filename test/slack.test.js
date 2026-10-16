@@ -412,3 +412,25 @@ test('Slack postMessage 429는 Retry-After 뒤 재시도하고 메시지를 유�
   assert.equal(attempts, 2);
   assert.deepEqual(sleeps, [2000]);
 });
+
+test('2026-10-16 재발방지: 알림 카드는 slackPostMinIntervalMs 이상 간격으로 발송(Slack 대량 게시 표시제한 방지)', async () => {
+  const postedAt = [];
+  const fetchImpl = async (url) => {
+    if (String(url).includes('chat.postMessage')) postedAt.push(Date.now());
+    return { ok: true, json: async () => ({ ok: true, ts: String(Date.now()) }) };
+  };
+  const config = { slackBotToken: 'x', slackChannelId: 'C1', slackAssignees: {}, managedChannelCategories: [], slackPostMinIntervalMs: 120 };
+  const target = { productName: 'JG', channelCategory: '인지 광고', platform: 'youtube', url: 'https://www.youtube.com/watch?v=a' };
+  for (let i = 0; i < 3; i += 1) {
+    await sendAlert(config, target, { platform: 'youtube', text: `c${i}`, author: 'u', timestamp: new Date().toISOString() }, fetchImpl, '1.1');
+  }
+  assert.equal(postedAt.length, 3);
+  for (let i = 1; i < postedAt.length; i += 1) assert.ok(postedAt[i] - postedAt[i - 1] >= 110, `gap ${postedAt[i] - postedAt[i - 1]}ms`);
+});
+
+test('운영 로더 기본 발송 간격은 1100ms(일반·광고 로더 공통, 환경변수로 조정 가능)', async () => {
+  const { loadMetaAdsConfig } = await import('../src/meta-ads.js');
+  const env = { SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'svc', SLACK_BOT_TOKEN: 'x' };
+  assert.equal(loadMetaAdsConfig(env).slackPostMinIntervalMs, 1100);
+  assert.equal(loadMetaAdsConfig({ ...env, SLACK_POST_MIN_INTERVAL_MS: '0' }).slackPostMinIntervalMs, 0);
+});

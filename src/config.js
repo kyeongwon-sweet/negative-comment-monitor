@@ -104,6 +104,8 @@ export function loadConfig(env = process.env, now = Date.now()) {
     trackingDays: Number(env.TRACKING_DAYS || 7),
     // LLM 분류(의미 기반). 기본은 Gemini 무료 티어 단독, 실패분은 보류 후 다음 회차 재분류.
     // 폴백 공급자는 LLM_FALLBACK_PROVIDER로 명시할 때만(Anthropic 크레딧 미충전, 2026-10-14).
+    // 알림 카드 발송 최소 간격(slack.js paceSlackPost). Slack 채널 게시 ≈초당 1건 권장.
+    slackPostMinIntervalMs: Math.max(0, Number(env.SLACK_POST_MIN_INTERVAL_MS ?? 1100) || 0),
     llmProvider: String(env.LLM_PROVIDER || 'gemini').trim().toLowerCase(),
     llmFallbackProvider: String(env.LLM_FALLBACK_PROVIDER || '').trim().toLowerCase(),
     geminiKey: String(env.GEMINI_API_KEY || '').trim(),
