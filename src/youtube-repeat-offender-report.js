@@ -65,6 +65,8 @@ export function loadYouTubeRepeatOffenderConfig(env = process.env) {
     maxExamples: positiveInt(env.YOUTUBE_REPEAT_OFFENDER_MAX_EXAMPLES, 2, 5),
     slackDelayMs: Math.max(0, Number(env.YOUTUBE_REPEAT_OFFENDER_SLACK_DELAY_MS || 1100)),
     notifySlack: clean(env.YOUTUBE_REPEAT_OFFENDER_NOTIFY_SLACK || 'true').toLowerCase() !== 'false',
+    // 1회성: 현재 후보를 '이미 알림'으로 기록만 하고 Slack엔 안 보낸다(중복방지 도입 직후 재게시 방지).
+    seedReportedOnly: clean(env.YOUTUBE_REPEAT_OFFENDER_SEED_REPORTED_ONLY).toLowerCase() === 'true',
     slackAssignees: loadSlackAssignees(env),
   };
 }
@@ -458,6 +460,61 @@ export async function prepareYouTubeRepeatOffenderReport(
   return { summary, candidates, accessTokens };
 }
 
+// 같은 후보를 매일 다시 올리지 않는다(2026-10-16: 쫀득바 후보 103명에 카드 638개 — 일일 크론이
+// 미처리 후보 전원을 매 회차 재게시). (소유채널×작성자×제품군×악플수) 키로 발송을 기록하고,
+// 이미 보낸 키는 건너뛴다 → 신규 후보이거나 악플이 늘었을 때만 다시 알린다.
+// 기록은 기존 cost_usage_ledger(run_key UNIQUE)를 재사용(DDL 불필요, 비용 0행).
+export function repeatOffenderReportKey(candidate, route) {
+  return [
+    'offender-report',
+    clean(candidate.ownerChannelId),
+    clean(candidate.authorChannelId),
+    clean(route.group || route.label),
+    Number(candidate.commentCount) || 0,
+  ].join(':');
+}
+
+export function filterUnreportedRoutes(routes, reported = new Set()) {
+  let skipped = 0;
+  const out = [];
+  for (const route of routes || []) {
+    const fresh = (route.candidates || []).filter((candidate) => !reported.has(repeatOffenderReportKey(candidate, route)));
+    skipped += (route.candidates || []).length - fresh.length;
+    if (fresh.length) out.push({ ...route, candidates: fresh });
+  }
+  return { routes: out, skipped };
+}
+
+async function loadReportedKeys(config, keys, fetchImpl) {
+  const found = new Set();
+  if (!config.supabaseUrl || !config.supabaseKey || !keys.length) return found;
+  try {
+    for (const part of chunk(keys, 40)) {
+      const encoded = part.map((key) => `"${key}"`).join(',');
+      const response = await fetchImpl(
+        `${config.supabaseUrl}/rest/v1/cost_usage_ledger?select=run_key&run_key=in.(${encodeURIComponent(encoded)})`,
+        { headers: headers(config) },
+      );
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      for (const row of await response.json()) found.add(row.run_key);
+    }
+  } catch (error) {
+    // 조회 실패 시 예전처럼 전원 발송(신규 후보 누락보다 중복이 낫다). 로그로만 남긴다.
+    console.error(`[repeat-offender] 발송 이력 조회 실패 — 이번 회차는 중복 방지 없이 발송: ${error.message}`);
+    return new Set();
+  }
+  return found;
+}
+
+async function recordReportedKey(config, key, fetchImpl) {
+  if (!config.supabaseUrl || !config.supabaseKey) return;
+  await fetchImpl(`${config.supabaseUrl}/rest/v1/cost_usage_ledger?on_conflict=run_key`, {
+    method: 'POST',
+    headers: headers(config, { 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' }),
+    body: JSON.stringify({ run_key: key, kst_date: kstDateKey(Date.now()), apify_usd: 0, anthropic_usd: 0 }),
+  }).catch((error) => console.error(`[repeat-offender] 발송 이력 기록 실패(다음 회차 재발송 가능): ${error.message}`));
+}
+
 export async function runYouTubeRepeatOffenderReport(
   config = loadYouTubeRepeatOffenderConfig(), fetchImpl = fetch,
 ) {
@@ -465,10 +522,27 @@ export async function runYouTubeRepeatOffenderReport(
   if (prepared.candidates.length) {
     const routes = buildRepeatOffenderRoutes(prepared.candidates, config.slackAssignees);
     prepared.summary.categoryRoutes = routes.length;
+    if (config.seedReportedOnly) {
+      let seeded = 0;
+      for (const route of routes) {
+        for (const candidate of route.candidates) {
+          await recordReportedKey(config, repeatOffenderReportKey(candidate, route), fetchImpl);
+          seeded += 1;
+        }
+      }
+      prepared.summary.seededReported = seeded;
+      prepared.summary.slackSent = false;
+      return { summary: prepared.summary, candidates: prepared.candidates };
+    }
     // 수동 dry/report 실행(notify_slack=false)은 부모 스레드조차 만들지 않는다.
     // 알림 활성 회차만 카테고리별 부모를 보장한 뒤 반드시 답글로 발송한다.
     if (config.notifySlack && config.slackBotToken && config.slackChannelId) {
-      for (const route of routes) {
+      const allKeys = routes.flatMap((route) => route.candidates.map((candidate) => repeatOffenderReportKey(candidate, route)));
+      const reported = await loadReportedKeys(config, allKeys, fetchImpl);
+      const { routes: freshRoutes, skipped } = filterUnreportedRoutes(routes, reported);
+      prepared.summary.slackSkippedAlreadyReported = skipped;
+      // 새로 알릴 후보가 없는 제품군은 부모 스레드도 만들지 않는다.
+      for (const route of freshRoutes) {
         const threadTs = await ensureDailyThread(config, {
           kstDate: kstDateKey(Date.now()),
           scopeKey: route.scopeKey,
@@ -486,7 +560,10 @@ export async function runYouTubeRepeatOffenderReport(
             threadTs,
             fetchImpl,
           );
-          if (sent) prepared.summary.slackMessages += 1;
+          if (sent) {
+            prepared.summary.slackMessages += 1;
+            await recordReportedKey(config, repeatOffenderReportKey(candidate, route), fetchImpl);
+          }
           if (config.slackDelayMs > 0) await wait(config.slackDelayMs);
         }
       }

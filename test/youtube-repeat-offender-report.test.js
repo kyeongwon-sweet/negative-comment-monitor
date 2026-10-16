@@ -103,3 +103,23 @@ test('자격은 작성자 전체 이력으로 판정하되 제품별 인지광�
   assert.equal(routes[0].candidates[0].commentCount, 1);
   assert.equal(routes[1].candidates[0].commentCount, 1);
 });
+
+test('2026-10-16 재발방지: 이미 알린 후보(같은 악플 수)는 다시 올리지 않고, 악플이 늘면 다시 알린다', async () => {
+  const { filterUnreportedRoutes, repeatOffenderReportKey } = await import('../src/youtube-repeat-offender-report.js');
+  const route = { group: 'jd', label: '쫀득바', candidates: [
+    { ownerChannelId: 'UC_OWNER', authorChannelId: 'UC_A', commentCount: 2 },
+    { ownerChannelId: 'UC_OWNER', authorChannelId: 'UC_B', commentCount: 3 },
+  ] };
+  const reported = new Set([
+    repeatOffenderReportKey({ ownerChannelId: 'UC_OWNER', authorChannelId: 'UC_A', commentCount: 2 }, route), // 어제 알림, 변화 없음
+    repeatOffenderReportKey({ ownerChannelId: 'UC_OWNER', authorChannelId: 'UC_B', commentCount: 2 }, route), // 어제 2건 → 오늘 3건
+  ]);
+  const { routes, skipped } = filterUnreportedRoutes([route], reported);
+  assert.equal(skipped, 1);
+  assert.deepEqual(routes[0].candidates.map((c) => c.authorChannelId), ['UC_B']);
+  // 전원 이미 알렸으면 제품군 자체가 빠진다(빈 부모 스레드 생성 방지).
+  const all = new Set(route.candidates.map((c) => repeatOffenderReportKey(c, route)));
+  assert.deepEqual(filterUnreportedRoutes([route], all).routes, []);
+  // 다른 제품군 버킷은 별개 키
+  assert.notEqual(repeatOffenderReportKey(route.candidates[0], route), repeatOffenderReportKey(route.candidates[0], { group: 'p' }));
+});
