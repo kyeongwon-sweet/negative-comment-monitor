@@ -17,7 +17,7 @@ on:
         type: boolean
         default: true
       seed_reported_only:
-        description: Record current candidates as already reported without posting (one-time dedup seed)
+        description: DANGER one-time seed - marks ALL current candidates as reported without posting, including never-posted ones (used once on 2026-10-16; do not rerun)
         required: false
         type: boolean
         default: false
