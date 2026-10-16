@@ -455,3 +455,26 @@ test('owner token verify (channels mine) also re-mints once on 401, and failures
   const failed = await collectYouTubeOwnerChannels(dead.config, dead.fetchImpl, Date.parse('2026-10-08T01:00:00Z'));
   assert.equal(failed.channelFailures[0].stage, 'collect', 'verify(mine)는 통과, 수집 단계에서 실패');
 });
+
+test('2026-10-16 재발방지: 소유채널 로더 담당자 = 단일 정본(loadSlackAssignees), 쫀득바 인지광고 스레드는 jd.primary', async () => {
+  const { loadSlackAssignees } = await import('../src/config.js');
+  const { ownerThreadRoute } = await import('../src/youtube-owner-channel-run.js');
+  const env = {
+    SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'svc', SLACK_BOT_TOKEN: 'x',
+    GOOGLE_ADS_CLIENT_ID: 'c', GOOGLE_ADS_CLIENT_SECRET: 's',
+    SLACK_ASSIGNEE_OTHER: 'U_OTHER', SLACK_ASSIGNEE_AWARENESS: 'U_HWANG',
+    SLACK_ASSIGNEE_JD_PRIMARY: 'U_KIMBD', SLACK_ASSIGNEE_JD_SATELLITE: 'U_KIMBN', SLACK_ASSIGNEE_JD_VIRAL: 'U_KIMBD',
+    SLACK_ASSIGNEE_PBACHI: 'U_LEEJW', SLACK_ASSIGNEE_JG_PRIMARY: 'U_MO', SLACK_ASSIGNEE_P_OWNED_YOUTUBE: 'U_PARK',
+  };
+  const now = Date.parse('2026-10-16T01:05:00+09:00');
+  const owner = loadYouTubeOwnerChannelConfig(env, now).slackAssignees;
+  const canonical = loadSlackAssignees(env, now);
+  for (const key of ['jd', 'p', 'jg', 'pbachi', 'pbachiMukstar', 'awareness', 'owned']) {
+    assert.deepEqual(owner[key], canonical[key], `owner loader must not override ${key}`);
+  }
+  // 소유 YouTube(쫀득바)는 '[쫀득바] 인지 광고' 스레드로 묶이고 담당은 김바다(jd.primary) — 황경원(awareness) 아님.
+  const route = ownerThreadRoute({ productName: 'JD', channelCategory: '소유 YouTube' }, owner);
+  assert.equal(route.scopeKey, '쫀득바|인지 광고');
+  assert.equal(route.assignee, 'U_KIMBD');
+  assert.equal(ownerThreadRoute({ productName: 'JD멜', channelCategory: '위성채널' }, owner).assignee, 'U_KIMBN');
+});

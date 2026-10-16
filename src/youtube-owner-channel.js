@@ -128,10 +128,13 @@ export function loadYouTubeOwnerChannelConfig(env = process.env, now = Date.now(
       ...parseExtraChannels(env.YOUTUBE_OWNER_CHANNELS_JSON),
     ]),
     managedChannelCategories: ['위성채널', '소유 YouTube'],
+    // 담당자는 base(loadMetaAdsConfig = loadSlackAssignees 단일 정본) 그대로 쓴다.
+    // ⚠️ 전엔 jd를 { satellite }로 통째 덮어써 jd.primary(김바다)가 사라졌다 → 새벽 소유채널 실행이
+    // 그날 '[쫀득바] 인지 광고' 스레드를 먼저 만들면 awareness 폴백(황경원)으로 태그(2026-10-16 등 반복).
+    // 위성 폴백(jd.satellite 없으면 base satellite)은 assigneeForTarget이 이미 처리한다.
     slackAssignees: {
       ...base.slackAssignees,
-      satellite,
-      jd: { satellite: String(env.SLACK_ASSIGNEE_JD_SATELLITE || satellite).trim() },
+      satellite: base.slackAssignees?.satellite || satellite,
     },
   };
 }
