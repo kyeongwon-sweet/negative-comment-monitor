@@ -141,7 +141,10 @@ export async function executeBulkBan(config, prepared, fetchImpl = fetch, now = 
   };
   if (config.dryRun) return { ...base, banned: 0, failed: [], skipped: [] };
 
-  const evidenceIds = selected.map((row) => Number(row.evidenceAlertId)).filter(Number.isSafeInteger);
+  // 대표 댓글 외 같은 작성자의 다른 alert 댓글도 조회해 둔다 — 대표 댓글이 삭제·처리불가(400)면
+  // 다른 댓글로 banAuthor를 다시 시도한다(2026-10-19: 4명이 대표 댓글만 400).
+  const evidenceIds = selected.flatMap((row) => [Number(row.evidenceAlertId), ...(row.alertIds || []).map(Number)])
+    .filter(Number.isSafeInteger);
   const commentByAlert = await commentIdsByAlert(config, evidenceIds, fetchImpl);
   let banned = 0;
   let moderationRequests = 0;
@@ -154,10 +157,13 @@ export async function executeBulkBan(config, prepared, fetchImpl = fetch, now = 
     const commentId = commentByAlert.get(Number(candidate.evidenceAlertId));
     if (!token) { skipped.push({ authorChannelId: candidate.authorChannelId, reason: 'no-owner-token' }); continue; }
     if (!commentId) { skipped.push({ authorChannelId: candidate.authorChannelId, reason: 'no-comment-id' }); continue; }
+    const alternateCommentIds = [...new Set((candidate.alertIds || [])
+      .map((id) => commentByAlert.get(Number(id)))
+      .filter((id) => id && id !== commentId))].slice(0, 3);
 
     const ownerKey = clean(candidate.ownerChannelId);
     const ownerItems = actionableByOwner.get(ownerKey) || [];
-    ownerItems.push({ candidate, commentId, token });
+    ownerItems.push({ candidate, commentId, alternateCommentIds, token });
     actionableByOwner.set(ownerKey, ownerItems);
   }
 
@@ -182,6 +188,18 @@ export async function executeBulkBan(config, prepared, fetchImpl = fetch, now = 
     }
   };
 
+  // 한 작성자: 대표 댓글 → 실패 시 같은 작성자의 다른 댓글 순으로 시도. 마지막 실패 사유를 반환.
+  const banSingle = async (item, { skipPrimary = false } = {}) => {
+    const ids = skipPrimary ? item.alternateCommentIds : [item.commentId, ...(item.alternateCommentIds || [])];
+    let lastError = null;
+    for (const commentId of ids) {
+      lastError = await banRequest([{ ...item, commentId }]);
+      if (config.banDelayMs > 0) await wait(config.banDelayMs);
+      if (!lastError) return null;
+    }
+    return { ...lastError, attempts: ids.length };
+  };
+
   for (const ownerItems of actionableByOwner.values()) {
     for (const batch of chunks(ownerItems, 50)) {
       // 2026-10-19: 48명 묶음 요청이 400으로 통째 거절(먹는김에) — 묶음 성공은 실측된 적 없음.
@@ -193,13 +211,14 @@ export async function executeBulkBan(config, prepared, fetchImpl = fetch, now = 
       } else if (batch.length > 1) {
         batchFailures.push({ ownerChannelId: batch[0].candidate.ownerChannelId, size: batch.length, ...error });
         for (const item of batch) {
-          const singleError = await banRequest([item]);
+          const singleError = await banSingle(item);
           if (!singleError) succeeded.push(item);
           else failed.push({ authorChannelId: item.candidate.authorChannelId, ...singleError });
-          if (config.banDelayMs > 0) await wait(config.banDelayMs);
         }
       } else {
-        failed.push({ authorChannelId: batch[0].candidate.authorChannelId, ...error });
+        const singleError = batch[0].alternateCommentIds?.length ? await banSingle(batch[0], { skipPrimary: true }) : error;
+        if (!singleError) succeeded.push(batch[0]);
+        else failed.push({ authorChannelId: batch[0].candidate.authorChannelId, ...singleError });
       }
 
       for (const { candidate } of succeeded) {

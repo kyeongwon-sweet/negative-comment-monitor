@@ -253,3 +253,54 @@ test('2026-10-19 재발방지: 묶음 요청이 거절되면 사유를 남기고
   assert.equal(patched.length, 2);
   assert.ok(patched.every((url) => !url.includes('in.(2)')));
 });
+
+test('2026-10-19 재발방지: 대표 댓글이 처리불가(400)면 같은 작성자의 다른 댓글로 다시 차단한다', async () => {
+  const candidates = [
+    candidate({ authorChannelId: 'A', alertIds: [1], evidenceAlertId: 1 }),
+    candidate({ authorChannelId: 'B', alertIds: [2, 3, 4], evidenceAlertId: 2 }),
+  ];
+  const banIds = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = String(input);
+    if (url.includes('select=id,comment_id')) {
+      return { ok: true, status: 200, json: async () => [1, 2, 3, 4].map((id) => ({ id, comment_id: `CMT${id}` })) };
+    }
+    if (url.includes('/comments/setModerationStatus')) {
+      const ids = new URL(url).searchParams.get('id');
+      banIds.push(ids);
+      if (ids.includes(',') || ids === 'CMT2' || ids === 'CMT3') return { ok: false, status: 400, text: async () => 'processingFailure' };
+      return { ok: true, status: 204, text: async () => '' };
+    }
+    if (init.method === 'PATCH') return { ok: true, status: 204, json: async () => [] };
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const out = await executeBulkBan(
+    { dryRun: false, allowedAlertIds: new Set(), youtubeApiBase: 'https://yt', supabaseUrl: baseEnv.SUPABASE_URL, supabaseKey: 'srk', actor: 'test', banDelayMs: 0 },
+    { candidates, accessTokens: new Map([['OWNER1', 'tok']]) },
+    fetchImpl,
+  );
+  assert.deepEqual(banIds, ['CMT1,CMT2', 'CMT1', 'CMT2', 'CMT3', 'CMT4']);
+  assert.equal(out.banned, 2);
+  assert.deepEqual(out.failed, []);
+});
+
+test('대표 댓글 1명짜리 요청이 거절돼도 다른 댓글로 재시도, 전부 실패하면 시도 수를 남긴다', async () => {
+  const candidates = [candidate({ authorChannelId: 'B', alertIds: [2, 3], evidenceAlertId: 2 })];
+  const banIds = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = String(input);
+    if (url.includes('select=id,comment_id')) return { ok: true, status: 200, json: async () => [2, 3].map((id) => ({ id, comment_id: `CMT${id}` })) };
+    if (url.includes('/comments/setModerationStatus')) { banIds.push(new URL(url).searchParams.get('id')); return { ok: false, status: 400, text: async () => 'x' }; }
+    if (init.method === 'PATCH') throw new Error('must not persist a failed ban');
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const out = await executeBulkBan(
+    { dryRun: false, allowedAlertIds: new Set(), youtubeApiBase: 'https://yt', supabaseUrl: baseEnv.SUPABASE_URL, supabaseKey: 'srk', actor: 'test', banDelayMs: 0 },
+    { candidates, accessTokens: new Map([['OWNER1', 'tok']]) },
+    fetchImpl,
+  );
+  assert.deepEqual(banIds, ['CMT2', 'CMT3']);
+  assert.equal(out.banned, 0);
+  assert.equal(out.failed[0].attempts, 1);
+  assert.equal(out.failed[0].status, 400);
+});
