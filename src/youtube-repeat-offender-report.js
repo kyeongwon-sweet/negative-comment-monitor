@@ -428,7 +428,9 @@ export async function prepareYouTubeRepeatOffenderReport(
   const authorsPersisted = loaded.authorSchemaAvailable
     ? await persistAuthors(config, enriched, fetchImpl)
     : 0;
-  const candidates = buildRepeatOffenderCandidates(enriched, config);
+  const allCandidates = buildRepeatOffenderCandidates(enriched, config);
+  const keepDecisions = await loadKeepDecisions(config, fetchImpl);
+  const { candidates, kept } = excludeKeptCandidates(allCandidates, keepDecisions.decisions);
   const firstToken = accessTokens.values().next().value;
   const handles = firstToken ? await fetchAuthorHandles(config, candidates, firstToken, fetchImpl) : new Map();
   for (const row of candidates) {
@@ -453,11 +455,73 @@ export async function prepareYouTubeRepeatOffenderReport(
     minComments: config.minComments,
     minVideos: config.minVideos,
     candidates: candidates.length,
+    keptExcluded: kept.length,
+    keepDecisionsLoadError: keepDecisions.error || undefined,
     categoryRoutes: 0,
     slackMessages: 0,
     slackSent: false,
   };
-  return { summary, candidates, accessTokens };
+  return { summary, candidates, accessTokens, keepDecisionsLoadError: keepDecisions.error || '' };
+}
+
+// 사람이 "차단하지 말고 두기"로 정한 작성자(2026-10-16 두기 11명). 결정을 저장할 곳이 없어
+// 매 회차 후보로 다시 올라왔고, 대량 차단 때마다 alert_ids로 손으로 빼야 했다 — 한 번만 빠뜨려도
+// 사람 결정을 뒤집는 밴이 나간다. 결정은 cost_usage_ledger에
+// offender-keep:{소유채널}:{작성자}:{결정 당시 악플 수}로 남기고, 지금 악플 수가 그 이하면 후보에서 뺀다.
+// 결정 뒤 악플이 더 늘면 다시 후보로 올라와 사람이 재판단한다.
+export const REPEAT_OFFENDER_KEEP_PREFIX = 'offender-keep';
+
+export function repeatOffenderKeepKey(ownerChannelId, authorChannelId, commentCount) {
+  return [REPEAT_OFFENDER_KEEP_PREFIX, clean(ownerChannelId), clean(authorChannelId), Number(commentCount) || 0].join(':');
+}
+
+export function parseKeepDecisions(runKeys) {
+  const decisions = new Map();
+  for (const key of runKeys || []) {
+    const [prefix, owner, author, count] = clean(key).split(':');
+    if (prefix !== REPEAT_OFFENDER_KEEP_PREFIX || !owner || !author) continue;
+    const mapKey = `${owner}\u001f${author}`;
+    decisions.set(mapKey, Math.max(decisions.get(mapKey) || 0, Number(count) || 0));
+  }
+  return decisions;
+}
+
+export function excludeKeptCandidates(candidates, decisions = new Map()) {
+  const out = [];
+  const kept = [];
+  for (const candidate of candidates || []) {
+    const keptAt = decisions.get(`${clean(candidate.ownerChannelId)}\u001f${clean(candidate.authorChannelId)}`);
+    if (keptAt !== undefined && (Number(candidate.commentCount) || 0) <= keptAt) kept.push(candidate);
+    else out.push(candidate);
+  }
+  return { candidates: out, kept };
+}
+
+async function loadKeepDecisions(config, fetchImpl) {
+  if (!config.supabaseUrl || !config.supabaseKey) return { decisions: new Map(), error: 'supabase not configured' };
+  try {
+    const response = await fetchImpl(
+      `${config.supabaseUrl}/rest/v1/cost_usage_ledger?select=run_key&run_key=like.${REPEAT_OFFENDER_KEEP_PREFIX}:*&limit=10000`,
+      { headers: headers(config) },
+    );
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return { decisions: parseKeepDecisions((await response.json()).map((row) => row.run_key)), error: '' };
+  } catch (error) {
+    // 리포트는 카드가 더 올라갈 뿐이라 계속 진행하지만, 대량 차단은 이 오류가 있으면 멈춘다.
+    console.error(`[repeat-offender] 두기 결정 조회 실패: ${error.message}`);
+    return { decisions: new Map(), error: clean(error?.message || error).slice(0, 200) };
+  }
+}
+
+export async function recordKeepDecision(config, { ownerChannelId, authorChannelId, commentCount }, fetchImpl = fetch) {
+  const key = repeatOffenderKeepKey(ownerChannelId, authorChannelId, commentCount);
+  const response = await fetchImpl(`${config.supabaseUrl}/rest/v1/cost_usage_ledger?on_conflict=run_key`, {
+    method: 'POST',
+    headers: headers(config, { 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' }),
+    body: JSON.stringify({ run_key: key, kst_date: kstDateKey(Date.now()), apify_usd: 0, anthropic_usd: 0 }),
+  });
+  if (!response.ok) throw new Error(`Keep decision write failed (${response.status})`);
+  return key;
 }
 
 // 같은 후보를 매일 다시 올리지 않는다(2026-10-16: 쫀득바 후보 103명에 카드 638개 — 일일 크론이

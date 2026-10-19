@@ -123,3 +123,32 @@ test('2026-10-16 재발방지: 이미 알린 후보(같은 악플 수)는 다시
   // 다른 제품군 버킷은 별개 키
   assert.notEqual(repeatOffenderReportKey(route.candidates[0], route), repeatOffenderReportKey(route.candidates[0], { group: 'p' }));
 });
+
+test('2026-10-19 재발방지: 사람이 두기로 정한 작성자는 결정 당시 악플 수 이하인 동안 후보에서 빠지고, 늘면 다시 올라온다', async () => {
+  const { parseKeepDecisions, excludeKeptCandidates, repeatOffenderKeepKey } = await import('../src/youtube-repeat-offender-report.js');
+  const decisions = parseKeepDecisions([
+    repeatOffenderKeepKey('UC_OWNER', 'UC_KEEP', 2),
+    repeatOffenderKeepKey('UC_OWNER', 'UC_GREW', 2),
+    'offender-report:UC_OWNER:UC_OTHER:jd:2', // 발송 이력 키는 두기 결정이 아니다
+  ]);
+  const { candidates, kept } = excludeKeptCandidates([
+    { ownerChannelId: 'UC_OWNER', authorChannelId: 'UC_KEEP', commentCount: 2 },
+    { ownerChannelId: 'UC_OWNER', authorChannelId: 'UC_GREW', commentCount: 3 }, // 결정 뒤 악플 증가 → 재판단
+    { ownerChannelId: 'UC_OTHER_OWNER', authorChannelId: 'UC_KEEP', commentCount: 2 }, // 다른 소유채널은 별개
+    { ownerChannelId: 'UC_OWNER', authorChannelId: 'UC_OTHER', commentCount: 2 },
+  ], decisions);
+  assert.deepEqual(kept.map((c) => c.authorChannelId), ['UC_KEEP']);
+  assert.deepEqual(candidates.map((c) => `${c.ownerChannelId}/${c.authorChannelId}`), [
+    'UC_OWNER/UC_GREW', 'UC_OTHER_OWNER/UC_KEEP', 'UC_OWNER/UC_OTHER',
+  ]);
+});
+
+test('두기 결정 CLI 인자는 소유채널·작성자 채널ID와 악플 수를 엄격히 검증한다', async () => {
+  const { parseKeepArgs } = await import('../src/youtube-repeat-offender-keep.js');
+  const owner = 'UCQKpvEBNiMBrGzI2f2tAFeA';
+  const author = 'UC3r_mkDjqSxxBnLWRfXZRWA';
+  assert.deepEqual(parseKeepArgs([`${owner}:${author}:3`]), [{ ownerChannelId: owner, authorChannelId: author, commentCount: 3 }]);
+  assert.throws(() => parseKeepArgs([`${owner}:${author}`]));
+  assert.throws(() => parseKeepArgs([`${owner}:@handle:3`]));
+  assert.throws(() => parseKeepArgs([`${owner}:${author}:0`]));
+});

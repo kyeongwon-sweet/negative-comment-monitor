@@ -21,6 +21,7 @@
     "refresh:classifier-exemplars": "node scripts/refresh-classifier-exemplars.mjs",
     "ban:youtube-repeat-offender": "node src/youtube-repeat-offender-ban.js",
     "ban:youtube-repeat-offenders-bulk": "node src/youtube-repeat-offender-bulk-ban.js",
+    "keep:youtube-repeat-offender": "node src/youtube-repeat-offender-keep.js",
     "oauth:youtube-satellite": "node scripts/youtube-satellite-owner-oauth.mjs",
     "oauth:youtube-satellite:submit": "node scripts/youtube-satellite-owner-oauth-submit.mjs",
     "sync:youtube-hidden-slack": "node src/youtube-hidden-slack-sync.js",

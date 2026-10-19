@@ -304,3 +304,34 @@ test('대표 댓글 1명짜리 요청이 거절돼도 다른 댓글로 재시도
   assert.equal(out.failed[0].attempts, 1);
   assert.equal(out.failed[0].status, 400);
 });
+
+test('2026-10-19 재발방지: 두기 결정을 못 읽었으면 라이브 대량 밴을 거부한다(사람 결정 뒤집기 방지)', async () => {
+  let calls = 0;
+  const fetchImpl = async () => { calls += 1; return { ok: true, status: 200, json: async () => [] }; };
+  await assert.rejects(
+    executeBulkBan(
+      { dryRun: false, allowedAlertIds: new Set(), youtubeApiBase: 'https://yt', supabaseUrl: baseEnv.SUPABASE_URL, supabaseKey: 'srk', actor: 'test', banDelayMs: 0 },
+      { candidates: [candidate()], accessTokens: new Map([['OWNER1', 'tok']]), keepDecisionsLoadError: 'HTTP 500' },
+      fetchImpl,
+    ),
+    /Keep decisions unavailable/,
+  );
+  assert.equal(calls, 0);
+});
+
+test('2026-10-19 재발방지: 끝내 못 밴한 작성자는 needsStudioHide에 채널 URL과 함께 남긴다', async () => {
+  const candidates = [candidate({ authorChannelId: 'UC_FAIL', handle: '@fail', alertIds: [1], evidenceAlertId: 1 })];
+  const fetchImpl = async (input, init = {}) => {
+    const url = String(input);
+    if (url.includes('select=id,comment_id')) return { ok: true, status: 200, json: async () => [{ id: 1, comment_id: 'CMT1' }] };
+    if (url.includes('/comments/setModerationStatus')) return { ok: false, status: 400, text: async () => 'processingFailure' };
+    if (init.method === 'PATCH') throw new Error('must not persist');
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const out = await executeBulkBan(
+    { dryRun: false, allowedAlertIds: new Set(), youtubeApiBase: 'https://yt', supabaseUrl: baseEnv.SUPABASE_URL, supabaseKey: 'srk', actor: 'test', banDelayMs: 0 },
+    { candidates, accessTokens: new Map([['OWNER1', 'tok']]) },
+    fetchImpl,
+  );
+  assert.deepEqual(out.needsStudioHide, [{ ownerChannelName: '먹는김에', handle: '@fail', channelUrl: 'https://www.youtube.com/channel/UC_FAIL' }]);
+});

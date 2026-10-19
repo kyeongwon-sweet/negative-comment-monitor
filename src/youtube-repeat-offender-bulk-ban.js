@@ -140,6 +140,10 @@ export async function executeBulkBan(config, prepared, fetchImpl = fetch, now = 
     inventory: inventory.candidates,
   };
   if (config.dryRun) return { ...base, banned: 0, failed: [], skipped: [] };
+  // 두기 결정을 못 읽은 채로 라이브 밴을 하면 사람이 남기기로 한 작성자까지 밴된다 → 멈춘다.
+  if (prepared.keepDecisionsLoadError) {
+    throw new Error(`Keep decisions unavailable — refusing live bulk ban: ${prepared.keepDecisionsLoadError}`);
+  }
 
   // 대표 댓글 외 같은 작성자의 다른 alert 댓글도 조회해 둔다 — 대표 댓글이 삭제·처리불가(400)면
   // 다른 댓글로 banAuthor를 다시 시도한다(2026-10-19: 4명이 대표 댓글만 400).
@@ -233,11 +237,22 @@ export async function executeBulkBan(config, prepared, fetchImpl = fetch, now = 
       if (config.banDelayMs > 0) await wait(config.banDelayMs);
     }
   }
+  // API로 끝내 못 밴한 작성자는 스튜디오 > 설정 > 커뮤니티 운영 > 숨겨진 사용자에 채널 URL로 직접 추가해야 한다.
+  const byAuthor = new Map(selected.map((row) => [row.authorChannelId, row]));
+  const needsStudioHide = [...failed, ...skipped].map(({ authorChannelId }) => {
+    const row = byAuthor.get(authorChannelId) || {};
+    return {
+      ownerChannelName: row.ownerChannelName || row.ownerChannelId || '',
+      handle: row.handle || row.authorDisplayName || '',
+      channelUrl: `https://www.youtube.com/channel/${authorChannelId}`,
+    };
+  });
   return {
     ...base,
     banned,
     failed,
     skipped,
+    needsStudioHide,
     batchFailures,
     moderationRequests,
     estimatedQuotaUnits: moderationRequests * 50,
@@ -253,6 +268,13 @@ export async function banAllYouTubeRepeatOffenders(
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   banAllYouTubeRepeatOffenders()
-    .then((summary) => console.log(JSON.stringify(summary, null, 2)))
+    .then((summary) => {
+      console.log(JSON.stringify(summary, null, 2));
+      // 2026-10-19: 48명이 실패했는데 워크플로는 success였다(조용한 실패). 하나라도 남으면 빨간불.
+      if (!summary.dryRun && summary.needsStudioHide?.length) {
+        console.error(`[bulk-ban] ${summary.needsStudioHide.length}명 미차단 — needsStudioHide 목록을 스튜디오에서 처리하세요`);
+        process.exitCode = 1;
+      }
+    })
     .catch((error) => { console.error(error.message); process.exitCode = 1; });
 }
