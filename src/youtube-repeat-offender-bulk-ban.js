@@ -147,6 +147,7 @@ export async function executeBulkBan(config, prepared, fetchImpl = fetch, now = 
   let moderationRequests = 0;
   const failed = [];
   const skipped = [];
+  const batchFailures = [];
   const actionableByOwner = new Map();
   for (const candidate of selected) {
     const token = prepared.accessTokens?.get(candidate.ownerChannelId);
@@ -164,31 +165,44 @@ export async function executeBulkBan(config, prepared, fetchImpl = fetch, now = 
   // 요청당 50 quota unit을 쓴다. 후보마다 호출하면 168명 차단에 8,400 unit을
   // 소진해 같은 프로젝트의 읽기 모니터가 quotaExceeded로 멈춘다. 소유 채널별로
   // 묶어 호출하면 banAuthor가 각 댓글 작성자에게 적용되면서 같은 작업이 약 4회다.
+  // 성공이면 null, 실패면 사유 객체를 돌려준다.
+  const banRequest = async (items) => {
+    const commentIds = items.map((item) => item.commentId).join(',');
+    try {
+      const response = await fetchImpl(buildYouTubeAuthorBanUrl(config.youtubeApiBase, commentIds), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${items[0].token}` },
+      });
+      moderationRequests += 1;
+      if (response.status === 204) return null;
+      const body = typeof response.text === 'function' ? await response.text().catch(() => '') : '';
+      return { status: response.status, detail: clean(body).slice(0, 300) };
+    } catch (error) {
+      return { error: clean(error?.message || error).slice(0, 200) };
+    }
+  };
+
   for (const ownerItems of actionableByOwner.values()) {
     for (const batch of chunks(ownerItems, 50)) {
-      const commentIds = batch.map((item) => item.commentId).join(',');
-      let response;
-      try {
-        response = await fetchImpl(buildYouTubeAuthorBanUrl(config.youtubeApiBase, commentIds), {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${batch[0].token}` },
-        });
-        moderationRequests += 1;
-      } catch (error) {
-        for (const { candidate } of batch) {
-          failed.push({ authorChannelId: candidate.authorChannelId, error: clean(error?.message || error).slice(0, 200) });
+      // 2026-10-19: 48명 묶음 요청이 400으로 통째 거절(먹는김에) — 묶음 성공은 실측된 적 없음.
+      // 묶음이 거절되면 사유를 남기고 한 명씩 재시도해, 한 건의 불량 ID가 전원을 막지 않게 한다.
+      const succeeded = [];
+      const error = await banRequest(batch);
+      if (!error) {
+        succeeded.push(...batch);
+      } else if (batch.length > 1) {
+        batchFailures.push({ ownerChannelId: batch[0].candidate.ownerChannelId, size: batch.length, ...error });
+        for (const item of batch) {
+          const singleError = await banRequest([item]);
+          if (!singleError) succeeded.push(item);
+          else failed.push({ authorChannelId: item.candidate.authorChannelId, ...singleError });
+          if (config.banDelayMs > 0) await wait(config.banDelayMs);
         }
-        continue;
+      } else {
+        failed.push({ authorChannelId: batch[0].candidate.authorChannelId, ...error });
       }
 
-      if (response.status !== 204) {
-        for (const { candidate } of batch) {
-          failed.push({ authorChannelId: candidate.authorChannelId, status: response.status });
-        }
-        continue;
-      }
-
-      for (const { candidate } of batch) {
+      for (const { candidate } of succeeded) {
         try {
           await persistAuthorBanned(config, candidate.alertIds, fetchImpl, now);
           banned += 1;
@@ -205,6 +219,7 @@ export async function executeBulkBan(config, prepared, fetchImpl = fetch, now = 
     banned,
     failed,
     skipped,
+    batchFailures,
     moderationRequests,
     estimatedQuotaUnits: moderationRequests * 50,
   };

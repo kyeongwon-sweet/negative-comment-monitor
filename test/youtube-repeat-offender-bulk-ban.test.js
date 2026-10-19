@@ -213,3 +213,43 @@ test('loadConfig: 빈 alert_ids는 allowlist 없음(전원) — Number("")=0 함
   const two = loadYouTubeRepeatOffenderBulkBanConfig({ ...baseEnv, YOUTUBE_REPEAT_OFFENDER_ALERT_IDS: '10, 11' }).allowedAlertIds;
   assert.deepEqual([...two].sort((a, b) => a - b), [10, 11]);
 });
+
+test('2026-10-19 재발방지: 묶음 요청이 거절되면 사유를 남기고 한 명씩 재시도한다(불량 1건이 전원을 막지 않음)', async () => {
+  const candidates = ['A', 'B', 'C'].map((id, index) => candidate({
+    authorChannelId: id, alertIds: [index + 1], evidenceAlertId: index + 1,
+  }));
+  const banIds = [];
+  const patched = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = String(input);
+    if (url.includes('select=id,comment_id')) {
+      return { ok: true, status: 200, json: async () => candidates.map((row) => ({ id: row.evidenceAlertId, comment_id: `CMT${row.evidenceAlertId}` })) };
+    }
+    if (url.includes('/comments/setModerationStatus')) {
+      const ids = new URL(url).searchParams.get('id');
+      banIds.push(ids);
+      // 묶음이나 CMT2(불량)가 포함되면 400
+      if (ids.includes(',') || ids === 'CMT2') return { ok: false, status: 400, text: async () => '{"error":{"message":"bad id"}}' };
+      return { ok: true, status: 204, text: async () => '' };
+    }
+    if (init.method === 'PATCH') { patched.push(url); return { ok: true, status: 204, json: async () => [] }; }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+
+  const out = await executeBulkBan(
+    { dryRun: false, allowedAlertIds: new Set(), youtubeApiBase: 'https://yt', supabaseUrl: baseEnv.SUPABASE_URL, supabaseKey: 'srk', actor: 'test', banDelayMs: 0 },
+    { candidates, accessTokens: new Map([['OWNER1', 'tok']]) },
+    fetchImpl,
+  );
+
+  assert.deepEqual(banIds, ['CMT1,CMT2,CMT3', 'CMT1', 'CMT2', 'CMT3']);
+  assert.equal(out.banned, 2);
+  assert.deepEqual(out.failed.map((row) => [row.authorChannelId, row.status]), [['B', 400]]);
+  assert.match(out.failed[0].detail, /bad id/);
+  assert.equal(out.batchFailures.length, 1);
+  assert.equal(out.batchFailures[0].size, 3);
+  assert.equal(out.moderationRequests, 4);
+  // 실패한 B의 alert 행은 author_banned로 바꾸지 않는다.
+  assert.equal(patched.length, 2);
+  assert.ok(patched.every((url) => !url.includes('in.(2)')));
+});
