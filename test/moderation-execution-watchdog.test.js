@@ -98,8 +98,8 @@ test('워치독은 일일 멱등 claim 뒤 기존 담당 스레드에만 알리�
   };
   const first = await runModerationExecutionWatchdog(CFG, fetchImpl, Date.parse('2026-09-22T09:00:00Z'));
   const second = await runModerationExecutionWatchdog(CFG, fetchImpl, Date.parse('2026-09-22T10:00:00Z'));
-  assert.deepEqual(first, { unresolved: 2, groups: 1, alerted: 1, deduped: 0 });
-  assert.deepEqual(second, { unresolved: 2, groups: 1, alerted: 0, deduped: 1 });
+  assert.deepEqual(first, { unresolved: 2, groups: 1, alerted: 1, deduped: 0, reissued: 0, reissueFailed: 0 });
+  assert.deepEqual(second, { unresolved: 2, groups: 1, alerted: 0, deduped: 1, reissued: 0, reissueFailed: 0 });
   assert.equal(slackBodies.length, 1);
   assert.equal(slackBodies[0].thread_ts, 'parent.1');
 });
@@ -133,4 +133,58 @@ test('2026-10-21 재발방지: 수동 숨김 대상은 원래 카드가 살아 �
   assert.match(message, /Dd_Uz2Cmd9v\/\|▶ 영상 열기> · <https:\/\/workspace\.test\/archives\/C1\/p1790987861547549\?thread_ts=1790987860\.899049&cid=C1\|처리 카드>/);
   assert.doesNotMatch(message, /p1790987861000001/);
   assert.match(message, /\[✅ 완료\]/);
+});
+
+test('2026-10-21 재발방지: 원래 카드가 지워진 수동 처리 건은 [완료]/[무시] 카드를 재발급하고 행의 카드 위치를 옮긴다', async () => {
+  const { markLiveCards, reissueDeadCards, buildReissuedCardBlocks } = await import('../src/moderation-execution-watchdog.js');
+  const cfg = { ...CFG, reissuePostIntervalMs: 0 };
+  const gone = {
+    id: 9001, platform: 'tiktok', source: null, post_url: 'https://www.tiktok.com/@sat/video/9',
+    review_decision: 'hide', hidden_confirmed: false, product_name: 'JD멜', channel_category: '위성채널',
+    slack_channel_id: 'C1', slack_ts: '100.1', comment_text: '맛없어 <script>',
+  };
+  const flaky = { ...gone, id: 9002, slack_ts: '100.2' };
+  const orphan = { ...gone, id: 9003, slack_ts: '100.3' };
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = String(input);
+    calls.push(`${init.method || 'GET'} ${url.replace(/\?.*$/, '')}${url.includes('id=eq.') ? ` ${url.match(/id=eq\.(\d+)/)[1]}` : ''}`);
+    if (url.includes('conversations.replies')) {
+      const ts = new URL(url).searchParams.get('ts');
+      if (ts === '100.2') return response(200, { ok: false, error: 'ratelimited' }); // 일시 오류
+      return response(200, { ok: false, error: 'thread_not_found' });
+    }
+    if (url.endsWith('chat.postMessage')) {
+      const body = JSON.parse(init.body);
+      assert.equal(body.thread_ts, 'parent.1');
+      return response(200, { ok: true, channel: 'C1', ts: `new.${calls.length}` });
+    }
+    if (url.includes('/negative_comment_alerts?id=eq.')) {
+      const body = JSON.parse(init.body);
+      assert.deepEqual(Object.keys(body).sort(), ['slack_channel_id', 'slack_ts']);
+      assert.match(url, /hidden_confirmed=eq\.false/);
+      return url.includes('id=eq.9003') ? response(200, []) : response(200, [{ id: 9001 }]);
+    }
+    if (url.endsWith('chat.delete')) return response(200, { ok: true });
+    throw new Error(`unexpected ${url}`);
+  };
+  await markLiveCards(cfg, [gone, flaky, orphan], fetchImpl);
+  assert.deepEqual([gone.card_alive, flaky.card_alive, orphan.card_alive], [false, null, false]);
+  const result = await reissueDeadCards(cfg, [gone, flaky, orphan], 'parent.1', fetchImpl);
+  assert.deepEqual(result, { reissued: 1, failed: 1 });
+  // 성공: 행이 새 카드를 가리키고, 요약 링크도 새 카드로
+  assert.equal(gone.card_alive, true);
+  assert.match(gone.slack_ts, /^new\./);
+  assert.equal(unresolvedActionLink(cfg, gone).cardUrl, `https://workspace.test/archives/C1/p${gone.slack_ts.replace('.', '')}?thread_ts=parent.1&cid=C1`);
+  // 일시 오류 행은 재발급하지 않는다(중복 카드 방지)
+  assert.equal(calls.filter((c) => c.includes('9002')).length, 0);
+  // 행 갱신 실패 → 새 카드 삭제(고아 카드 금지), 행은 그대로
+  assert.ok(calls.some((c) => c.endsWith('chat.delete')));
+  assert.equal(orphan.slack_ts, '100.3');
+  // 버튼: complete/ignore, value엔 라우트 분기용 키만
+  const blocks = buildReissuedCardBlocks(gone);
+  const actions = blocks.find((b) => b.type === 'actions').elements;
+  assert.deepEqual(actions.map((a) => a.action_id), ['complete', 'ignore']);
+  assert.deepEqual(JSON.parse(actions[0].value), { source: '', platform: 'tiktok', channelCategory: '위성채널' });
+  assert.match(JSON.stringify(blocks), /&lt;script&gt;/);
 });
