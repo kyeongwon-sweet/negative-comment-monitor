@@ -116,7 +116,17 @@ export function unresolvedActionLink(config, row, index = 0) {
   // TikTok organic and third-party sponsorship cards may have been removed while the
   // actual manual action point remains the platform post. Do not send operators to a
   // stale Slack permalink for rows the bot cannot moderate through an API.
-  if (manual && postUrl) return { url: postUrl, label: '▶ 영상 열기', manual: true };
+  // 2026-10-21: 그런데 링크가 게시물뿐이라, 플랫폼에서 직접 숨긴 담당자가 [✅ 완료]를 누를
+  // 원래 카드를 찾지 못해 같은 건이 매일 다시 경고됐다(바치케 배너 IG, 10-03 카드). 카드가 남아 있으면
+  // 처리 카드 링크도 함께 준다(완료를 누르면 카드는 삭제되고 그 행은 미해결에서 빠진다).
+  if (manual && postUrl) {
+    // 카드가 지워졌을 수 있으므로(죽은 링크 방지) 실제 존재가 확인된 카드만 붙인다(markLiveCards).
+    const thread = clean(row.card_thread_ts);
+    const cardUrl = row.card_alive === true
+      ? `${slackCardLink(config, row)}${thread ? `?thread_ts=${thread}&cid=${clean(row.slack_channel_id)}` : ''}`
+      : '';
+    return { url: postUrl, label: '▶ 영상 열기', manual: true, ...(cardUrl ? { cardUrl } : {}) };
+  }
 
   return {
     url: slackCardLink(config, row),
@@ -130,7 +140,7 @@ export function buildUnresolvedMessage(config, group) {
   const assignee = group.assignee ? `<@${group.assignee}> ` : '';
   const links = group.rows.slice(0, config.maxLinksPerMessage)
     .map((row, index) => unresolvedActionLink(config, row, index))
-    .map(({ url, label }) => `• <${url}|${label}>`);
+    .map(({ url, label, cardUrl }) => `• <${url}|${label}>${cardUrl ? ` · <${cardUrl}|처리 카드>` : ''}`);
   const omitted = group.rows.length - links.length;
   return [
     `⚠️ *실제 숨김 미확인* · ${group.platform} · ${group.rows.length}건`,
@@ -138,8 +148,33 @@ export function buildUnresolvedMessage(config, group) {
     `수동 숨김 필요 ${c.manual_hide_required || 0} · API 확인 대기 ${c.hide_pending_confirmation || 0} · 보류 ${c.hold || 0} · 미결 ${c.unreviewed || 0}`,
     ...links,
     ...(omitted > 0 ? [`• 외 ${omitted}건`] : []),
-    '_hidden_confirmed=true로 확인된 건만 완료로 집계합니다._',
+    '_플랫폼에서 직접 숨겼다면 *처리 카드*에서 [✅ 완료]를 눌러 주세요. 오탐이면 [🙈 무시]. 누르기 전까지는 매일 다시 알립니다._',
   ].join('\n');
+}
+
+// 수동 숨김 대상 행의 원래 카드가 슬랙에 아직 있는지 확인한다(conversations.replies는 답글 ts로도 그 메시지를 돌려준다).
+// 확인 실패는 링크를 빼는 쪽(기존 동작)으로 둔다.
+export async function markLiveCards(config, rows, fetchImpl = fetch) {
+  for (const row of rows) {
+    const channel = clean(row.slack_channel_id);
+    const ts = clean(row.slack_ts);
+    if (!channel || !ts) continue;
+    try {
+      const url = new URL('https://slack.com/api/conversations.replies');
+      url.searchParams.set('channel', channel);
+      url.searchParams.set('ts', ts);
+      url.searchParams.set('limit', '1');
+      const response = await fetchImpl(url, { headers: { Authorization: `Bearer ${config.slackBotToken}` } });
+      const payload = await response.json().catch(() => ({}));
+      const card = payload.ok ? (payload.messages || []).find((message) => message.ts === ts) : null;
+      row.card_alive = Boolean(card);
+      // 카드는 스레드 답글이라 thread_ts가 있어야 링크가 그 답글로 바로 열린다.
+      if (card?.thread_ts && card.thread_ts !== ts) row.card_thread_ts = card.thread_ts;
+    } catch {
+      row.card_alive = false;
+    }
+  }
+  return rows;
 }
 
 async function claimDailyGroup(config, date, groupKey, fetchImpl) {
@@ -185,6 +220,7 @@ export async function runModerationExecutionWatchdog(
     const claim = await claimDailyGroup(config, date, group.key, fetchImpl);
     if (!claim.claimed) { deduped += 1; continue; }
     try {
+      await markLiveCards(config, group.rows.slice(0, config.maxLinksPerMessage).filter((row) => unresolvedActionLink(config, row).manual), fetchImpl);
       const threadTs = await ensureDailyThread(config, {
         kstDate: date,
         scopeKey: `${group.label}|${group.category}`,

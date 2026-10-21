@@ -103,3 +103,34 @@ test('워치독은 일일 멱등 claim 뒤 기존 담당 스레드에만 알리�
   assert.equal(slackBodies.length, 1);
   assert.equal(slackBodies[0].thread_ts, 'parent.1');
 });
+
+test('2026-10-21 재발방지: 수동 숨김 대상은 원래 카드가 살아 있을 때만 "처리 카드" 링크를 함께 준다', async () => {
+  const { markLiveCards } = await import('../src/moderation-execution-watchdog.js');
+  // 실제 사례: 바치케 바이럴(배너) IG — 담당자가 인스타에서 직접 숨겼지만 [✅ 완료]를 누를 카드를 못 찾음
+  const banner = {
+    id: 6782, platform: 'instagram', source: null, post_url: 'https://www.instagram.com/p/Dd_Uz2Cmd9v/',
+    review_decision: null, hidden_confirmed: false, product_name: 'P바치', channel_category: '바이럴 (배너)',
+    slack_channel_id: 'C1', slack_ts: '1790987861.547549',
+  };
+  const deleted = { ...banner, id: 6783, post_url: 'https://www.instagram.com/p/gone/', slack_ts: '1790987861.000001' };
+  const asked = [];
+  await markLiveCards(CFG, [banner, deleted], async (input) => {
+    const url = new URL(String(input));
+    asked.push(url.searchParams.get('ts'));
+    return url.searchParams.get('ts') === banner.slack_ts
+      ? response(200, { ok: true, messages: [{ ts: banner.slack_ts, thread_ts: '1790987860.899049' }] })
+      : response(200, { ok: false, error: 'thread_not_found' });
+  });
+  assert.deepEqual(asked, [banner.slack_ts, deleted.slack_ts]);
+  assert.deepEqual(unresolvedActionLink(CFG, banner, 0), {
+    url: banner.post_url, label: '▶ 영상 열기', manual: true,
+    cardUrl: 'https://workspace.test/archives/C1/p1790987861547549?thread_ts=1790987860.899049&cid=C1',
+  });
+  assert.deepEqual(unresolvedActionLink(CFG, deleted, 0), { url: deleted.post_url, label: '▶ 영상 열기', manual: true });
+
+  const [group] = groupUnresolvedModerationRows([banner, deleted], CFG);
+  const message = buildUnresolvedMessage(CFG, group);
+  assert.match(message, /Dd_Uz2Cmd9v\/\|▶ 영상 열기> · <https:\/\/workspace\.test\/archives\/C1\/p1790987861547549\?thread_ts=1790987860\.899049&cid=C1\|처리 카드>/);
+  assert.doesNotMatch(message, /p1790987861000001/);
+  assert.match(message, /\[✅ 완료\]/);
+});
