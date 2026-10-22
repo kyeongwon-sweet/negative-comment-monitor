@@ -5,7 +5,7 @@ import { kstDateKey } from './schedule.js';
 
 // 인지 광고는 어댑터 config의 고정 상품(JD)보다 실제 캠페인 정체성이 우선한다.
 // Meta는 campaign_name이 없을 수 있어 소재명(adTitle)을 보조 신호로 사용한다.
-// JD복은 별도 최우선 라우팅 계약이므로 다른 상품군 오인보다 먼저 보호한다.
+// JD복(쫀득바 상품)은 캠페인명에 파인트·제과 단어가 섞여도 다른 상품군으로 오분류하지 않는다(상품 분류 보호. 담당자 최우선 규칙은 2026-10-22 제거).
 export function awarenessProductName(defaultProductName, campaignName = '', adTitle = '') {
   const fallback = String(defaultProductName || '').trim();
   const identity = `${String(campaignName || '')} ${String(adTitle || '')}`;

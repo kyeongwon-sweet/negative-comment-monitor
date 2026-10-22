@@ -10,7 +10,6 @@ const assignees = {
   other: 'U_OTHER',
   owned: 'U_OWNED',
   pbachi: 'U_PBACHI',
-  jdBok: 'U_JDBOK',
   awareness: 'U_AWARENESS',
   sponsorship: 'U_SPONSORSHIP',
   jd: { primary: 'U_JD_PRIMARY', viral: 'U_JD_VIRAL', satellite: 'U_JD_SAT' },
@@ -145,25 +144,27 @@ test('alert card(바이럴): 소재명 제작자(extraAssignees)만 태그, 없�
   const banner = buildAlertBlocks({ url: 'https://example.com', channelCategory: '바이럴 (배너)', productName: 'JD멜', extraAssignees: ['U_VIDEO'] }, comment, undefined, assignees);
   assert.ok(banner.some((b) => b.text?.text === '*담당자*\n<@U_VIDEO>'));
 });
-test('alert card: 소재명에 JD복 포함 시 카테고리·제작자 무관 이재원(jdBok) 최우선', () => {
+test('2026-10-22: JD복 최우선(이재원) 규칙 제거 — JD복도 다른 쫀득바 상품(JD멜)과 같은 담당을 태그한다', () => {
   const comment = { id: 'c1', platform: 'instagram', text: '별로', risk: {} };
-  // 바이럴(제작자 있어도) 소재명 JD복이면 override
-  const a = buildAlertBlocks({ url: 'https://x', channelCategory: '바이럴 (영상)', productName: 'JD복', assetName: 'F_V_JD복_바이럴_main_빙과_정요한', extraAssignees: ['U_VIDEO'] }, comment, undefined, assignees);
-  assert.ok(a.some((b) => b.text?.text === '*담당자*\n<@U_JDBOK>'));
-  // 위성채널(base 이세진)도 JD복 소재명이면 override
-  const b = buildAlertBlocks({ url: 'https://x', channelCategory: '위성채널', productName: 'DB혼', assetName: 'JD복_상시_빙과_홍정민' }, comment, undefined, assignees);
-  assert.ok(b.some((x) => x.text?.text === '*담당자*\n<@U_JDBOK>'));
-  // 광고 카드는 adTitle 소재명 기준
-  const c = buildAlertBlocks({ url: 'https://x', channelCategory: '인지 광고', source: 'meta_ads', adTitle: 'TT_JD복_인지_main_빙과_정요한', extraAssignees: ['U_VIDEO'] }, comment, undefined, assignees);
-  assert.ok(c.some((x) => x.text?.text === '*담당자*\n<@U_JDBOK>'));
-  // 협찬은 소재명이 비어도 product_name=JD복이면 최우선 override
-  const sponsorship = buildAlertBlocks({ url: 'https://x', channelCategory: '협찬 (파워채널/매거진)', productName: 'JD복', assetName: null }, comment, undefined, assignees);
-  assert.ok(sponsorship.some((x) => x.text?.text === '*담당자*\n<@U_JDBOK>'));
-  // JD복 없으면 override 안 됨(제작자 유지)
-  const d = buildAlertBlocks({ url: 'https://x', channelCategory: '바이럴 (영상)', productName: 'JD멜', assetName: 'F_V_JD멜_빙과_정요한', extraAssignees: ['U_VIDEO'] }, comment, undefined, assignees);
-  assert.ok(d.some((x) => x.text?.text === '*담당자*\n<@U_VIDEO>'));
+  const tagOf = (target) => buildAlertBlocks({ url: 'https://x', ...target }, comment, undefined, { ...assignees, jdBok: 'U_JDBOK' })
+    .find((block) => String(block.text?.text || '').startsWith('*담당자*'))?.text?.text || '';
+  const asJdMel = (value) => (value == null ? value : String(value).replaceAll('JD복', 'JD멜'));
+  const cases = [
+    { channelCategory: '바이럴 (영상)', productName: 'JD복', assetName: 'F_V_JD복_바이럴_main_빙과_정요한', extraAssignees: ['U_VIDEO'] },
+    // 10-22 실제 사례: [쫀득바] 위성채널 issuebox_ 카드에 이재원이 태그됨(제작자는 김바다)
+    { channelCategory: '위성채널', productName: 'JD복', assetName: '[26.08]F_I_JD복_인지_상시__바이럴형__김바다_260828_빙과_오혜정' },
+    { channelCategory: '인지 광고', source: 'meta_ads', productName: 'JD', adTitle: 'TT_JD복_인지_main_빙과_정요한', extraAssignees: ['U_VIDEO'] },
+    { channelCategory: '협찬 (파워채널/매거진)', productName: 'JD복', assetName: null },
+  ];
+  for (const target of cases) {
+    const jdBok = tagOf(target);
+    const jdMel = tagOf({ ...target, productName: asJdMel(target.productName), assetName: asJdMel(target.assetName), adTitle: asJdMel(target.adTitle) });
+    assert.ok(jdBok, `${target.channelCategory}: 담당자 줄이 있어야 한다`);
+    assert.doesNotMatch(jdBok, /U_JDBOK/, target.channelCategory);
+    assert.equal(jdBok, jdMel, target.channelCategory);
+  }
 });
-test('alert card: 파인트 인지광고는 인지광고 팀(주담당+추가) 동시 태그, JD복이 최우선', () => {
+test('alert card: 파인트 인지광고는 인지광고 팀(주담당+추가) 동시 태그', () => {
   const comment = { id: 'c1', platform: 'youtube', text: '별로', risk: {} };
   const pint = buildAlertBlocks({
     url: 'https://x', channelCategory: '인지 광고', productName: 'P', source: 'youtube_ads',
@@ -204,11 +205,6 @@ test('alert card: 파인트 인지광고는 인지광고 팀(주담당+추가) �
   }, comment, undefined, assignees);
   assert.ok(ordinary.some((x) => x.text?.text === '*담당자*\n<@U_VIDEO>'));
 
-  const jdBokWins = buildAlertBlocks({
-    url: 'https://x', channelCategory: '인지 광고', productName: 'JD복', source: 'youtube_ads',
-    campaignName: '[빙과] 파인트 인지', extraAssignees: ['U_VIDEO'],
-  }, comment, undefined, assignees);
-  assert.ok(jdBokWins.some((x) => x.text?.text === '*담당자*\n<@U_JDBOK>'));
 });
 test('alert card(틱톡·유튜브 광고): 메타와 동일하게 제작자만 태그(awareness 카드 중복 제외)', () => {
   for (const source of ['tiktok_ads', 'youtube_ads']) {

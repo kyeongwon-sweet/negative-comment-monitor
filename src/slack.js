@@ -231,12 +231,8 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   // 인지 광고 + 모든 바이럴(배너·영상) 개별 카드는 소재명의 영상 제작자만 태그한다.
   //   - 제작자(extras)가 있으면 그 사람만, 없으면 baseAssignee로 폴백(담당자 공란 방지).
   //   - 그 외 채널(협찬·위성·온드 등)은 기존대로 기본 담당자 + 추가 태그.
-  // 최우선 override: 상품명 또는 소재명(asset_name/광고명)에 'JD복'이 들어가면
-  // 카테고리·제작자 무관하게 지정 담당자(이재원). 협찬은 asset_name이 비는 경우가 있어
-  // product_name도 반드시 함께 확인한다.
-  const soje = String(target.assetName || target.adTitle || '');
-  const productName = String(target.productName || '');
-  const jdBok = (/JD복/i.test(soje) || /JD복/i.test(productName)) ? (assignees.jdBok || '') : '';
+  // 2026-10-22: 'JD복이면 카테고리·제작자 무관 이재원 최우선' override(8/20 de319b2)를 없앴다
+  // (쫀득바 위성 카드에 이재원이 태그되는 혼선). JD복은 이제 다른 쫀득바(jd) 상품과 같은 규칙을 따른다.
   // 인지광고의 고정 productName(JD)보다 실제 캠페인명이 우선한다. 캠페인명에 '파인트'가
   // 포함되면 파인트 인지광고 팀(주담당 p.awareness + 추가 p.additional)을 함께 태그한다.
   // ⚠️ 협찬(p.sponsorship)·바이럴(p.viralVideo) 슬롯을 재사용하지 않는다 — 그 슬롯 담당을 바꾸면
@@ -261,12 +257,10 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
     ? [...new Set([baseAssignee, ...(assignees.jg?.additional || [])].filter(Boolean))]
     : [];
   const isCreatorCard = isAdCommentSource(target) || isViral;
-  const assigneeIds = jdBok
-    ? [jdBok]
-    : pintAwarenessAssignees.length
-      ? pintAwarenessAssignees
-      : pintTeamAssignees.length
-        ? pintTeamAssignees
+  const assigneeIds = pintAwarenessAssignees.length
+    ? pintAwarenessAssignees
+    : pintTeamAssignees.length
+      ? pintTeamAssignees
       : jgAssignees.length
         ? jgAssignees
         : isCreatorCard

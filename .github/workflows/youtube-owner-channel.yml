@@ -71,7 +71,6 @@ jobs:
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
           SLACK_ASSIGNEE_P_ADDITIONAL: ${{ vars.SLACK_ASSIGNEE_P_ADDITIONAL }}
           SLACK_ASSIGNEE_JD_VIRAL: ${{ vars.SLACK_ASSIGNEE_JD_VIRAL }}
-          SLACK_ASSIGNEE_JDBOK: ${{ vars.SLACK_ASSIGNEE_JDBOK }}
           SLACK_ASSIGNEE_SATELLITE: ${{ vars.SLACK_ASSIGNEE_SATELLITE }}
           SLACK_ASSIGNEE_JD_SATELLITE: ${{ vars.SLACK_ASSIGNEE_JD_SATELLITE }}
           # 소유 YouTube 쫀득바 영상(먹짱언니·썰푸는앵무새 등, 기본 상품 JD)은 '인지 광고'
