@@ -1,3 +1,4 @@
+import { kstDateKey } from './schedule.js';
 import { clearPlatformAlertClaim, recordPlatformOutcome } from './platform-health.js';
 
 function safeScope(value) {
@@ -75,6 +76,9 @@ export function buildLlmDegradedMessage(scope, health, owner = '') {
     `LLM 대상 ${health.candidateComments}건 중 ${deferredComments}건은 문맥 판정을 보류했고, 명백 부정 ${immediateComments}건만 키워드로 즉시 처리했습니다.`,
     `LLM 장애로 ${deferredComments}건 문맥판정 보류 중 — 알림·숨김·정상 캐시·seen 기록 없이 복구 후 자동 재분류합니다.`,
     'Gemini 키·무료 한도를 확인해 주세요(폴백 공급자 없음, 보류분은 다음 회차 자동 재분류).',
+    health.failureCode === 'rate_limit'
+      ? '무료 한도는 모든 구간이 함께 쓰므로 다른 구간도 보류될 수 있습니다. 이 원인 경고는 오늘 이 1장만 보냅니다.'
+      : '',
     owner ? `담당자: <@${owner}>` : '',
   ].filter(Boolean).join('\n');
 }
@@ -121,7 +125,15 @@ export async function monitorLlmHealth(config, stats, options = {}, fetchImpl = 
   const shouldNotify = health.degraded
     && options.notify !== false
     && (outcome.shouldEscalate || (health.persistent && !outcome.persisted));
-  if (shouldNotify) {
+  // 2026-10-26: Gemini 무료 하루 한도(RPD 500) 소진은 키 하나를 같이 쓰는 모든 구간(일반·메타·틱톡·
+  // 유튜브 광고·소유채널)에 동시에 걸린다. 구간별 쿨다운만 있어 같은 원인 경고가 구간마다 한 장씩
+  // 계속 올라왔다. rate_limit은 KST 하루 한 장만(첫 구간) 올리고 나머지 구간은 로그로만 남긴다.
+  let quotaSuppressed = false;
+  if (shouldNotify && health.failureCode === 'rate_limit') {
+    quotaSuppressed = !(await claimDailyQuotaWarning(config, now, fetchImpl));
+    if (quotaSuppressed) console.error(`[llm-health] ${scope} 무료 한도 경고는 오늘 이미 다른 구간에서 발송됨 — 생략`);
+  }
+  if (shouldNotify && !quotaSuppressed) {
     try {
       await postWarning(
         config,
@@ -145,5 +157,29 @@ export async function monitorLlmHealth(config, stats, options = {}, fetchImpl = 
     shouldEscalate: outcome.shouldEscalate,
     alerted,
     alertError,
+    quotaSuppressed,
   };
+}
+
+// 같은 KST 날짜에 첫 호출만 true. 원장 조회·기록이 실패하면 경고를 막지 않는다(fail-open: 누락보다 중복이 낫다).
+async function claimDailyQuotaWarning(config, now, fetchImpl) {
+  if (!config?.supabaseUrl || !config?.supabaseKey) return true;
+  const kstDate = kstDateKey(now);
+  try {
+    const response = await fetchImpl(`${config.supabaseUrl}/rest/v1/cost_usage_ledger?on_conflict=run_key`, {
+      method: 'POST',
+      headers: {
+        apikey: config.supabaseKey,
+        Authorization: `Bearer ${config.supabaseKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=ignore-duplicates,return=representation',
+      },
+      body: JSON.stringify({ run_key: `llm-quota-warning:${kstDate}`, kst_date: kstDate, apify_usd: 0, anthropic_usd: 0 }),
+    });
+    if (!response.ok) return true;
+    const rows = await response.json().catch(() => null);
+    return !Array.isArray(rows) || rows.length > 0;
+  } catch {
+    return true;
+  }
 }

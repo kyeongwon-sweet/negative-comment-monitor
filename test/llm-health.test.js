@@ -123,3 +123,52 @@ test('영구 오류만 있으면(일시 오류 없음) 여전히 즉시 경고',
   });
   assert.equal(out.persistent, true);
 });
+
+test('2026-10-26 재발방지: Gemini 무료 한도(429) 경고는 구간이 달라도 KST 하루 1장만 보낸다', async () => {
+  const db = statefulFetch();
+  const claimed = new Set();
+  const fetchImpl = async (input, init = {}) => {
+    const url = String(input);
+    if (url.includes('/cost_usage_ledger')) {
+      const key = JSON.parse(init.body).run_key;
+      const fresh = !claimed.has(key);
+      claimed.add(key);
+      return { ok: true, json: async () => (fresh ? [{ run_key: key }] : []) };
+    }
+    return db.fetchImpl(input, init);
+  };
+  const stats = {
+    calls: 0, cacheHits: 0, cacheMiss: 5, failedAttempts: 1, transientFailures: 1,
+    lastFailureProvider: 'gemini', lastFailureCode: 'rate_limit',
+    providerLastFailure: { gemini: { kind: 'transient', code: 'rate_limit' } },
+    keywordFallbackComments: 5, keywordFallbackBatches: 1,
+  };
+  const cfg = { ...CONFIG, llmFailureThreshold: 1 };
+  const day1 = Date.parse('2026-10-26T01:00:00Z');
+  const core = await monitorLlmHealth(cfg, stats, { scope: 'core', label: '일반 모니터', totalComments: 5 }, fetchImpl, day1);
+  const ads = await monitorLlmHealth(cfg, stats, { scope: 'youtube-ads', label: 'YouTube 인지 광고', totalComments: 5 }, fetchImpl, day1 + 60_000);
+  const owner = await monitorLlmHealth(cfg, stats, { scope: 'youtube-owner', label: 'YouTube 소유 채널', totalComments: 5 }, fetchImpl, day1 + 120_000);
+  assert.deepEqual([core.alerted, ads.alerted, owner.alerted], [true, false, false]);
+  assert.deepEqual([ads.quotaSuppressed, owner.quotaSuppressed], [true, true]);
+  assert.equal(db.messages.length, 1);
+  assert.match(db.messages[0], /이 원인 경고는 오늘 이 1장만/);
+  assert.ok(claimed.has('llm-quota-warning:2026-10-26'));
+
+  // 다음 KST 날짜(10-27 00:30 KST = 10-26 15:30Z)엔 다시 1장 — 구간별 12시간 쿨다운이 지난 구간에서
+  const nextDay = await monitorLlmHealth(cfg, stats, { scope: 'tiktok-ads', label: 'TikTok 인지 광고', totalComments: 5 }, fetchImpl, Date.parse('2026-10-26T15:30:00Z'));
+  assert.equal(nextDay.alerted, true);
+  assert.equal(db.messages.length, 2);
+});
+
+test('무료 한도 외 원인(영구 오류)은 하루 1장 제한을 받지 않는다', async () => {
+  const db = statefulFetch();
+  const ledgerCalls = [];
+  const fetchImpl = async (input, init = {}) => {
+    if (String(input).includes('/cost_usage_ledger')) { ledgerCalls.push(input); return { ok: true, json: async () => [] }; }
+    return db.fetchImpl(input, init);
+  };
+  const stats = { calls: 0, cacheHits: 0, cacheMiss: 3, failedAttempts: 1, persistentFailures: 1, lastFailureCode: 'auth', keywordFallbackComments: 3 };
+  const out = await monitorLlmHealth(CONFIG, stats, { scope: 'core', totalComments: 3 }, fetchImpl, 1_000);
+  assert.equal(out.alerted, true);
+  assert.equal(ledgerCalls.length, 0);
+});
