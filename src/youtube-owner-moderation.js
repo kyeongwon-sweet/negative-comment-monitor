@@ -118,7 +118,7 @@ function allowedVideoIdSet(config) {
   return new Set(values.map((value) => String(value || '').trim()).filter(Boolean));
 }
 
-export async function loadYouTubeOwnerAlerts(config, fetchImpl = fetch) {
+export async function loadYouTubeOwnerAlerts(config, fetchImpl = fetch, { actionableOnly = false } = {}) {
   const rows = [];
   for (let offset = 0; ; offset += 1000) {
     let pathname = 'negative_comment_alerts'
@@ -129,6 +129,14 @@ export async function loadYouTubeOwnerAlerts(config, fetchImpl = fetch) {
     if (config.alertChannelId && config.alertMessageTs) {
       pathname += `&slack_channel_id=eq.${encodeURIComponent(config.alertChannelId)}`
         + `&slack_ts=eq.${encodeURIComponent(config.alertMessageTs)}`;
+    }
+    // 감사·재검증 호출은 전체 이력이 필요하므로 기본값은 false다. 상시 moderation만
+    // 실제 처리 후보를 DB에서 좁혀, 이미 해결된 알림을 매 wake마다 다시 전송받지 않는다.
+    if (actionableOnly && !config.singleAlert) {
+      pathname += '&hidden_confirmed=not.is.true';
+      pathname += config.autoHideAllNegatives
+        ? '&or=(and(review_decision.is.null,reviewed_by.is.null,reviewed_at.is.null),review_decision.in.(complete,hide))'
+        : '&review_decision=is.null&reviewed_by=is.null&reviewed_at=is.null';
     }
     const page = await supabaseJson(config, pathname, fetchImpl);
     rows.push(...page);
@@ -623,7 +631,7 @@ export async function persistHiddenRows(config, alerts, fetchImpl = fetch, now =
 }
 
 export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModerationConfig(), fetchImpl = fetch, now = Date.now()) {
-  const alerts = await loadYouTubeOwnerAlerts(config, fetchImpl);
+  const alerts = await loadYouTubeOwnerAlerts(config, fetchImpl, { actionableOnly: !config.singleAlert });
   const dispositionOptions = {
     singleAlert: config.singleAlert,
     autoHideAllNegatives: config.autoHideAllNegatives,

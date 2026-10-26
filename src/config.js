@@ -91,6 +91,11 @@ export function loadConfig(env = process.env, now = Date.now()) {
     videoAssignees: (() => { try { const m = JSON.parse(env.META_AD_VIDEO_ASSIGNEES || '{}'); return (m && typeof m === 'object') ? m : {}; } catch { return {}; } })(),
     supabaseUrl: String(env.SUPABASE_URL || '').trim().replace(/\/$/, ''),
     supabaseKey: String(env.SUPABASE_SERVICE_ROLE_KEY || '').trim(),
+    // 첫 배포 기본은 shadow: RPC와 기존 전량 조회를 비교하되 기존 결과만 사용한다.
+    // 검증 뒤 optimized로 전환해도 RPC 미배포·장애 시 delta.js가 즉시 전량 조회로 fallback한다.
+    monitorTargetStateMode: ['legacy', 'shadow', 'optimized'].includes(
+      String(env.MONITOR_TARGET_STATE_MODE || 'shadow').trim().toLowerCase(),
+    ) ? String(env.MONITOR_TARGET_STATE_MODE || 'shadow').trim().toLowerCase() : 'shadow',
     googleAdsClientId: String(env.GOOGLE_ADS_CLIENT_ID || '').trim(),
     googleAdsClientSecret: String(env.GOOGLE_ADS_CLIENT_SECRET || '').trim(),
     youtubeApiBase: String(env.YOUTUBE_API_BASE || 'https://www.googleapis.com/youtube/v3').trim().replace(/\/$/, ''),

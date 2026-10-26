@@ -63,6 +63,9 @@ test('TikTok collection safety defaults are bounded and persistent failures need
   assert.equal(config.tiktokBatchSize, 50);
   assert.equal(config.platformFailureThreshold, 3);
   assert.equal(config.platformFailureAlertCooldownHours, 12);
+  assert.equal(config.monitorTargetStateMode, 'shadow');
+  assert.equal(loadConfig({ ...BASE_ENV, MONITOR_TARGET_STATE_MODE: 'shadow' }).monitorTargetStateMode, 'shadow');
+  assert.equal(loadConfig({ ...BASE_ENV, MONITOR_TARGET_STATE_MODE: 'typo' }).monitorTargetStateMode, 'shadow');
 });
 
 test('LLM 기본 공급자는 현재 무료 Gemini 안정 모델이고 Anthropic은 폴백 설정으로 남는다', () => {

@@ -120,6 +120,24 @@ test('오가닉 위성 범위는 source=null YouTube 중 허용 영상만 읽는
   assert.deepEqual(result.map((row) => row.id), [1]);
   assert.match(requested, /source=is\.null/);
   assert.match(requested, /platform=eq\.youtube/);
+  assert.doesNotMatch(requested, /hidden_confirmed=not\.is\.true/, '감사·일반 loader는 해결 이력도 읽는다');
+});
+
+test('상시 YouTube moderation loader만 미처리 후보를 서버에서 좁힌다', async () => {
+  const requested = [];
+  const fetchImpl = async (input) => {
+    requested.push(String(input));
+    return response(200, []);
+  };
+  const base = config({ alertScope: YOUTUBE_OWNER_ALERT_SCOPES.ADS });
+  await loadYouTubeOwnerAlerts(base, fetchImpl, { actionableOnly: true });
+  await loadYouTubeOwnerAlerts({ ...base, autoHideAllNegatives: true }, fetchImpl, { actionableOnly: true });
+  await loadYouTubeOwnerAlerts(base, fetchImpl);
+
+  assert.match(requested[0], /hidden_confirmed=not\.is\.true/);
+  assert.match(requested[0], /review_decision=is\.null&reviewed_by=is\.null&reviewed_at=is\.null/);
+  assert.match(requested[1], /or=\(and\(review_decision\.is\.null,reviewed_by\.is\.null,reviewed_at\.is\.null\),review_decision\.in\.\(complete,hide\)\)/);
+  assert.doesNotMatch(requested[2], /hidden_confirmed=not\.is\.true/);
 });
 
 test('오가닉 위성 자동숨김은 keep 결정을 제외하고 source IS NULL 행만 갱신한다', async () => {

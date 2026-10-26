@@ -39,7 +39,11 @@ test('상시 자동 숨김은 미처리만, 명시적 백로그 정리는 hide/c
     { id: 8, comment_id: 'unhide', review_decision: 'unhide', reviewed_by: 'U6' },
     { id: 9, comment_id: 'unavailable', review_decision: 'unavailable', reviewed_by: 'meta_ads-auto-hide' },
   ];
-  const fetchImpl = async () => response(200, rows);
+  const requested = [];
+  const fetchImpl = async (input) => {
+    requested.push(String(input));
+    return response(200, rows);
+  };
   assert.deepEqual(
     (await loadActionableAwarenessAlerts(CFG, 'meta_ads', fetchImpl)).map((row) => row.comment_id),
     ['new'],
@@ -49,6 +53,9 @@ test('상시 자동 숨김은 미처리만, 명시적 백로그 정리는 hide/c
       .map((row) => row.comment_id),
     ['new', 'hide', 'complete'],
   );
+  assert.match(requested[0], /hidden_confirmed=not\.is\.true/);
+  assert.match(requested[0], /review_decision=is\.null&reviewed_by=is\.null&reviewed_at=is\.null/);
+  assert.match(requested[1], /or=\(and\(review_decision\.is\.null,reviewed_by\.is\.null,reviewed_at\.is\.null\),review_decision\.in\.\(hide,complete\)\)/);
 });
 
 test('Meta 자동 숨김은 중복 comment_id를 한 번만 호출하고 Slack 성공 뒤 미처리 감사행만 갱신한다', async () => {

@@ -23,9 +23,13 @@ export async function loadActionableAwarenessAlerts(
   fetchImpl = fetch,
   { includeHumanDecisions = false } = {},
 ) {
+  const pendingFilter = includeHumanDecisions
+    ? '&or=(and(review_decision.is.null,reviewed_by.is.null,reviewed_at.is.null),review_decision.in.(hide,complete))'
+    : '&review_decision=is.null&reviewed_by=is.null&reviewed_at=is.null';
   const url = `${config.supabaseUrl}/rest/v1/negative_comment_alerts`
     + '?select=id,comment_id,comment_text,post_url,meta_ad_id,review_decision,reviewed_by,reviewed_at,hidden_confirmed,hidden_confirmed_at,slack_channel_id,slack_ts'
-    + `&source=eq.${encodeURIComponent(source)}&comment_id=not.is.null&order=id.asc&limit=2000`;
+    + `&source=eq.${encodeURIComponent(source)}&comment_id=not.is.null&hidden_confirmed=not.is.true${pendingFilter}`
+    + '&order=id.asc&limit=2000';
   const response = await fetchImpl(url, { headers: headers(config) });
   if (!response.ok) throw new Error(`Awareness alert lookup failed (${response.status})`);
   const rows = await response.json();

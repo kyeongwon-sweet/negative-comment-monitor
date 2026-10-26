@@ -24,8 +24,37 @@ async function sbGet(config, path, fetchImpl) {
   return res.json();
 }
 
+function emptyCommentState() {
+  return {
+    postId: null,
+    current: null,
+    last: null,
+    lastCheckedAt: '',
+    caption: '',
+    productName: '',
+    endedAt: null,
+    notFoundStreak: 0,
+    assetName: '',
+  };
+}
+
+function kstDateKey(ms) {
+  const parts = new Intl.DateTimeFormat('en', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date(ms));
+  const byType = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${byType.year}-${byType.month}-${byType.day}`;
+}
+
+function nullableNumber(value) {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+// 기존 전량 조회 경로. RPC 미배포·장애 시 fail-open fallback과 shadow parity 검증에 유지한다.
 // targets(url 보유) → { [url]: { postId, current, last } }
-export async function loadCommentCounts(config, targets, fetchImpl = fetch, now = Date.now()) {
+export async function loadCommentCountsLegacy(config, targets, fetchImpl = fetch, now = Date.now()) {
   // 1) sponsored_posts 전량 → 게시물키→{id, 캡션} 매핑
   const keyToId = {};
   const keyToCaption = {};
@@ -46,17 +75,17 @@ export async function loadCommentCounts(config, targets, fetchImpl = fetch, now 
     if (chunk.length < 1000) break;
   }
   // 2) 최근 30일 내 가장 최신 comments_count → post별 최신값(신호 커버리지 최대화)
-  const cutoff = new Date(now - 30 * 864e5).toISOString().slice(0, 10);
+  const cutoff = kstDateKey(now - 30 * 864e5);
   const latest = {};
   for (let off = 0; ; off += 1000) {
-    const rows = await sbGet(config, `post_daily_stats?select=post_id,comments_count,measured_at&measured_at=gte.${cutoff}&comments_count=not.is.null&order=measured_at.desc&offset=${off}&limit=1000`, fetchImpl);
+    const rows = await sbGet(config, `post_daily_stats?select=post_id,comments_count,measured_at&measured_at=gte.${cutoff}&comments_count=not.is.null&order=measured_at.desc,post_id.asc&offset=${off}&limit=1000`, fetchImpl);
     for (const r of rows) if (latest[r.post_id] === undefined) latest[r.post_id] = r.comments_count;
     if (rows.length < 1000) break;
   }
   // 3) post_comment_checks last_count
   const checks = {};
   for (let off = 0; ; off += 1000) {
-    const rows = await sbGet(config, `post_comment_checks?select=post_id,last_count,last_checked_at&offset=${off}&limit=1000`, fetchImpl);
+    const rows = await sbGet(config, `post_comment_checks?select=post_id,last_count,last_checked_at&order=post_id.asc&offset=${off}&limit=1000`, fetchImpl);
     for (const r of rows) checks[r.post_id] = { lastCount: r.last_count, lastCheckedAt: r.last_checked_at || '' };
     if (rows.length < 1000) break;
   }
@@ -77,6 +106,113 @@ export async function loadCommentCounts(config, targets, fetchImpl = fetch, now 
     };
   }
   return out;
+}
+
+export async function loadCommentCountsOptimized(config, targets, fetchImpl = fetch, now = Date.now()) {
+  const keys = [...new Set(targets.map((target) => extractPostKey(target.url)).filter(Boolean))];
+  const rowsByKey = new Map();
+  // PostgREST의 기본 응답 상한(통상 1,000행)에 걸려 뒤쪽 대상이 조용히 사라지지 않도록
+  // 요청 자체를 500키 단위로 나눈다. 어느 한 청크라도 실패하면 wrapper가 전량 legacy fallback한다.
+  for (let offset = 0; offset < keys.length; offset += 500) {
+    const batch = keys.slice(offset, offset + 500);
+    const response = await fetchImpl(`${config.supabaseUrl}/rest/v1/rpc/monitor_comment_target_state`, {
+      method: 'POST',
+      headers: {
+        apikey: config.supabaseKey,
+        Authorization: `Bearer ${config.supabaseKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        p_keys: batch,
+        p_cutoff: kstDateKey(now - 30 * 864e5),
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`monitor_comment_target_state RPC ${response.status}: ${(await response.text()).slice(0, 200)}`);
+    }
+    const rows = await response.json();
+    for (const row of rows) {
+      const key = String(row.normalized_key || '');
+      if (key && !rowsByKey.has(key)) rowsByKey.set(key, row);
+    }
+  }
+
+  const out = {};
+  for (const target of targets) {
+    const key = extractPostKey(target.url);
+    const row = key ? rowsByKey.get(key) : null;
+    out[target.url] = row ? {
+      postId: row.post_id || null,
+      current: nullableNumber(row.current_count),
+      last: nullableNumber(row.last_count),
+      lastCheckedAt: row.last_checked_at || '',
+      caption: row.content_summary || '',
+      productName: row.product_name || '',
+      endedAt: row.ended_at || null,
+      notFoundStreak: Number(row.not_found_streak || 0),
+      assetName: row.asset_name || '',
+    } : emptyCommentState();
+  }
+  return out;
+}
+
+const COMMENT_STATE_FIELDS = Object.freeze([
+  'postId', 'current', 'last', 'lastCheckedAt', 'caption', 'productName',
+  'endedAt', 'notFoundStreak', 'assetName',
+]);
+
+export function compareCommentCountStates(legacy, optimized) {
+  const urls = [...new Set([...Object.keys(legacy || {}), ...Object.keys(optimized || {})])];
+  const mismatches = [];
+  for (const url of urls) {
+    const before = legacy?.[url] || emptyCommentState();
+    const after = optimized?.[url] || emptyCommentState();
+    const fields = COMMENT_STATE_FIELDS.filter((field) => before[field] !== after[field]);
+    if (fields.length) mismatches.push({ url, fields, legacy: before, optimized: after });
+  }
+  return { match: mismatches.length === 0, mismatchCount: mismatches.length, mismatches };
+}
+
+// Rollout modes:
+// - shadow(default): 두 경로를 비교하되 기존 결과를 사용(운영 판정 불변)
+// - optimized: RPC, 오류면 기존 경로로 즉시 fallback
+// - legacy: 기존 경로만 사용
+export async function loadCommentCounts(config, targets, fetchImpl = fetch, now = Date.now()) {
+  const mode = String(config.monitorTargetStateMode || 'shadow').trim().toLowerCase();
+  if (mode === 'legacy') {
+    const legacy = await loadCommentCountsLegacy(config, targets, fetchImpl, now);
+    console.log(`[monitor-target-state] mode=legacy targets=${targets.length}`);
+    return legacy;
+  }
+
+  if (mode === 'shadow') {
+    const legacy = await loadCommentCountsLegacy(config, targets, fetchImpl, now);
+    try {
+      const optimized = await loadCommentCountsOptimized(config, targets, fetchImpl, now);
+      const comparison = compareCommentCountStates(legacy, optimized);
+      if (!comparison.match) {
+        console.error('[monitor-target-state] shadow mismatch', JSON.stringify({
+          count: comparison.mismatchCount,
+          samples: comparison.mismatches.slice(0, 10).map(({ url, fields }) => ({ url, fields })),
+        }));
+      } else {
+        console.log(`[monitor-target-state] mode=shadow parity=ok targets=${targets.length}`);
+      }
+    } catch (error) {
+      console.error('[monitor-target-state] shadow RPC failed; legacy result retained:', error.message);
+    }
+    return legacy;
+  }
+
+  try {
+    const optimized = await loadCommentCountsOptimized(config, targets, fetchImpl, now);
+    const matched = Object.values(optimized).filter((state) => state.postId).length;
+    console.log(`[monitor-target-state] mode=optimized targets=${targets.length} matched=${matched}`);
+    return optimized;
+  } catch (error) {
+    console.error('[monitor-target-state] RPC failed; falling back to legacy:', error.message);
+    return loadCommentCountsLegacy(config, targets, fetchImpl, now);
+  }
 }
 
 // 보관처리(ended_at 존재)·죽은 링크(not_found_streak ≥ 임계) 게시물은 부정댓글 알림 대상에서 제외한다.

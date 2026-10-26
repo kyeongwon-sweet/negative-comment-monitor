@@ -154,6 +154,9 @@ jobs:
           SLACK_ASSIGNEE_JG_ADDITIONAL: ${{ vars.SLACK_ASSIGNEE_JG_ADDITIONAL }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # 첫 배포 기본은 shadow: 운영 판정은 legacy를 유지하고 RPC parity만 검증한다.
+          # 검증 뒤 repo var를 optimized로 바꿔도 RPC 장애 시 같은 회차에 legacy fallback한다.
+          MONITOR_TARGET_STATE_MODE: ${{ vars.MONITOR_TARGET_STATE_MODE || 'shadow' }}
           GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
           GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
           YOUTUBE_SATELLITE_AUTO_HIDE: 'true'
