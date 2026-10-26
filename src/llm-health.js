@@ -61,6 +61,8 @@ export function buildLlmDegradedMessage(scope, health, owner = '') {
       : 'Gemini·Anthropic';
   const cause = health.failureCode === 'credit' ? 'Anthropic 크레딧 부족'
     : health.failureCode === 'auth' || ['missing_key', 'missing_llm_key'].includes(health.failureCode) ? `${provider} 인증/키 설정 오류`
+      : health.failureCode === 'daily_budget' ? '대량 작업용 Gemini 안전예산 도달(정기 감시 몫 보호 중)'
+        : health.failureCode === 'daily_quota' ? `${provider} 일일 무료 한도 초과`
       : health.failureCode === 'rate_limit' ? `${provider} 무료 한도/호출 제한 초과`
         : health.failureCode === 'server' ? `${provider} 서버 오류(5xx) 재시도 소진`
           : health.persistent ? `${provider} 영구 요청 오류`
@@ -76,7 +78,7 @@ export function buildLlmDegradedMessage(scope, health, owner = '') {
     `LLM 대상 ${health.candidateComments}건 중 ${deferredComments}건은 문맥 판정을 보류했고, 명백 부정 ${immediateComments}건만 키워드로 즉시 처리했습니다.`,
     `LLM 장애로 ${deferredComments}건 문맥판정 보류 중 — 알림·숨김·정상 캐시·seen 기록 없이 복구 후 자동 재분류합니다.`,
     'Gemini 키·무료 한도를 확인해 주세요(폴백 공급자 없음, 보류분은 다음 회차 자동 재분류).',
-    health.failureCode === 'rate_limit'
+    ['rate_limit', 'daily_quota', 'daily_budget'].includes(health.failureCode)
       ? '무료 한도는 모든 구간이 함께 쓰므로 다른 구간도 보류될 수 있습니다. 이 원인 경고는 오늘 이 1장만 보냅니다.'
       : '',
     owner ? `담당자: <@${owner}>` : '',
@@ -129,7 +131,7 @@ export async function monitorLlmHealth(config, stats, options = {}, fetchImpl = 
   // 유튜브 광고·소유채널)에 동시에 걸린다. 구간별 쿨다운만 있어 같은 원인 경고가 구간마다 한 장씩
   // 계속 올라왔다. rate_limit은 KST 하루 한 장만(첫 구간) 올리고 나머지 구간은 로그로만 남긴다.
   let quotaSuppressed = false;
-  if (shouldNotify && health.failureCode === 'rate_limit') {
+  if (shouldNotify && ['rate_limit', 'daily_quota', 'daily_budget'].includes(health.failureCode)) {
     quotaSuppressed = !(await claimDailyQuotaWarning(config, now, fetchImpl));
     if (quotaSuppressed) console.error(`[llm-health] ${scope} 무료 한도 경고는 오늘 이미 다른 구간에서 발송됨 — 생략`);
   }

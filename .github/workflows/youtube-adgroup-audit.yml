@@ -36,6 +36,7 @@ jobs:
           YOUTUBE_ADGROUP_NAME_FILTER: ${{ inputs.ad_group_filter }}
           APPLY_MISSING: ${{ inputs.apply_missing }}
           LLM_PROVIDER: gemini
+          GEMINI_QUOTA_CLASS: bulk
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.1-flash-lite
           GEMINI_REQUEST_INTERVAL_MS: '1500'

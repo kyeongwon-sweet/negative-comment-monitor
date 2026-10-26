@@ -31,6 +31,7 @@ jobs:
         run: node src/youtube-ads-run.js
         env:
           LLM_PROVIDER: gemini
+          GEMINI_QUOTA_CLASS: bulk
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.1-flash-lite
           # 대량 재처리도 무료 Gemini 한도(12 RPM 이하)를 넘지 않게 한다.

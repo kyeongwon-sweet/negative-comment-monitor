@@ -73,6 +73,10 @@ test('LLM 기본 공급자는 현재 무료 Gemini 안정 모델이고 Anthropic
   assert.equal(config.llmProvider, 'gemini');
   assert.equal(config.geminiModel, 'gemini-3.1-flash-lite');
   assert.equal(config.geminiRequestIntervalMs, 1500);
+  assert.equal(config.geminiQuotaClass, 'live');
+  assert.equal(config.geminiRollingRequestBudget, 480);
+  assert.equal(config.geminiBulkRollingRequestBudget, 300);
+  assert.equal(config.geminiQuotaWindowHours, 24);
   assert.equal(config.geminiKey, 'gemini');
   assert.equal(config.anthropicKey, 'anthropic');
 });

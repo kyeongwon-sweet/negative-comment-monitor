@@ -171,6 +171,23 @@ test('YouTube 인지광고 분류는 무료 Gemini 429를 피하도록 12 RPM �
   assert.ok(Number(backfillYoutubeAds[1]) >= 5000, 'backfill YouTube ads must stay at or below 12 RPM');
 });
 
+test('Gemini를 쓰는 모든 워크플로가 live와 bulk quota를 명시적으로 분리한다', () => {
+  const workflowDir = new URL('../.github/workflows/', import.meta.url);
+  const files = readdirSync(workflowDir).filter((name) => name.endsWith('.yml'));
+  for (const name of files) {
+    const source = readFileSync(new URL(name, workflowDir), 'utf8');
+    const providers = (source.match(/LLM_PROVIDER:\s*gemini/g) || []).length;
+    if (!providers) continue;
+    const quotaClasses = (source.match(/GEMINI_QUOTA_CLASS:/g) || []).length;
+    assert.equal(quotaClasses, providers, `${name}: every Gemini runtime must declare quota class`);
+    if (name === 'monitor.yml' || name === 'youtube-owner-channel.yml') {
+      assert.match(source, /GEMINI_QUOTA_CLASS:\s*\$\{\{[\s\S]*?'bulk'[\s\S]*?'live'[\s\S]*?\}\}/, `${name}: schedule/manual split missing`);
+    } else {
+      assert.equal((source.match(/GEMINI_QUOTA_CLASS:\s*bulk/g) || []).length, providers, `${name}: maintenance runs must be bulk`);
+    }
+  }
+});
+
 test('메인 감시는 예약 run 내부 15분 간격 4회 루프를 사용한다', () => {
   assert.match(monitorWorkflow, /timeout-minutes:\s*70/);
   assert.match(monitorWorkflow, /run:\s*node src\/monitor-loop\.js/);

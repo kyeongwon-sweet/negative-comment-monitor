@@ -112,6 +112,8 @@ jobs:
           PLATFORM_FAILURE_THRESHOLD: '3'
           PLATFORM_FAILURE_ALERT_COOLDOWN_HOURS: '12'
           LLM_PROVIDER: gemini
+          # 사람이 강제 실행한 대량 회차는 300회에서 멈춰 정기 감시용 무료 quota를 보존한다.
+          GEMINI_QUOTA_CLASS: ${{ github.event_name == 'workflow_dispatch' && !inputs.monitor_chain && 'bulk' || 'live' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.1-flash-lite
           GEMINI_REQUEST_INTERVAL_MS: '1500'
@@ -210,6 +212,7 @@ jobs:
         run: node src/meta-ads-run.js
         env:
           LLM_PROVIDER: gemini
+          GEMINI_QUOTA_CLASS: ${{ github.event_name == 'workflow_dispatch' && !inputs.monitor_chain && 'bulk' || 'live' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.1-flash-lite
           GEMINI_REQUEST_INTERVAL_MS: '1500'
@@ -256,6 +259,7 @@ jobs:
         run: node src/tiktok-ads-run.js
         env:
           LLM_PROVIDER: gemini
+          GEMINI_QUOTA_CLASS: ${{ github.event_name == 'workflow_dispatch' && !inputs.monitor_chain && 'bulk' || 'live' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.1-flash-lite
           GEMINI_REQUEST_INTERVAL_MS: '1500'
@@ -307,6 +311,7 @@ jobs:
         run: node src/youtube-ads-run.js
         env:
           LLM_PROVIDER: gemini
+          GEMINI_QUOTA_CLASS: ${{ github.event_name == 'workflow_dispatch' && !inputs.monitor_chain && 'bulk' || 'live' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.1-flash-lite
           # 광고 영상 수가 많아 1.5초 간격은 무료 RPM을 초과했다. 12 RPM 이하로 제한해

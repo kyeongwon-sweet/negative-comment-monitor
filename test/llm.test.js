@@ -291,6 +291,29 @@ test('Gemini 429는 백오프 재시도 후 성공한다', async () => {
   assert.equal(stats.lastSuccessfulProvider, 'gemini');
 });
 
+test('Gemini 일일 한도 429는 같은 회차에서 재시도하지 않고 즉시 회로를 연다', async () => {
+  let attempts = 0;
+  const stats = {};
+  const out = await classifyCommentsLLM(
+    [{ text: '검토' }],
+    { llmProvider: 'gemini', geminiKey: 'g', geminiRequestIntervalMs: 0, geminiRetryBaseMs: 0 },
+    async () => {
+      attempts += 1;
+      return {
+        ok: false,
+        status: 429,
+        headers: { get: () => null },
+        json: async () => ({ error: { status: 'RESOURCE_EXHAUSTED', message: 'Generate requests per day limit 500 exceeded' } }),
+      };
+    },
+    stats,
+  );
+  assert.equal(out, null);
+  assert.equal(attempts, 1);
+  assert.equal(stats.lastFailureCode, 'daily_quota');
+  assert.equal(stats.providerCircuit.gemini, true);
+});
+
 test('Gemini 영구 실패 시 Anthropic으로 폴백하고 키워드 폴백은 하지 않는다', async () => {
   const urls = [];
   const stats = {};
@@ -356,6 +379,7 @@ test('2026-10-14 결정: 운영 로더는 두 키가 다 있어도 Gemini 단독
     stats,
   );
   assert.equal(out, null, 'Gemini 실패분은 보류(다음 회차 재분류)');
-  assert.ok(urls.length > 0 && urls.every((u) => u.includes('generativelanguage')), 'Anthropic 호출 없음');
+  const providerUrls = urls.filter((u) => /generativelanguage|anthropic\.com/.test(u));
+  assert.ok(providerUrls.length > 0 && providerUrls.every((u) => u.includes('generativelanguage')), 'Anthropic 호출 없음');
   assert.equal(stats.persistentFailures || 0, 0, '죽은 폴백의 credit 영구오류가 생기지 않음');
 });

@@ -117,6 +117,12 @@ export function loadConfig(env = process.env, now = Date.now()) {
     geminiRequestIntervalMs: Math.max(0, Number(env.GEMINI_REQUEST_INTERVAL_MS || 1500)),
     geminiRetryBaseMs: Math.max(0, Number(env.GEMINI_RETRY_BASE_MS || 1000)),
     geminiMaxAttempts: Math.max(1, Math.min(5, Number(env.GEMINI_MAX_ATTEMPTS || 4))),
+    // 무료 Gemini 500 RPD를 대량 재처리가 독점하지 않도록 rolling 24h 예산을 둔다.
+    // bulk(수동·백필)는 300회까지만, 전체는 480회까지만 선점해 정기 감시용 여유를 남긴다.
+    geminiQuotaClass: String(env.GEMINI_QUOTA_CLASS || 'live').trim().toLowerCase() === 'bulk' ? 'bulk' : 'live',
+    geminiRollingRequestBudget: Math.max(1, Number(env.GEMINI_ROLLING_REQUEST_BUDGET || 480)),
+    geminiBulkRollingRequestBudget: Math.max(1, Number(env.GEMINI_BULK_ROLLING_REQUEST_BUDGET || 300)),
+    geminiQuotaWindowHours: Math.max(1, Number(env.GEMINI_QUOTA_WINDOW_HOURS || 24)),
     anthropicKey: String(env.ANTHROPIC_API_KEY || '').trim(),
     anthropicModel: String(env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001').trim(),
     // A안(소유채널 브랜드 지목 승격): 1차(약한 Gemini)가 정상으로 본 '브랜드/제품 직접 언급' 소유

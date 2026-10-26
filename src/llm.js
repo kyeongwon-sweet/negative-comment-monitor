@@ -1,6 +1,7 @@
 // 공급자 독립 LLM 분류기. 기본 체인은 Gemini 무료 티어 → Anthropic → 키워드다.
 // 어떤 공급자도 사용할 수 없거나 모두 실패하면 null을 반환하고 호출부가 키워드로 폴백한다.
 import { readFileSync } from 'node:fs';
+import { claimGeminiRequestBudget } from './gemini-budget.js';
 
 // 내부 DB 라벨에서 뽑은 few-shot 예시(정상=[무시], 부정=숨김/차단). 주간 잡이
 // src/classifier-exemplars.json을 갱신·커밋하면 여기서 읽어 프롬프트에 주입한다.
@@ -76,6 +77,8 @@ async function safeFailure(response, provider) {
   let code = 'http';
   if (provider === 'anthropic' && /credit balance|billing|purchase credits/.test(message)) code = 'credit';
   else if (status === 401 || status === 403 || /auth|api key|permission|forbidden/.test(`${type} ${message}`)) code = 'auth';
+  else if (provider === 'gemini' && status === 429
+    && /per.?day|daily|requests[_ ]per[_ ]day|rpd|generate.*day/.test(message)) code = 'daily_quota';
   else if (status === 429 || /rate.limit|resource_exhausted|quota/.test(`${type} ${message}`)) code = 'rate_limit';
   else if (status >= 500) code = 'server';
   else if (status === 400) code = 'invalid_request';
@@ -122,11 +125,29 @@ async function fetchWithRetry(provider, url, init, config, fetchImpl, stats) {
       stats[key] = (stats[key] || 0) + 1;
     }
     try {
+      if (provider === 'gemini') {
+        const budget = await claimGeminiRequestBudget(config, fetchImpl);
+        if (!budget.allowed) {
+          recordFailure(stats, { provider, status: 'budget', code: 'daily_budget', kind: 'transient' });
+          if (stats) {
+            stats.geminiBudget ||= {};
+            Object.assign(stats.geminiBudget, budget);
+          }
+          // 같은 프로세스의 나머지 청크·대상도 이미 같은 rolling budget에 걸리므로 즉시 회로를 연다.
+          openPersistentCircuit(stats, provider);
+          return null;
+        }
+      }
       const response = await fetchImpl(url, init);
       if (response.ok) return response;
       const failure = await safeFailure(response, provider);
       recordFailure(stats, failure);
       if (failure.kind === 'persistent') openPersistentCircuit(stats, provider);
+      // 분당 429는 백오프 재시도하지만, 일일 한도는 같은 회차에서 재시도해도 회복되지 않는다.
+      if (failure.code === 'daily_quota') {
+        openPersistentCircuit(stats, provider);
+        return response;
+      }
       if (!TRANSIENT_HTTP_STATUSES.has(Number(response.status)) || attempt + 1 >= maxAttempts) return response;
       await wait(retryDelayMs(response, attempt, baseMs));
     } catch (error) {

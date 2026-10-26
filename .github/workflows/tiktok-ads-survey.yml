@@ -31,6 +31,7 @@ jobs:
         run: node src/tiktok-ads-survey.js
         env:
           LLM_PROVIDER: gemini
+          GEMINI_QUOTA_CLASS: bulk
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.1-flash-lite
           GEMINI_REQUEST_INTERVAL_MS: '1500'

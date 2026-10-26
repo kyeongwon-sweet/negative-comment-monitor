@@ -94,6 +94,16 @@ test('Gemini 429 폴백 경고는 무료 한도 원인과 공급자를 구분한
   assert.match(text, /Gemini 키·무료 한도를 확인/);
 });
 
+test('대량 작업 안전예산 도달은 장애가 아니라 정기 감시 몫 보호로 설명한다', () => {
+  const text = buildLlmDegradedMessage('Meta 인지 광고', {
+    failureProvider: 'gemini', failureCode: 'daily_budget', persistent: false,
+    candidateComments: 10, keywordFallbackComments: 10,
+  });
+  assert.match(text, /대량 작업용 Gemini 안전예산 도달/);
+  assert.match(text, /정기 감시 몫 보호/);
+  assert.match(text, /오늘 이 1장만/);
+});
+
 test('1순위 Gemini 일시 오류 + 폴백 Anthropic 크레딧 부족은 즉시 경고하지 않고 3회 연속에서만 알린다', async () => {
   const db = statefulFetch();
   // 10-14 실사례: Gemini 5xx로 실패 → Anthropic 폴백이 크레딧 부족 → 1건 보류. 다음 회차 자동 재분류된다.
