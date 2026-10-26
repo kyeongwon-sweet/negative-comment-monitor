@@ -406,6 +406,8 @@ jobs:
         env:
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MONITOR_FAILURE_ALERT_COOLDOWN_HOURS: 12
           SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
           SLACK_ASSIGNEE_P_ADDITIONAL: ${{ vars.SLACK_ASSIGNEE_P_ADDITIONAL }}
           SLACK_ASSIGNEE_JD_VIRAL: ${{ vars.SLACK_ASSIGNEE_JD_VIRAL }}
