@@ -503,7 +503,11 @@ test('5q7z3FExo_Q 재발방지: 워크플로의 OWNED_BRAND_ESCALATION_MODEL이 
   // 09-21~10-28: 워크플로 env는 있었지만 소유채널 설정(loadMetaAdsConfig 기반)이 이 키를 읽지 않아
   // 강한 모델 2차 판정이 한 번도 돌지 않았다. 워크플로 파일 값을 그대로 넣어 배선을 검증한다.
   const yml = readFileSync(new URL('../.github/workflows/youtube-owner-channel.yml', import.meta.url), 'utf8');
-  const model = yml.match(/^\s+OWNED_BRAND_ESCALATION_MODEL:\s*(\S+)\s*$/m)?.[1];
+  // 값은 `${{ inputs.escalation_model || '<기본 모델>' }}` 형태라 스케줄 실행이 쓰는 기본 모델을 뽑는다.
+  const line = yml.match(/^\s+OWNED_BRAND_ESCALATION_MODEL:(.*)$/m)?.[1] || '';
+  const model = line.match(/'([^']+)'/)?.[1] || line.trim();
+  assert.match(model, /^gemini-|^claude/, 'OWNED_BRAND_ESCALATION_MODEL 기본 모델을 읽을 수 있어야 함');
+  assert.doesNotMatch(model, /^gemini-(3\.1-pro|2\.5-pro)$/, '404 확인된 모델로 되돌리면 안 됨');
   assert.ok(model, 'youtube-owner-channel.yml에 OWNED_BRAND_ESCALATION_MODEL이 있어야 함');
   const config = loadYouTubeOwnerChannelConfig({
     SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'db',

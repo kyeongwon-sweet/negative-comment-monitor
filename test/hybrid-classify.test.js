@@ -645,3 +645,24 @@ test('5q7z3FExo_Q 재발방지: 강한 모델 미설정이면 승격 대상 건�
   );
   assert.equal(keyless.ownedEscalationSkipReason, 'escalation_key_missing');
 });
+
+test('5q7z3FExo_Q 재발방지: 강한 모델 호출이 실패(404 등 null)하면 승격 실패 건수를 남긴다', async () => {
+  let call = 0;
+  const strongFails = async (items) => {
+    call += 1;
+    if (call > 1) return null; // classifyCommentsLLM은 공급자 실패 시 throw 대신 null을 반환한다.
+    return items.map(() => ({ alert: true, category: '광고/바이럴 의심', reason: '광고 피로', priority: 'normal' }));
+  };
+  const stats = {};
+  const [risk] = await classifyCommentsHybrid(
+    [{ text: '제발 바이럴좀 그만해라' }],
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true, fullContextReview: true },
+    { geminiKey: 'key', ownedBrandEscalationModel: 'gemini-3.8-flash' },
+    strongFails,
+    stats,
+  );
+  assert.equal(call, 2, '강한 모델 호출을 시도해야 함');
+  assert.equal(risk.engine, 'llm');
+  assert.equal(stats.ownedEscalationSkipped, 1);
+  assert.equal(stats.ownedEscalationSkipReason, 'escalation_call_failed');
+});

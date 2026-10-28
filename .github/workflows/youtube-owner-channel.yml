@@ -17,6 +17,10 @@ on:
         required: false
         type: boolean
         default: false
+      escalation_model:
+        description: Override the owned-channel strong escalation model for this run (blank = workflow default)
+        required: false
+        type: string
   schedule:
     # 댓글 최초 감지 지연 상한을 약 3시간으로 유지. 댓글수 변화가 없는 영상은 본문 API를 호출하지 않는다.
     - cron: '17 */3 * * *'
@@ -62,7 +66,9 @@ jobs:
           # A안: 소유채널에서 브랜드/제품을 직접 언급했는데 1차(flash-lite)가 정상으로 본 댓글만
           # 이 강한 모델로 2차 판정한다. Anthropic 계정 크레딧 소진으로 무료 상위 Gemini 모델을 쓴다.
           # 대상은 이 회차 신규 분류 건뿐이라 볼륨·비용이 작다(강제 재분류 시 백로그 일괄 승격).
-          OWNED_BRAND_ESCALATION_MODEL: gemini-3.1-pro
+          # ⚠️gemini-3.1-pro·2.5-pro는 404(없는 모델), 3.1-pro-preview는 무료 한도 0(429) — 10-26 실측.
+          # 승격 실패는 summary.ownedEscalation.skipped + softDegraded로 드러난다.
+          OWNED_BRAND_ESCALATION_MODEL: ${{ inputs.escalation_model || 'gemini-3.8-flash' }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}

@@ -294,7 +294,13 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
           awarenessAdScope: entries[r.entry]?.target?.awarenessAdScope === true,
         })), strongConfig, undefined, stats);
       } catch {
-        escResults = null; // 강한 모델 실패 → 승격 없이 1차 결과 유지(무해).
+        escResults = null; // 강한 모델 실패 → 승격 없이 1차 결과 유지.
+      }
+      // 실패는 1차 결과를 유지하지만 '무해'하지 않다: 약한 LLM 부정은 소유 게이트에 억제된다.
+      // 10-28 확인: gemini-3.1-pro(404)로 승격이 매 회차 실패했는데 LLM health는 1차 성공 때문에 정상이었다.
+      if (!Array.isArray(escResults) && stats) {
+        stats.ownedEscalationSkipped = (stats.ownedEscalationSkipped || 0) + escRefs.length;
+        stats.ownedEscalationSkipReason = 'escalation_call_failed';
       }
       if (Array.isArray(escResults)) {
         let promotedCount = 0;
