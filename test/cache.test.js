@@ -124,3 +124,29 @@ test('lookupCache 이월 끄기(classificationCacheCarryForward=false)면 예전
   await lookupCache({ ...CFG, classificationCacheCarryForward: false }, [{ index: 0, fingerprint: 'fp' }], HASH, fetchImpl);
   assert.match(seenUrl, /classifier_hash=eq\./);
 });
+
+test('2026-10-28 재발방지: 같은 fingerprint는 한 번만 저장하고 나중 결과(승격)가 남는다', async () => {
+  let body;
+  const n = await storeCache(CFG, [
+    { fingerprint: 'fp1', result: { alert: false, category: '정상댓글' } },
+    { fingerprint: 'fp2', result: { alert: false } },
+    { fingerprint: 'fp1', result: { alert: true, category: '브랜드 적대/조롱', reason: '승격', priority: 'high' } },
+  ], HASH, async (url, init) => { body = JSON.parse(init.body); return { ok: true, status: 201 }; });
+  assert.equal(n, 2);
+  assert.deepEqual(body.map((row) => [row.fingerprint, row.alert, row.category]), [['fp1', true, '브랜드 적대/조롱'], ['fp2', false, '정상댓글']]);
+});
+
+test('storeCache 실패는 0을 반환하되 상태·본문을 로그로 남긴다', async () => {
+  const logged = [];
+  const original = console.error;
+  console.error = (message) => logged.push(String(message));
+  try {
+    const n = await storeCache(CFG, [{ fingerprint: 'fp', result: { alert: true } }], HASH, async () => ({
+      ok: false, status: 500, text: async () => '{"code":"21000","message":"ON CONFLICT DO UPDATE command cannot affect row a second time"}',
+    }));
+    assert.equal(n, 0);
+  } finally {
+    console.error = original;
+  }
+  assert.ok(logged.some((line) => /분류 캐시 저장 실패 500 rows=1: .*21000/.test(line)));
+});

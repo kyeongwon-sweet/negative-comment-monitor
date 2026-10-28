@@ -85,7 +85,12 @@ export async function lookupCache(config, reviewItems, classifierHash, fetchImpl
 export async function storeCache(config, entries, classifierHash, fetchImpl = fetch) {
   if (!cacheEnabled(config) || !classifierHash || !entries.length) return 0;
   try {
-    const rows = entries.map((e) => ({
+    // 2026-10-28 재발방지: 같은 fingerprint가 한 배열에 두 번 들어가면 ON CONFLICT DO UPDATE 전체가
+    // 거부된다(cardinality_violation → 500). 소유채널 강한 모델 승격 댓글은 1차 결과와 승격 결과가
+    // 둘 다 쌓이고, 같은 링크의 미러링 대상은 같은 댓글을 두 번 낸다. 나중 결과(승격)를 남긴다.
+    const byFingerprint = new Map();
+    for (const entry of entries) if (entry?.fingerprint) byFingerprint.set(entry.fingerprint, entry);
+    const rows = [...byFingerprint.values()].map((e) => ({
       fingerprint: e.fingerprint,
       classifier_hash: classifierHash,
       alert: e.result.alert === true,
@@ -101,8 +106,15 @@ export async function storeCache(config, entries, classifierHash, fetchImpl = fe
         body: JSON.stringify(rows),
       },
     );
-    return res.ok ? rows.length : 0;
-  } catch {
+    if (!res.ok) {
+      // best-effort는 유지하되 조용히 삼키지 않는다 — 저장이 계속 실패하면 매 회차 같은 댓글을 다시 LLM에 보낸다.
+      const detail = typeof res.text === 'function' ? await res.text().catch(() => '') : '';
+      console.error(`[cache] 분류 캐시 저장 실패 ${res.status ?? ''} rows=${rows.length}${detail ? `: ${String(detail).replace(/\s+/g, ' ').slice(0, 200)}` : ''}`);
+      return 0;
+    }
+    return rows.length;
+  } catch (error) {
+    console.error(`[cache] 분류 캐시 저장 예외: ${String(error?.message || error).slice(0, 200)}`);
     return 0;
   }
 }
