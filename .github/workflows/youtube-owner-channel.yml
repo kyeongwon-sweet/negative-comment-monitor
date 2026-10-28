@@ -67,8 +67,10 @@ jobs:
           # 이 강한 모델로 2차 판정한다. Anthropic 계정 크레딧 소진으로 무료 상위 Gemini 모델을 쓴다.
           # 대상은 이 회차 신규 분류 건뿐이라 볼륨·비용이 작다(강제 재분류 시 백로그 일괄 승격).
           # ⚠️gemini-3.1-pro·2.5-pro는 404(없는 모델), 3.1-pro-preview는 무료 한도 0(429) — 10-26 실측.
+          # 10-28 5q7z3FExo_Q dry-run: 3.7/3.8-flash=503 과부하, 3.5-flash=응답하나 명백 부정도 0건,
+          # 3.5-flash-lite=공개 잔존 부정 대부분 승격·잡담(크림치즈허니 등) 미승격 → 기본값.
           # 승격 실패는 summary.ownedEscalation.skipped + softDegraded로 드러난다.
-          OWNED_BRAND_ESCALATION_MODEL: ${{ inputs.escalation_model || 'gemini-3.8-flash' }}
+          OWNED_BRAND_ESCALATION_MODEL: ${{ inputs.escalation_model || 'gemini-3.5-flash-lite' }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}

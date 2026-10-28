@@ -655,7 +655,7 @@ test('5q7z3FExo_Q 재발방지: 강한 모델 호출이 실패(404 등 null)하�
   };
   const stats = {};
   const [risk] = await classifyCommentsHybrid(
-    [{ text: '제발 바이럴좀 그만해라' }],
+    [{ text: '요즘 이런 영상 너무 자주 보이네요' }],
     { brandName: '라라스윗', ownedChannelBrandHostilityScope: true, fullContextReview: true },
     { geminiKey: 'key', ownedBrandEscalationModel: 'gemini-3.8-flash' },
     strongFails,
@@ -665,4 +665,12 @@ test('5q7z3FExo_Q 재발방지: 강한 모델 호출이 실패(404 등 null)하�
   assert.equal(risk.engine, 'llm');
   assert.equal(stats.ownedEscalationSkipped, 1);
   assert.equal(stats.ownedEscalationSkipReason, 'escalation_call_failed');
+});
+
+test('5q7z3FExo_Q 회귀: 바이럴 피로·거부 표현은 소유 지면 하드넷으로 확정하고 중립 언급은 건드리지 않는다', async () => {
+  const normalLlm = async (items) => items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' }));
+  const target = { brandName: '라라스윗', ownedChannelBrandHostilityScope: true, fullContextReview: true };
+  const texts = ['제발 바이럴좀 그만해라ㅗㅗ', '라라스윗 제품 족족 다 바이럴하는거 보기싫다 좀 제발', '이거 바이럴 아니고 진짜 맛있음'];
+  const risks = await classifyCommentsHybrid(texts.map((text) => ({ text })), target, { anthropicKey: 'key' }, normalLlm);
+  assert.deepEqual(risks.map((r) => r.engine === 'keyword-hard-owned'), [true, true, false]);
 });
