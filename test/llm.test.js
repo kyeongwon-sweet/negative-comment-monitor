@@ -383,3 +383,17 @@ test('2026-10-14 결정: 운영 로더는 두 키가 다 있어도 Gemini 단독
   assert.ok(providerUrls.length > 0 && providerUrls.every((u) => u.includes('generativelanguage')), 'Anthropic 호출 없음');
   assert.equal(stats.persistentFailures || 0, 0, '죽은 폴백의 credit 영구오류가 생기지 않음');
 });
+
+test('2026-10-28 사람 판정: [소유채널] 정책에 유행 부정·광고 되묻기·장면/가격 반박·패드립과 유지 경계가 들어간다', async () => {
+  const prompts = [];
+  const fetchImpl = async (url, init) => {
+    prompts.push(JSON.parse(init.body).contents[0].parts[0].text);
+    return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '[]' }] } }] }) };
+  };
+  await classifyCommentsLLM([{ text: 'x', ownedChannelBrandHostilityScope: true }], { geminiKey: 'k', geminiRequestIntervalMs: 0 }, fetchImpl);
+  assert.match(prompts[0], /인지도를 부정하거나 깎아내리면 부정/);
+  assert.match(prompts[0], /이거 광고였어\?\?/);
+  assert.match(prompts[0], /사실이 아니라고 반박하면 부정/);
+  assert.match(prompts[0], /패드립/);
+  assert.match(prompts[0], /먹방 장르 자체에 대한 개인 의견/);
+});
