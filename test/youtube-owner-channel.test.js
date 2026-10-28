@@ -11,6 +11,7 @@ import {
   YOUTUBE_BRAND_HOSTILITY_CHANNEL_IDS,
 } from '../src/youtube-owner-channel.js';
 import { productGroup } from '../src/slack.js';
+import { readFileSync } from 'node:fs';
 
 function json(payload, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => payload, text: async () => JSON.stringify(payload) };
@@ -496,4 +497,19 @@ test('2026-10-28 재발방지: 같은 영상 state 행이 두 번 들어와도 �
     })),
     /UPSERT failed \(500\): .*57014/,
   );
+});
+
+test('5q7z3FExo_Q 재발방지: 워크플로의 OWNED_BRAND_ESCALATION_MODEL이 소유채널 설정까지 전달된다', () => {
+  // 09-21~10-28: 워크플로 env는 있었지만 소유채널 설정(loadMetaAdsConfig 기반)이 이 키를 읽지 않아
+  // 강한 모델 2차 판정이 한 번도 돌지 않았다. 워크플로 파일 값을 그대로 넣어 배선을 검증한다.
+  const yml = readFileSync(new URL('../.github/workflows/youtube-owner-channel.yml', import.meta.url), 'utf8');
+  const model = yml.match(/^\s+OWNED_BRAND_ESCALATION_MODEL:\s*(\S+)\s*$/m)?.[1];
+  assert.ok(model, 'youtube-owner-channel.yml에 OWNED_BRAND_ESCALATION_MODEL이 있어야 함');
+  const config = loadYouTubeOwnerChannelConfig({
+    SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'db',
+    SLACK_BOT_TOKEN: 'slack', GOOGLE_ADS_CLIENT_ID: 'client', GOOGLE_ADS_CLIENT_SECRET: 'secret',
+    GEMINI_API_KEY: 'gem', OWNED_BRAND_ESCALATION_MODEL: model,
+  });
+  assert.equal(config.ownedBrandEscalationModel, model);
+  assert.ok(config.geminiKey, '강한 Gemini 모델 호출에 필요한 키도 전달돼야 함');
 });

@@ -157,6 +157,18 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
   );
   summary.llmDeferredComments = Number(llmStats.llmDeferredComments || 0);
   summary.llmDeferredVideos = deferredVideoIds.size;
+  summary.ownedEscalation = {
+    checked: Number(llmStats.ownedEscalationChecked || 0),
+    promoted: Number(llmStats.ownedEscalatedAlerts || 0),
+    skipped: Number(llmStats.ownedEscalationSkipped || 0),
+  };
+  if (summary.ownedEscalation.skipped > 0) {
+    // 강한 모델 2차 판정이 꺼진 채로 돌면 소유 게이트가 약한 LLM 부정을 억제해 공개로 남긴다.
+    summary.softDegraded.push({
+      stage: 'owned-escalation',
+      error: `${llmStats.ownedEscalationSkipReason || 'disabled'}; skipped=${summary.ownedEscalation.skipped}`,
+    });
+  }
   let classifierHash = null;
   try { classifierHash = computeClassifierHash(config); } catch { classifierHash = null; }
   const threads = new Map();

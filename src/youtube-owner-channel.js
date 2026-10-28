@@ -91,6 +91,10 @@ export function loadYouTubeOwnerChannelConfig(env = process.env, now = Date.now(
     googleAdsClientId: required(env, 'GOOGLE_ADS_CLIENT_ID'),
     googleAdsClientSecret: required(env, 'GOOGLE_ADS_CLIENT_SECRET'),
     youtubeApiBase: String(env.YOUTUBE_API_BASE || 'https://www.googleapis.com/youtube/v3').trim().replace(/\/$/, ''),
+    // 소유채널 강한 모델 2차 판정(hybrid-classify). base(loadMetaAdsConfig)는 config.js loadConfig와
+    // 별개라 여기서 직접 읽어야 한다 — 09-21~10-28 이 줄이 없어 워크플로 env가 있어도 승격이 한 번도
+    // 돌지 않았고, 약한 LLM '부정'이 소유 게이트에 억제돼 공개 잔존했다(5q7z3FExo_Q).
+    ownedBrandEscalationModel: String(env.OWNED_BRAND_ESCALATION_MODEL || '').trim(),
     youtubeAdsMaxThreadPages: positiveInt(env.YOUTUBE_OWNER_MAX_THREAD_PAGES, 10, 100),
     youtubeAdsMaxReplyPages: positiveInt(env.YOUTUBE_OWNER_MAX_REPLY_PAGES, 100, 100),
     youtubeOwnerQuickMaxThreadPages: positiveInt(env.YOUTUBE_OWNER_QUICK_MAX_THREAD_PAGES, 4, 10),

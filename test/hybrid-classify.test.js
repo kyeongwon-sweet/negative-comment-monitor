@@ -621,3 +621,27 @@ test('안전장치: 분류기가 category=정상으로 낸 결과는 alert=true�
   assert.equal(risk.alert, false);
   assert.equal(risk.normalCategoryGuard, true);
 });
+
+test('5q7z3FExo_Q 재발방지: 강한 모델 미설정이면 승격 대상 건수를 stats에 남긴다(조용한 무력화 금지)', async () => {
+  const weakNegative = async (items) => items.map(() => ({ alert: true, category: '광고/바이럴 의심', reason: '광고 피로', priority: 'normal' }));
+  const stats = {};
+  await classifyCommentsHybrid(
+    [{ text: '제발 바이럴좀 그만해라' }],
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true, fullContextReview: true },
+    { anthropicKey: 'key' },
+    weakNegative,
+    stats,
+  );
+  assert.equal(stats.ownedEscalationSkipped, 1);
+  assert.equal(stats.ownedEscalationSkipReason, 'escalation_model_unset');
+
+  const keyless = {};
+  await classifyCommentsHybrid(
+    [{ text: '제발 바이럴좀 그만해라' }],
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true, fullContextReview: true },
+    { anthropicKey: 'key', ownedBrandEscalationModel: 'gemini-3.1-pro' },
+    weakNegative,
+    keyless,
+  );
+  assert.equal(keyless.ownedEscalationSkipReason, 'escalation_key_missing');
+});

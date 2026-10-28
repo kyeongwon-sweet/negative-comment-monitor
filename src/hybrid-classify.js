@@ -256,7 +256,7 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
   const escalationIsAnthropic = /^claude/i.test(escalationModel);
   const escalationKeyReady = escalationModel
     && (escalationIsAnthropic ? Boolean(config.anthropicKey) : Boolean(config.geminiKey));
-  if (escalationKeyReady) {
+  {
     const escRefs = [];
     for (let e = 0; e < prepared.length; e += 1) {
       if (entries[e]?.target?.ownedChannelBrandHostilityScope !== true) continue;
@@ -277,7 +277,12 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
         escRefs.push({ entry: e, index, comment });
       });
     }
-    if (escRefs.length) {
+    // 승격 대상이 있는데 모델·키가 없으면 조용히 넘어가지 않고 건수를 남긴다(호출부가 degraded로 표면화).
+    if (escRefs.length && !escalationKeyReady && stats) {
+      stats.ownedEscalationSkipped = (stats.ownedEscalationSkipped || 0) + escRefs.length;
+      stats.ownedEscalationSkipReason = escalationModel ? 'escalation_key_missing' : 'escalation_model_unset';
+    }
+    if (escRefs.length && escalationKeyReady) {
       const strongConfig = escalationIsAnthropic
         ? { ...config, llmProvider: 'anthropic', geminiKey: '', anthropicModel: escalationModel }
         : { ...config, llmProvider: 'gemini', anthropicKey: '', geminiModel: escalationModel };
