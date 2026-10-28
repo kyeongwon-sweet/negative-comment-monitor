@@ -196,6 +196,10 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
     const seen = config.dryRun ? new Set() : await loadSeenFingerprints(config, fingerprints, fetchImpl);
     for (let index = 0; index < alerts.length; index += 1) {
       if (seen.has(fingerprints[index])) continue;
+      if (config.dryRun) {
+        // 공개 레포 로그: 본문 없이 영상·댓글 ID와 판정만 남겨 dry-run 결과를 대조할 수 있게 한다.
+        console.error(`[youtube-owner-channel:dry-alert] ${target.youtubeVideoId || ''} ${alerts[index].id || ''} engine=${alerts[index].risk.engine || ''} category=${alerts[index].risk.category || ''}`);
+      }
       if (!config.dryRun) {
         if (config.youtubeOwnerAlertDelayMs > 0) await wait(config.youtubeOwnerAlertDelayMs);
         const threadTs = await threadFor(target);
