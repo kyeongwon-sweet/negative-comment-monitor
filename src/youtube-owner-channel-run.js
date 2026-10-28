@@ -131,6 +131,8 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
     channelFailures: collected.channelFailures,
     degraded: [],
     softDegraded: [],
+    ownerGateSuppressed: 0,
+    ownerGateUnreviewed: 0,
   };
   const coverage = summarizeOwnerOAuthCoverage(collected);
   summary.oauthCoverage = coverage;
@@ -164,7 +166,8 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
   };
   if (summary.ownedEscalation.skipped > 0) {
     // 강한 모델 2차 판정이 꺼진 채로 돌면 소유 게이트가 약한 LLM 부정을 억제해 공개로 남긴다.
-    summary.softDegraded.push({
+    // softDegraded는 로그에만 남고 Slack에 안 간다 → hard degraded로 step 실패 → 보조 모니터 실패 알림.
+    summary.degraded.push({
       stage: 'owned-escalation',
       error: `${llmStats.ownedEscalationSkipReason || 'disabled'}; skipped=${summary.ownedEscalation.skipped}`,
     });
@@ -189,6 +192,13 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
     const { target, comments } = collected.entries[entryIndex];
     const risks = risksPerEntry[entryIndex] || [];
     const alertRisks = suppressLowConfidenceOwnerRisks(target, comments, risks);
+    for (const risk of alertRisks) {
+      if (risk?.ownerLowConfidenceSuppressed !== true) continue;
+      summary.ownerGateSuppressed += 1;
+      // 불변식: 이번 회차 새 LLM '부정'을 게이트가 억제하려면 강한 모델이 먼저 봤어야 한다.
+      // 원인(설정 누락·모델 404·코드 변경)과 무관하게 결과로 감시한다.
+      if (risk.engine === 'llm' && risk.ownedEscalationReviewed !== true) summary.ownerGateUnreviewed += 1;
+    }
     const alerts = comments
       .map((comment, index) => ({ ...comment, risk: alertRisks[index] || { alert: false } }))
       .filter((comment) => comment.risk.alert);
@@ -212,6 +222,13 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
       summary.sentAlerts += 1;
     }
 
+  }
+
+  if (summary.ownerGateUnreviewed > 0) {
+    summary.degraded.push({
+      stage: 'owner-gate-unreviewed',
+      error: `${summary.ownerGateUnreviewed} new LLM negative(s) suppressed without strong-model review`,
+    });
   }
 
   // 과부하는 '이번 회차에 우연히 읽은 댓글 묶음'이 아니라 최근 감시 기간의

@@ -298,16 +298,42 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
       }
       // 실패는 1차 결과를 유지하지만 '무해'하지 않다: 약한 LLM 부정은 소유 게이트에 억제된다.
       // 10-28 확인: gemini-3.1-pro(404)로 승격이 매 회차 실패했는데 LLM health는 1차 성공 때문에 정상이었다.
-      if (!Array.isArray(escResults) && stats) {
-        stats.ownedEscalationSkipped = (stats.ownedEscalationSkipped || 0) + escRefs.length;
-        stats.ownedEscalationSkipReason = 'escalation_call_failed';
+      if (!Array.isArray(escResults)) {
+        if (stats) {
+          stats.ownedEscalationSkipped = (stats.ownedEscalationSkipped || 0) + escRefs.length;
+          stats.ownedEscalationSkipReason = 'escalation_call_failed';
+        }
+        // 1차 '부정'을 그대로 두면 게이트가 억제하고, 캐시에 굳어 다음 회차엔 승격 대상(engine==='llm')에서도
+        // 빠져 영구 공개 잔존한다. 기존 LLM 장애와 같이 보류(scan checkpoint 미갱신)해 다음 회차에 재판정한다.
+        // 1차 '정상'은 1차 결과를 유지한다(구제 기회만 놓침, 매 회차 재스캔 비용 방지).
+        const deferredCacheFps = new Set();
+        let deferred = 0;
+        for (const { entry, index } of escRefs) {
+          const current = prepared[entry].out[index];
+          if (current?.alert !== true) continue;
+          prepared[entry].out[index] = llmDeferredResult(current);
+          deferredCacheFps.add(classificationCacheFingerprint(entries[entry].target, entries[entry].comments[index]));
+          deferred += 1;
+        }
+        for (let i = toStore.length - 1; i >= 0; i -= 1) {
+          if (deferredCacheFps.has(toStore[i].fingerprint)) toStore.splice(i, 1);
+        }
+        if (stats && deferred) {
+          stats.llmDeferredComments = (stats.llmDeferredComments || 0) + deferred;
+          stats.llmDeferredBatches = (stats.llmDeferredBatches || 0) + 1;
+          stats.ownedEscalationDeferred = (stats.ownedEscalationDeferred || 0) + deferred;
+        }
       }
       if (Array.isArray(escResults)) {
         let promotedCount = 0;
         for (let k = 0; k < escRefs.length; k += 1) {
           const verdict = escResults[k];
-          if (!verdict || verdict.alert !== true) continue;
           const { entry, index } = escRefs[k];
+          if (!verdict || verdict.alert !== true) {
+            // 강한 모델이 본 뒤 '정상'이면 게이트 억제가 정당하다(run의 미검토 억제 감시가 이 표시를 본다).
+            if (verdict) prepared[entry].out[index] = { ...prepared[entry].out[index], ownedEscalationReviewed: true };
+            continue;
+          }
           const promoted = {
             alert: true,
             category: verdict.category && verdict.category !== '정상댓글' ? verdict.category : '브랜드 적대/조롱',

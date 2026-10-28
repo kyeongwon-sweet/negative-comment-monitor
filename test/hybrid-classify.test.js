@@ -662,7 +662,11 @@ test('5q7z3FExo_Q 재발방지: 강한 모델 호출이 실패(404 등 null)하�
     stats,
   );
   assert.equal(call, 2, '강한 모델 호출을 시도해야 함');
-  assert.equal(risk.engine, 'llm');
+  // 1차 '부정'은 게이트 억제·캐시 고착 대신 보류 → 다음 회차 재판정.
+  assert.equal(risk.engine, 'llm-deferred');
+  assert.equal(risk.alert, false);
+  assert.equal(stats.ownedEscalationDeferred, 1);
+  assert.equal(stats.llmDeferredComments, 1);
   assert.equal(stats.ownedEscalationSkipped, 1);
   assert.equal(stats.ownedEscalationSkipReason, 'escalation_call_failed');
 });
@@ -673,4 +677,49 @@ test('5q7z3FExo_Q 회귀: 바이럴 피로·거부 표현은 소유 지면 하�
   const texts = ['제발 바이럴좀 그만해라ㅗㅗ', '라라스윗 제품 족족 다 바이럴하는거 보기싫다 좀 제발', '이거 바이럴 아니고 진짜 맛있음'];
   const risks = await classifyCommentsHybrid(texts.map((text) => ({ text })), target, { anthropicKey: 'key' }, normalLlm);
   assert.deepEqual(risks.map((r) => r.engine === 'keyword-hard-owned'), [true, true, false]);
+});
+
+test('5q7z3FExo_Q 재발방지: 승격 실패로 보류된 1차 부정은 분류 캐시에 저장하지 않는다(다음 회차 재판정)', async () => {
+  let call = 0;
+  const strongFails = async (items) => {
+    call += 1;
+    if (call > 1) return null;
+    return items.map((item) => (item.text.includes('부정')
+      ? { alert: true, category: '광고/바이럴 의심', reason: 'r', priority: 'normal' }
+      : { alert: false, category: '정상댓글', reason: '', priority: 'normal' }));
+  };
+  const posts = [];
+  const fetchImpl = async (url, init = {}) => {
+    if (init.method === 'POST' && String(url).includes('comment_classification_cache')) posts.push(JSON.parse(init.body));
+    return { ok: true, status: 200, json: async () => [], text: async () => '[]' };
+  };
+  const target = { platform: 'youtube', url: 'https://www.youtube.com/watch?v=v1', postKey: 'yt:v1', brandName: '라라스윗', ownedChannelBrandHostilityScope: true, fullContextReview: true };
+  const comments = [{ id: 'a', text: '요즘 이런 영상 부정 느낌' }, { id: 'b', text: '요즘 이런 영상 좋네요' }];
+  const [risks] = await classifyTargetsBatched(
+    [{ target, comments }],
+    { ...CACHE_CFG, geminiKey: 'key', ownedBrandEscalationModel: 'gemini-3.5-flash-lite' },
+    strongFails, {}, fetchImpl,
+  );
+  assert.equal(risks[0].engine, 'llm-deferred');
+  assert.equal(risks[1].engine, 'llm');
+  const stored = posts.flat().map((row) => row.fingerprint);
+  assert.equal(stored.includes(classificationCacheFingerprint(target, comments[0])), false, '보류건은 캐시에 굳으면 안 됨');
+  assert.equal(stored.includes(classificationCacheFingerprint(target, comments[1])), true, '1차 정상은 그대로 캐시');
+});
+
+test('5q7z3FExo_Q 재발방지: 강한 모델이 본 뒤 정상이면 검토 표시가 남아 게이트 억제가 정당한 억제로 구분된다', async () => {
+  let call = 0;
+  const strongSaysNo = async (items) => {
+    call += 1;
+    return items.map(() => (call === 1
+      ? { alert: true, category: '광고/바이럴 의심', reason: 'r', priority: 'normal' }
+      : { alert: false, category: '정상댓글', reason: '', priority: 'normal' }));
+  };
+  const target = { brandName: '라라스윗', ownedChannelBrandHostilityScope: true, fullContextReview: true };
+  const comments = [{ text: '요즘 이런 영상 너무 자주 보이네요' }];
+  const risks = await classifyCommentsHybrid(comments, target, { geminiKey: 'key', ownedBrandEscalationModel: 'gemini-3.5-flash-lite' }, strongSaysNo);
+  assert.equal(risks[0].ownedEscalationReviewed, true);
+  const [gated] = suppressLowConfidenceOwnerRisks(target, comments, risks);
+  assert.equal(gated.ownerLowConfidenceSuppressed, true);
+  assert.equal(gated.ownedEscalationReviewed, true, '게이트 억제 후에도 검토 표시가 남아야 run 불변식이 오탐하지 않음');
 });
