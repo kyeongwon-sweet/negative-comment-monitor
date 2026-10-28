@@ -1,0 +1,36 @@
+name: Owned-channel policy eval
+
+# 소유 YouTube 사람 판정(test/fixtures/owned-channel-policy-golden.json)을 실제 운영 분류 경로
+# (약한 모델 → 강한 모델 2차 → 하드넷 → 소유 게이트)에 통과시켜 일치 여부를 본다.
+# 프롬프트(src/llm.js)·하드넷(src/keywords.js)·모델을 바꾸면 반드시 돌린다. 불일치 1건이라도 있으면 실패.
+# 로그엔 케이스 id·판정만 남는다(공개 레포, 댓글 본문 없음). Gemini 호출 약 4회.
+on:
+  workflow_dispatch:
+    inputs:
+      weak_model:
+        description: 1차 모델(비우면 운영 기본값)
+        required: false
+        type: string
+      escalation_model:
+        description: 강한 2차 모델(비우면 운영 기본값)
+        required: false
+        type: string
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts
+      - name: Run golden-set eval
+        run: node scripts/owned-policy-eval.mjs
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ inputs.weak_model || 'gemini-3.1-flash-lite' }}
+          OWNED_BRAND_ESCALATION_MODEL: ${{ inputs.escalation_model || 'gemini-3.5-flash-lite' }}

@@ -1,0 +1,32 @@
+{
+  "description": "소유 YouTube 채널 댓글에 대해 사람이 직접 내린 숨김/유지 판정. 분류 프롬프트·하드넷·모델을 바꾸기 전후로 scripts/owned-policy-eval.mjs(워크플로 owned-policy-eval.yml)로 실제 파이프라인을 돌려 이 판정과 맞는지 확인한다. 로그에는 id만 찍는다(공개 레포).",
+  "cases": [
+    { "id": "h01-ad-scene-rebuttal", "expect": "hide", "decidedAt": "2026-10-28", "text": "애초에 세븐에 라라스윗 안팔지않냐… 처음에 나온건뭐냐" },
+    { "id": "h02-parent-insult", "expect": "hide", "decidedAt": "2026-10-28", "text": "부모님이 없다는데요?" },
+    { "id": "h03-trend-never-seen", "expect": "hide", "decidedAt": "2026-10-28", "text": "한번도 못봤는데" },
+    { "id": "h04-trend-didnt-know", "expect": "hide", "decidedAt": "2026-10-28", "text": "이런게 있는지도 몰랐는데" },
+    { "id": "h05-trend-only-me", "expect": "hide", "decidedAt": "2026-10-28", "text": "이런거 특: 나만 모름" },
+    { "id": "h06-trend-who-eats", "expect": "hide", "decidedAt": "2026-10-28", "text": "그래서 이거 누가 먹음?" },
+    { "id": "h07-trend-creator-unknown", "expect": "hide", "decidedAt": "2026-10-28", "text": "내 인생 처음보는 먹방 유튜버인데" },
+    { "id": "h08-trend-first-time", "expect": "hide", "decidedAt": "2026-10-28", "text": "첨봄 진짜" },
+    { "id": "h09-trend-so-who", "expect": "hide", "decidedAt": "2026-10-28", "text": "누군데 그래서" },
+    { "id": "h10-trend-ranking", "expect": "hide", "decidedAt": "2026-10-28", "text": "먹방 유튭 순위가 왜 저모냥이지" },
+    { "id": "h11-ad-copy-paste", "expect": "hide", "decidedAt": "2026-10-28", "text": "복붙해서 나오것네" },
+    { "id": "h12-was-this-an-ad", "expect": "hide", "decidedAt": "2026-10-28", "text": "이거 광고였어??" },
+    { "id": "h13-price-rebuttal", "expect": "hide", "decidedAt": "2026-10-28", "text": "요즘은 3000원이던데" },
+    { "id": "h14-outdated", "expect": "hide", "decidedAt": "2026-10-28", "text": "언제쩍이냐" },
+    { "id": "h15-viral-fatigue", "expect": "hide", "decidedAt": "2026-10-28", "text": "제발 바이럴좀 그만해라" },
+    { "id": "h16-ad-annoying", "expect": "hide", "decidedAt": "2026-10-12", "text": "짜증나게 광고하네" },
+    { "id": "h17-competitor", "expect": "hide", "decidedAt": "2026-10-12", "text": "허니버터만하겠냐?" },
+    { "id": "k01-what-is-this", "expect": "keep", "decidedAt": "2026-10-28", "text": "이게 뭔데" },
+    { "id": "k02-what-is-this-student", "expect": "keep", "decidedAt": "2026-10-28", "text": "고1인데 이게 뭔데" },
+    { "id": "k03-mukbang-genre", "expect": "keep", "decidedAt": "2026-10-28", "text": "먹방 왜 보는지 모르겠다" },
+    { "id": "k04-eating-joke", "expect": "keep", "decidedAt": "2026-10-28", "text": "밥은먹고사냐" },
+    { "id": "k05-stock-observation", "expect": "keep", "decidedAt": "2026-10-28 (paraphrase)", "text": "편의점에 엄청 쌓여있던데" },
+    { "id": "k06-flavor-mention", "expect": "keep", "decidedAt": "left-visible-2026-10-28", "text": "크림치즈허니" },
+    { "id": "k07-agree-reply", "expect": "keep", "decidedAt": "left-visible-2026-10-28", "text": "ㅋㅋ저도 그생각함" },
+    { "id": "k08-first-time-curious", "expect": "keep", "decidedAt": "control", "text": "처음 보는데 맛있어 보여요 먹어볼게요" },
+    { "id": "k09-plain-ad-recognition", "expect": "keep", "decidedAt": "exemplar", "text": "라라스윗 광고네 여기도" },
+    { "id": "k10-price-question", "expect": "keep", "decidedAt": "exemplar", "text": "근데 3천원인데 왜 개당 1천원이에요??" }
+  ]
+}
