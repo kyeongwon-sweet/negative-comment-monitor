@@ -775,7 +775,7 @@ test('2026-10-28 광고 확대: YouTube 광고(소유+인지 스코프)의 1차 
 test('2026-10-28 사람 판정 회귀: 유행 부정·광고 재탕 냉소는 소유 지면 하드넷, 단순 질문·호기심은 건드리지 않는다', async () => {
   const normalLlm = async (items) => items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' }));
   const target = { brandName: '라라스윗', ownedChannelBrandHostilityScope: true, fullContextReview: true };
-  const texts = ['그래서 이거 누가 먹음?', '이런거 특: 나만 모름', '복붙해서 나오것네', '언제쩍이냐', '이게 뭔데', '처음 보는데 맛있어 보여요'];
+  const texts = ['그래서 이거 누가 먹음?', '이런거 특: 나만 모름', '복붙해서 나오것네', '언제쩍이냐', '허니버터만하겠냐?', '이게 뭔데', '처음 보는데 맛있어 보여요'];
   const risks = await classifyCommentsHybrid(texts.map((text) => ({ text })), target, { anthropicKey: 'key' }, normalLlm);
-  assert.deepEqual(risks.map((r) => r.engine === 'keyword-hard-owned'), [true, true, true, true, false, false]);
+  assert.deepEqual(risks.map((r) => r.engine === 'keyword-hard-owned'), [true, true, true, true, true, false, false]);
 });

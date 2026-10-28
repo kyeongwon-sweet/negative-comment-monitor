@@ -44,9 +44,11 @@ export async function runOwnedPolicyEval(cases, config, classifier = classifyCom
   const risks = await classifyCommentsHybrid(comments, EVAL_TARGET, config, classifier, stats);
   const final = suppressLowConfidenceOwnerRisks(EVAL_TARGET, comments, risks);
   // 단계별 진단(어느 모델이 놓쳤는지). 운영 판정은 위 final이다.
-  const weak = await classifier(comments, { ...config, ownedBrandEscalationModel: '' }) || [];
+  // 운영처럼 스코프 플래그를 붙여야 [소유채널] 정책이 프롬프트에 들어간다.
+  const scoped = comments.map((comment) => ({ ...comment, ownedChannelBrandHostilityScope: true }));
+  const weak = await classifier(scoped, { ...config, ownedBrandEscalationModel: '' }) || [];
   const strong = config.ownedBrandEscalationModel
-    ? await classifier(comments, { ...config, geminiModel: config.ownedBrandEscalationModel }) || []
+    ? await classifier(scoped, { ...config, geminiModel: config.ownedBrandEscalationModel }) || []
     : [];
   const rows = cases.map((item, index) => ({
     id: item.id,
