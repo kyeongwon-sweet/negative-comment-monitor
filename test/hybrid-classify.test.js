@@ -546,7 +546,7 @@ test('read-only 감사 분류는 실분류해도 운영 캐시를 쓰지 않는�
 
 test('gXfkWldB0u4 재발방지: 약한 LLM 부정이 소유 게이트에 억제될 건은 강한 모델이 동의하면 최종까지 살아남는다', async () => {
   const target = { brandName: '라라스윗', ownedChannelBrandHostilityScope: true, fullContextReview: true };
-  const comments = [{ text: '허니버터만하겠냐?' }, { text: '광고 의 신개념.' }];
+  const comments = [{ text: '허니버터가 훨 낫지 않냐?' }, { text: '광고 의 신개념.' }];
   // 1차(약한)=둘 다 부정(브랜드 미명시라 게이트 억제 대상), 2차(강한)=첫째만 부정.
   let call = 0;
   const staged = async (items) => {
