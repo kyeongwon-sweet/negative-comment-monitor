@@ -179,7 +179,22 @@ export async function loadOwnerVideoStates(config, fetchImpl = fetch) {
   return new Map(rows.map((row) => [String(row.video_id), row]));
 }
 
-export async function saveOwnerVideoStates(config, rows, fetchImpl = fetch) {
+// 같은 (channel_id, video_id)가 한 배열에 두 번 들어가면 Postgres가 ON CONFLICT DO UPDATE 전체를
+// 거부한다(cardinality_violation → PostgREST 500). 업로드 목록을 페이지로 읽는 사이 새 영상이
+// 올라오면 같은 영상이 두 페이지에 걸쳐 잡힐 수 있다. 마지막 행을 남기고 합친다.
+export function dedupeOwnerStateRows(rows) {
+  const byKey = new Map();
+  for (const row of rows || []) {
+    byKey.set(`${String(row?.channel_id || '').trim()}\u001f${String(row?.video_id || '').trim()}`, row);
+  }
+  return [...byKey.values()];
+}
+
+export async function saveOwnerVideoStates(config, inputRows, fetchImpl = fetch) {
+  const rows = dedupeOwnerStateRows(inputRows);
+  if (rows.length < (inputRows || []).length) {
+    console.error(`[youtube-owner-channel] state 중복 ${inputRows.length - rows.length}행 병합 후 저장`);
+  }
   if (!rows.length) return 0;
   const response = await fetchImpl(
     `${config.supabaseUrl}/rest/v1/youtube_owner_video_state?on_conflict=channel_id,video_id`,
@@ -192,7 +207,11 @@ export async function saveOwnerVideoStates(config, rows, fetchImpl = fetch) {
       body: JSON.stringify(rows),
     },
   );
-  if (!response.ok) throw new Error(`YouTube owner state UPSERT failed (${response.status})`);
+  if (!response.ok) {
+    // 상태 행에는 댓글 원문이 없다(영상 ID·제목·카운트). 원인 진단용으로 PostgREST 오류 본문을 남긴다.
+    const detail = typeof response.text === 'function' ? await response.text().catch(() => '') : '';
+    throw new Error(`YouTube owner state UPSERT failed (${response.status})${detail ? `: ${String(detail).replace(/\s+/g, ' ').slice(0, 300)}` : ''}`);
+  }
   return rows.length;
 }
 

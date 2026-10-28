@@ -478,3 +478,22 @@ test('2026-10-16 재발방지: 소유채널 로더 담당자 = 단일 정본(loa
   assert.equal(route.assignee, 'U_KIMBD');
   assert.equal(ownerThreadRoute({ productName: 'JD멜', channelCategory: '위성채널' }, owner).assignee, 'U_KIMBN');
 });
+
+test('2026-10-28 재발방지: 같은 영상 state 행이 두 번 들어와도 한 번만 upsert하고, 실패 시 오류 본문을 남긴다', async () => {
+  const { saveOwnerVideoStates, dedupeOwnerStateRows } = await import('../src/youtube-owner-channel.js');
+  const row = (video, count) => ({ channel_id: 'UC1', video_id: video, comment_count: count });
+  assert.deepEqual(dedupeOwnerStateRows([row('a', 1), row('b', 2), row('a', 3)]), [row('a', 3), row('b', 2)]);
+  let sent;
+  const saved = await saveOwnerVideoStates({ supabaseUrl: 'https://db', supabaseKey: 'k' }, [row('a', 1), row('a', 3)], async (url, init) => {
+    sent = JSON.parse(init.body);
+    return { ok: true, status: 201, text: async () => '' };
+  });
+  assert.equal(saved, 1);
+  assert.deepEqual(sent, [row('a', 3)]);
+  await assert.rejects(
+    saveOwnerVideoStates({ supabaseUrl: 'https://db', supabaseKey: 'k' }, [row('a', 1)], async () => ({
+      ok: false, status: 500, text: async () => '{"code":"57014","message":"canceling statement due to statement timeout"}',
+    })),
+    /UPSERT failed \(500\): .*57014/,
+  );
+});
