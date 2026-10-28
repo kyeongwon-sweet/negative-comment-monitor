@@ -89,3 +89,23 @@ test('예산 원장 장애는 fail-open으로 실제 분류를 계속한다', as
   assert.equal(geminiCalls, 1);
   assert.equal(out[0].alert, false);
 });
+
+test('2026-10-28: 강한 모델 승격은 별도 장부(gemini-escalation:)로 세고 1차 총량을 쓰지 않는다', async () => {
+  const requests = [];
+  const out = await claimGeminiRequestBudget({ ...BASE, geminiQuotaClass: 'escalation' }, async (input, init = {}) => {
+    requests.push({ url: String(input), init });
+    if (init.method === 'HEAD') return countResponse(String(input).includes('gemini-escalation') ? 10 : 479);
+    return { ok: true, status: 201 };
+  }, Date.parse('2026-10-28T03:00:00Z'));
+  assert.equal(out.allowed, true, '1차 총량이 479여도 승격 장부는 별개');
+  const heads = requests.filter((item) => item.init.method === 'HEAD').map((item) => decodeURIComponent(item.url));
+  assert.equal(heads.length, 1);
+  assert.match(heads[0], /gemini-escalation:/);
+  const claim = requests.find((item) => item.init.method === 'POST');
+  assert.match(JSON.parse(claim.init.body).run_key, /^gemini-escalation:/);
+  assert.doesNotMatch(JSON.parse(claim.init.body).run_key, /^gemini-request:/, '1차 총량 접두어와 겹치면 안 됨');
+
+  const full = await claimGeminiRequestBudget({ ...BASE, geminiQuotaClass: 'escalation' }, async () => countResponse(200), Date.parse('2026-10-28T03:00:00Z'));
+  assert.equal(full.allowed, false);
+  assert.equal(full.reason, 'escalation');
+});

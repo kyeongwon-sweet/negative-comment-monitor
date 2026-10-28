@@ -259,7 +259,12 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
   {
     const escRefs = [];
     for (let e = 0; e < prepared.length; e += 1) {
-      if (entries[e]?.target?.ownedChannelBrandHostilityScope !== true) continue;
+      const target = entries[e]?.target || {};
+      // 승격 대상 지면: 소유채널 브랜드 적대 스코프 + 인지광고(Meta·TikTok·YouTube 광고, 10-28 확대).
+      if (target.ownedChannelBrandHostilityScope !== true && target.awarenessAdScope !== true) continue;
+      // 소유 게이트(suppressLowConfidenceOwnerRisks)는 소유채널 run에만 있다. 광고 지면의 1차 '부정'은
+      // 그대로 알림되므로 강한 모델로 다시 보낼 이유가 없다(예산 낭비·실패 시 보류 지연만 생김).
+      const ownerGateApplies = target.ownedChannelBrandHostilityScope === true && target.awarenessAdScope !== true;
       const comments = Array.isArray(entries[e].comments) ? entries[e].comments : [];
       prepared[e].out.forEach((risk, index) => {
         // 이 회차 LLM으로 새로 분류된 건만. 사람 FP·보류·캐시 히트·키워드는 제외.
@@ -269,7 +274,7 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
         if (!risk || risk.engine !== 'llm') return;
         const comment = comments[index];
         if (!comment) return;
-        if (risk.alert === true && isHighConfidenceOwnerRisk(entries[e].target, comment, risk)) return;
+        if (risk.alert === true && (!ownerGateApplies || isHighConfidenceOwnerRisk(target, comment, risk))) return;
         // 소유채널 미탐은 대부분 우리 브랜드명을 안 부르는 미묘 부정(경쟁제품 우위·짝퉁, 광고 냉소·피로,
         // "알고리즘에서 나가"류)이다. 브랜드 본문언급 여부와 무관하게, 이 회차 LLM '정상'이 된 소유댓글은
         // 전부 강한 모델로 2차 판정한다. 하드넷(engine!=='llm')·캐시 히트·기알림은 위에서 이미 제외돼
@@ -285,12 +290,16 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
     if (escRefs.length && escalationKeyReady) {
       const strongConfig = escalationIsAnthropic
         ? { ...config, llmProvider: 'anthropic', geminiKey: '', anthropicModel: escalationModel }
-        : { ...config, llmProvider: 'gemini', anthropicKey: '', geminiModel: escalationModel };
+        // 강한 모델은 모델별 무료 한도가 따로다. 1차 실시간 감시 예산(gemini-request:*)을 갉아먹지 않게
+        // 별도 rolling 예산(gemini-escalation:*)으로 센다(gemini-budget.js).
+        : { ...config, llmProvider: 'gemini', anthropicKey: '', geminiModel: escalationModel, geminiQuotaClass: 'escalation' };
       let escResults = null;
       try {
         escResults = await llmClassifier(escRefs.map((r) => ({
           ...r.comment,
-          ownedChannelBrandHostilityScope: true,
+          // 1차와 같은 지면 정책으로 판정한다(인지광고=엄격 [인지광고], 소유=[소유채널]). 소유 강제 시
+          // Meta·TikTok 광고 댓글이 소유채널 정책으로 판정된다.
+          ownedChannelBrandHostilityScope: entries[r.entry]?.target?.ownedChannelBrandHostilityScope === true,
           awarenessAdScope: entries[r.entry]?.target?.awarenessAdScope === true,
         })), strongConfig, undefined, stats);
       } catch {

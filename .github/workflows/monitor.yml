@@ -215,6 +215,8 @@ jobs:
           GEMINI_QUOTA_CLASS: ${{ github.event_name == 'workflow_dispatch' && !inputs.monitor_chain && 'bulk' || 'live' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.1-flash-lite
+          # 1차가 정상으로 본 광고 댓글만 강한 모델로 2차 판정(미탐 구제, 10-28). 별도 예산 gemini-escalation:*
+          OWNED_BRAND_ESCALATION_MODEL: gemini-3.5-flash-lite
           GEMINI_REQUEST_INTERVAL_MS: '1500'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5-20251001
@@ -262,6 +264,8 @@ jobs:
           GEMINI_QUOTA_CLASS: ${{ github.event_name == 'workflow_dispatch' && !inputs.monitor_chain && 'bulk' || 'live' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.1-flash-lite
+          # 1차가 정상으로 본 광고 댓글만 강한 모델로 2차 판정(미탐 구제, 10-28). 별도 예산 gemini-escalation:*
+          OWNED_BRAND_ESCALATION_MODEL: gemini-3.5-flash-lite
           GEMINI_REQUEST_INTERVAL_MS: '1500'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5-20251001
@@ -314,6 +318,8 @@ jobs:
           GEMINI_QUOTA_CLASS: ${{ github.event_name == 'workflow_dispatch' && !inputs.monitor_chain && 'bulk' || 'live' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.1-flash-lite
+          # 1차가 정상으로 본 광고 댓글만 강한 모델로 2차 판정(미탐 구제, 10-28). 별도 예산 gemini-escalation:*
+          OWNED_BRAND_ESCALATION_MODEL: gemini-3.5-flash-lite
           # 광고 영상 수가 많아 1.5초 간격은 무료 RPM을 초과했다. 12 RPM 이하로 제한해
           # 마지막 배치가 429로 보류되는 커버리지 갭을 막는다.
           GEMINI_REQUEST_INTERVAL_MS: '5000'

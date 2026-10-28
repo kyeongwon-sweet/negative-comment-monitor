@@ -182,3 +182,35 @@ test('무료 한도 외 원인(영구 오류)은 하루 1장 제한을 받지 �
   assert.equal(out.alerted, true);
   assert.equal(ledgerCalls.length, 0);
 });
+
+test('2026-10-28: 강한 모델 2차 판정 실패는 1차가 정상이어도 별도 원장으로 3회 연속 시 경고한다', async () => {
+  const db = statefulFetch();
+  const stats = {
+    calls: 1, cacheHits: 0, cacheMiss: 5, reviewed: 5,
+    ownedEscalationSkipped: 3, ownedEscalationSkipReason: 'escalation_call_failed',
+  };
+  const config = { ...CONFIG, ownedBrandEscalationModel: 'gemini-3.5-flash-lite' };
+  const runs = [];
+  for (const t of [1_000, 2_000, 3_000]) runs.push(await monitorLlmHealth(config, stats, { scope: 'meta-ads', label: 'Meta 광고', totalComments: 5 }, db.fetchImpl, t));
+  assert.equal(runs[0].degraded, false, '1차 분류는 정상');
+  assert.deepEqual(runs.map((r) => r.escalation.alerted), [false, false, true]);
+  assert.equal(db.messages.length, 1);
+  assert.match(db.messages[0], /강한 모델 2차 판정 실패 — Meta 광고/);
+  assert.match(db.messages[0], /gemini-3\.5-flash-lite/);
+  assert.ok(db.rows.has('llm-escalation-meta-ads'), '1차 원장(llm-meta-ads)과 분리');
+});
+
+test('2026-10-28: 승격 모델 미설정 경로는 실패로 세지 않고, 소유채널은 escalationAlert:false로 중복 경고를 끈다', async () => {
+  const db = statefulFetch();
+  const unset = await monitorLlmHealth(CONFIG, {
+    calls: 1, cacheMiss: 2, ownedEscalationSkipped: 2, ownedEscalationSkipReason: 'escalation_model_unset',
+  }, { scope: 'core', totalComments: 2 }, db.fetchImpl, 1_000);
+  assert.equal(unset.escalation.inactive, true);
+  assert.equal(db.rows.has('llm-escalation-core'), false);
+
+  const failing = { calls: 1, cacheMiss: 2, ownedEscalationSkipped: 2, ownedEscalationSkipReason: 'escalation_call_failed' };
+  for (const t of [1_000, 2_000, 3_000]) {
+    await monitorLlmHealth(CONFIG, failing, { scope: 'youtube-owner', totalComments: 2, escalationAlert: false }, db.fetchImpl, t);
+  }
+  assert.equal(db.messages.length, 0);
+});

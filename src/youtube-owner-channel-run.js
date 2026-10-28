@@ -316,6 +316,8 @@ export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelCo
   try {
     summary.llmHealth = await monitorLlmHealth(config, llmStats, {
       scope: 'youtube-owner', label: 'YouTube 소유 채널', totalComments: summary.comments, notify: !config.dryRun,
+      // 승격 실패는 owned-escalation hard degraded → 보조 모니터 실패 알림으로 이미 나간다(중복 방지).
+      escalationAlert: false,
     }, fetchImpl, now);
     recordOwnerLlmSoftDegraded(summary, summary.llmHealth);
   } catch (error) {

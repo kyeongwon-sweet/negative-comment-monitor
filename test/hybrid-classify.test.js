@@ -723,3 +723,51 @@ test('5q7z3FExo_Q 재발방지: 강한 모델이 본 뒤 정상이면 검토 표
   assert.equal(gated.ownerLowConfidenceSuppressed, true);
   assert.equal(gated.ownedEscalationReviewed, true, '게이트 억제 후에도 검토 표시가 남아야 run 불변식이 오탐하지 않음');
 });
+
+test('2026-10-28 광고 확대: 인지광고 지면의 1차 정상은 강한 모델로 구제하되, 광고 자신의 지면 정책으로 판정한다', async () => {
+  const strongCalls = [];
+  let call = 0;
+  const staged = async (items, cfg) => {
+    call += 1;
+    if (call > 1) {
+      strongCalls.push({ items, cfg });
+      return items.map(() => ({ alert: true, category: '광고/바이럴 의심', reason: '광고 냉소', priority: 'normal' }));
+    }
+    return items.map((item) => (item.text.includes('최악')
+      ? { alert: true, category: '제품 불만', reason: 'r', priority: 'normal' }
+      : { alert: false, category: '정상댓글', reason: '', priority: 'normal' }));
+  };
+  // Meta·TikTok 광고 대상: awarenessAdScope만 있고 소유 스코프는 없다.
+  const target = { brandName: '라라스윗', awarenessAdScope: true, fullContextReview: true };
+  const risks = await classifyCommentsHybrid(
+    [{ text: '요즘 이런 영상 너무 자주 보이네요' }, { text: '이거 최악' }],
+    target,
+    { geminiKey: 'key', ownedBrandEscalationModel: 'gemini-3.5-flash-lite' },
+    staged,
+  );
+  assert.equal(risks[0].engine, 'llm-strong-owned', '1차 정상 광고 댓글도 강한 모델 승격 대상');
+  assert.equal(strongCalls.length, 1);
+  assert.equal(strongCalls[0].items.length, 1, '광고 지면의 1차 부정은 게이트가 없어 재판정하지 않음');
+  assert.equal(strongCalls[0].items[0].awarenessAdScope, true);
+  assert.equal(strongCalls[0].items[0].ownedChannelBrandHostilityScope, false, '광고 댓글을 소유채널 정책으로 판정하면 안 됨');
+  assert.equal(strongCalls[0].cfg.geminiQuotaClass, 'escalation', '승격은 별도 예산 장부');
+  assert.equal(risks[1].alert, true);
+});
+
+test('2026-10-28 광고 확대: YouTube 광고(소유+인지 스코프)의 1차 부정은 보류되지 않고 그대로 알림된다', async () => {
+  let call = 0;
+  const strongFails = async (items) => {
+    call += 1;
+    if (call > 1) return null;
+    return items.map(() => ({ alert: true, category: '광고/바이럴 의심', reason: 'r', priority: 'normal' }));
+  };
+  const [risk] = await classifyCommentsHybrid(
+    [{ text: '요즘 이런 영상 너무 자주 보이네요' }],
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true, awarenessAdScope: true, fullContextReview: true },
+    { geminiKey: 'key', ownedBrandEscalationModel: 'gemini-3.5-flash-lite' },
+    strongFails,
+  );
+  assert.equal(call, 1, '게이트 없는 광고 지면의 1차 부정은 강한 모델을 부르지 않음');
+  assert.equal(risk.alert, true);
+  assert.equal(risk.engine, 'llm');
+});

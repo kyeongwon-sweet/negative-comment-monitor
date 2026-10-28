@@ -105,7 +105,7 @@ export async function runTikTokAds(config = loadTikTokAdsConfig(), fetchImpl = f
   summary.llmHealth = await monitorLlmHealth(config, llmStats, {
     scope: 'tiktok-ads', label: 'TikTok 인지 광고', totalComments: summary.comments, notify: !config.dryRun,
   }, fetchImpl, now);
-  console.error(`[tiktok-ads] campaigns=${summary.campaigns} ads=${summary.ads} adgroups=${summary.adgroups} comments=${summary.comments} alerts=${summary.sentAlerts} geminiCalls=${llmStats.geminiCalls || 0} anthropicCalls=${llmStats.anthropicCalls || 0} llmFailed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} deferred=${summary.llmDeferredComments} est=$${estimatedUsd.toFixed(5)}`);
+  console.error(`[tiktok-ads] campaigns=${summary.campaigns} ads=${summary.ads} adgroups=${summary.adgroups} comments=${summary.comments} alerts=${summary.sentAlerts} geminiCalls=${llmStats.geminiCalls || 0} escalation=${llmStats.ownedEscalatedAlerts || 0}/${llmStats.ownedEscalationChecked || 0} escalationSkipped=${llmStats.ownedEscalationSkipped || 0} anthropicCalls=${llmStats.anthropicCalls || 0} llmFailed=${llmStats.failedAttempts || 0} fallback=${llmStats.keywordFallbackComments || 0} deferred=${summary.llmDeferredComments} est=$${estimatedUsd.toFixed(5)}`);
 
   if (!config.dryRun) {
     if (config.tiktokAdsAutoHide) {

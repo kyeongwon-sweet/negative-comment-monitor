@@ -97,11 +97,58 @@ async function postWarning(config, text, fetchImpl) {
   return payload;
 }
 
+// 강한 모델 2차 판정(hybrid-classify 승격)은 1차 성공과 무관하게 따로 실패할 수 있다(10-28: 404 모델로
+// 5주간 미작동, 1차 health는 정상). 구간별 별도 원장(llm-escalation-<scope>)에 연속 실패를 세고 임계 시 알린다.
+// 모델 미설정(escalation_model_unset)은 그 경로가 승격을 안 쓰는 의도된 상태라 실패로 세지 않는다.
+export async function monitorEscalationHealth(config, stats = {}, options = {}, fetchImpl = fetch, now = Date.now()) {
+  const scope = safeScope(options.scope);
+  const checked = Number(stats.ownedEscalationChecked || 0);
+  const promoted = Number(stats.ownedEscalatedAlerts || 0);
+  const skipped = Number(stats.ownedEscalationSkipped || 0);
+  const reason = String(stats.ownedEscalationSkipReason || '');
+  const base = { checked, promoted, skipped, reason, model: String(config?.ownedBrandEscalationModel || '') };
+  if (!checked && !skipped) return { ...base, inactive: true, alerted: false };
+  if (!checked && reason === 'escalation_model_unset') return { ...base, inactive: true, alerted: false };
+  const failed = skipped > 0;
+  const platform = `llm-escalation-${scope}`.slice(0, 64);
+  const healthConfig = {
+    supabaseUrl: config?.supabaseUrl,
+    supabaseKey: config?.supabaseKey,
+    platformFailureThreshold: Math.max(1, Number(config?.llmFailureThreshold || 3)),
+    platformFailureAlertCooldownHours: Math.max(1, Number(config?.llmFailureAlertCooldownHours || 12)),
+  };
+  const outcome = await recordPlatformOutcome(healthConfig, {
+    platform,
+    ok: !failed,
+    error: failed ? `${reason || 'unknown'}; skipped=${skipped}; model=${base.model || '-'}` : '',
+  }, fetchImpl, now);
+  let alerted = false;
+  if (failed && outcome.shouldEscalate && options.notify !== false && options.escalationAlert !== false) {
+    const owner = config?.slackAssignees?.other ? `<@${config.slackAssignees.other}> ` : '';
+    const text = [
+      `⚠️ *강한 모델 2차 판정 실패 — ${options.label || scope}*`,
+      `• 사유: ${reason || 'unknown'} · 이번 회차 ${skipped}건 미검토 · 연속 ${outcome.consecutiveFailures}회`,
+      `• 모델: ${base.model || '(미설정)'}`,
+      '• 영향: 1차가 정상으로 본 댓글의 재검토(미탐 구제)가 멈춤. 1차 실시간 감시는 계속 동작.',
+      `${owner}모델명(404)·무료 한도(429)·과부하(503) 확인 필요`,
+    ].join('\n');
+    try {
+      await postWarning(config, text, fetchImpl);
+      alerted = true;
+    } catch (error) {
+      if (outcome.persisted) await clearPlatformAlertClaim(healthConfig, platform, fetchImpl, now);
+      console.error(`[llm-health] ${scope} 승격 실패 경고 발송 실패: ${String(error?.message || error).slice(0, 200)}`);
+    }
+  }
+  return { ...base, failed, consecutiveFailures: outcome.consecutiveFailures, alerted };
+}
+
 export async function monitorLlmHealth(config, stats, options = {}, fetchImpl = fetch, now = Date.now()) {
   const scope = safeScope(options.scope);
   const health = summarizeLlmHealth(stats, options.totalComments);
+  const escalation = await monitorEscalationHealth(config, stats, options, fetchImpl, now);
   if (!health.candidateComments && !health.keywordFallbackComments) {
-    return { ...health, scope, persisted: false, alerted: false, inactive: true };
+    return { ...health, scope, persisted: false, alerted: false, inactive: true, escalation };
   }
   const platform = `llm-${scope}`;
   const healthConfig = {
@@ -160,6 +207,7 @@ export async function monitorLlmHealth(config, stats, options = {}, fetchImpl = 
     alerted,
     alertError,
     quotaSuppressed,
+    escalation,
   };
 }
 

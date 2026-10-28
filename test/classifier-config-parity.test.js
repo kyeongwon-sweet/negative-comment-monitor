@@ -58,12 +58,14 @@ test('분류 경로 로더는 분류기가 읽는 설정값을 일반 모니터(
   const env = syntheticEnv();
   const now = Date.parse('2026-10-28T00:00:00Z');
   const base = loadConfig(env, now);
-  const keys = classifierConfigKeys().filter((key) => base[key] !== undefined);
+  const loaded = Object.fromEntries(Object.entries(LOADERS).map(([name, load]) => [name, load(env, now)]));
+  // 어느 로더에든 정의된 키는 전부 비교한다(한쪽 로더에만 새 키를 넣은 경우도 잡는다).
+  const keys = classifierConfigKeys().filter((key) => base[key] !== undefined
+    || Object.values(loaded).some((config) => config[key] !== undefined));
   assert.ok(keys.includes('ownedBrandEscalationModel'), '정적 추출이 승격 모델 키를 찾아야 함');
   assert.ok(keys.includes('geminiModel'));
   const gaps = [];
-  for (const [name, load] of Object.entries(LOADERS)) {
-    const config = load(env, now);
+  for (const [name, config] of Object.entries(loaded)) {
     for (const key of keys) {
       if (JSON.stringify(config[key]) !== JSON.stringify(base[key])) {
         gaps.push(`${name}.${key}: ${JSON.stringify(config[key])} ≠ loadConfig ${JSON.stringify(base[key])}`);

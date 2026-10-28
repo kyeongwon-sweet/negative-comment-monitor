@@ -9,8 +9,14 @@ function positiveInt(value, fallback) {
 }
 
 function quotaClass(config = {}) {
-  return String(config.geminiQuotaClass || 'live').trim().toLowerCase() === 'bulk' ? 'bulk' : 'live';
+  const value = String(config.geminiQuotaClass || 'live').trim().toLowerCase();
+  if (value === 'escalation') return 'escalation';
+  return value === 'bulk' ? 'bulk' : 'live';
 }
+
+// 강한 모델 2차 판정(hybrid-classify 승격)은 1차 모델과 무료 한도가 별개라 별도 장부로 센다.
+// 'gemini-request:' 접두어와 겹치지 않아 1차 총량(480)에 포함되지 않는다.
+const ESCALATION_PREFIX = 'gemini-escalation:';
 
 function headers(config, extra = {}) {
   return {
@@ -39,7 +45,8 @@ async function countClaims(config, prefix, cutoffIso, fetchImpl) {
 async function insertClaim(config, kind, now, fetchImpl) {
   const runId = String(process.env.GITHUB_RUN_ID || 'local').replace(/[^A-Za-z0-9_-]+/g, '-');
   const runAttempt = String(process.env.GITHUB_RUN_ATTEMPT || '1').replace(/[^A-Za-z0-9_-]+/g, '-');
-  const runKey = `gemini-request:${kind}:${runId}:${runAttempt}:${randomUUID()}`;
+  const prefix = kind === 'escalation' ? ESCALATION_PREFIX : `gemini-request:${kind}:`;
+  const runKey = `${prefix}${runId}:${runAttempt}:${randomUUID()}`;
   const response = await fetchImpl(
     `${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/cost_usage_ledger?on_conflict=run_key`,
     {
@@ -72,6 +79,20 @@ export async function claimGeminiRequestBudget(config = {}, fetchImpl = fetch, n
   }
 
   const cutoffIso = new Date(now - windowHours * HOUR_MS).toISOString();
+  if (kind === 'escalation') {
+    const escalationLimit = positiveInt(config.geminiEscalationRollingRequestBudget, 200);
+    try {
+      const escalationUsed = await countClaims(config, ESCALATION_PREFIX, cutoffIso, fetchImpl);
+      if (escalationUsed >= escalationLimit) {
+        return { allowed: false, tracked: true, reason: 'escalation', quotaClass: kind, escalationUsed, escalationLimit };
+      }
+      await insertClaim(config, kind, now, fetchImpl);
+      return { allowed: true, tracked: true, quotaClass: kind, escalationUsed: escalationUsed + 1, escalationLimit };
+    } catch (error) {
+      console.error(`[gemini-budget] 승격 원장 확인 실패 — fail-open: ${String(error?.message || error).slice(0, 160)}`);
+      return { allowed: true, tracked: false, quotaClass: kind, escalationLimit, error: String(error?.message || error) };
+    }
+  }
   try {
     const totalUsed = await countClaims(config, 'gemini-request:', cutoffIso, fetchImpl);
     if (totalUsed >= totalLimit) {
