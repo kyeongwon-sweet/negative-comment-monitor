@@ -38,8 +38,8 @@ test('대상 선별: 시작시각 이전(기존 숨김·스팸)·알림행 있�
 });
 
 test('하드넷 표현은 모델이 공개라 해도 보류', () => {
-  const out = decideApprovals([{ text: '그래서 이거 누가 먹음?' }, { text: '맛있겠다' }], [{ approve: true }, { approve: true }]);
-  assert.deepEqual(out.map((c) => c.approve), [false, true]);
+  const out = decideApprovals([{ text: '그래서 이거 누가 먹음?' }, { text: '두근두근 설레는댓글창 열기' }, { text: '맛있겠다' }], [{ approve: true }, { approve: true }, { approve: true }]);
+  assert.deepEqual(out.map((c) => c.approve), [false, false, true]);
 });
 
 test('공개 판정: 응답 누락은 보류, 호출 실패는 null(아무것도 공개 안 함)', async () => {
