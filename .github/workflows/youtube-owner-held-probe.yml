@@ -1,0 +1,31 @@
+name: YouTube owner held-for-review probe
+
+# 읽기 전용. 소유채널 '검토 보류' 댓글을 주인 OAuth로 읽을 수 있는지와 보류함 구성(봇·사람이
+# 숨긴 것 vs 출처 미상)을 센다. 댓글 상태를 바꾸지 않는다. 로그엔 개수·채널ID만 남는다.
+on:
+  workflow_dispatch:
+    inputs:
+      channel_ids:
+        description: 점검할 채널ID(쉼표, 비우면 토큰 있는 소유채널 전체)
+        required: false
+        type: string
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Probe held-for-review comments
+        run: node src/youtube-owner-held-probe.js
+        env:
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          HELD_PROBE_CHANNEL_IDS: ${{ inputs.channel_ids }}
