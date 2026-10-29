@@ -1,0 +1,101 @@
+name: YouTube owner held-comment review
+
+# 소유채널 '모든 댓글 검토 보류' 운영. 보류된 새 댓글 중 확실히 괜찮은 것만 공개하고, 나머지는 보류로 둔 채
+# 데일리 스레드에 알린다. 대상 채널·시작시각은 repo 변수 HELD_REVIEW_CHANNELS("채널ID@ISO시각,…")로만 켠다.
+# 시작시각 이전에 보류된 댓글(봇·사람이 숨긴 부정, 유튜브 스팸)은 절대 공개하지 않는다.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 판정만 하고 공개·알림·원장 쓰기 안 함
+        required: false
+        type: boolean
+        default: true
+      dry_run_channels:
+        description: dry-run 전용 대상(채널ID@ISO시각, 비우면 repo 변수). 실제 공개 실행엔 쓰이지 않음
+        required: false
+        type: string
+      eval_golden:
+        description: 운영 대신 골든셋 안전성 평가만 실행(숨김 판정 댓글을 공개하면 실패)
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    # 공개 지연을 줄이려 매시 실행(정각 UTC0 드롭 구간 회피). GH 크론 지연이 커지면 monitor 루프 편입 검토.
+    - cron: '23 * * * *'
+
+concurrency:
+  group: youtube-owner-held-review
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts
+      - name: Golden-set safety eval
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.eval_golden }}
+        run: node scripts/held-review-eval.mjs
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HELD_REVIEW_MODEL: gemini-3.5-flash-lite
+      - name: Review held comments
+        id: held_review
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.eval_golden) }}
+        continue-on-error: true
+        run: node src/youtube-owner-held-review.js
+        env:
+          HELD_REVIEW_CHANNELS: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && inputs.dry_run_channels || vars.HELD_REVIEW_CHANNELS }}
+          HELD_REVIEW_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+          HELD_REVIEW_MODEL: gemini-3.5-flash-lite
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-3.1-flash-lite
+          OWNED_BRAND_ESCALATION_MODEL: gemini-3.5-flash-lite
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_P_ADDITIONAL: ${{ vars.SLACK_ASSIGNEE_P_ADDITIONAL }}
+          SLACK_ASSIGNEE_JD_VIRAL: ${{ vars.SLACK_ASSIGNEE_JD_VIRAL }}
+          SLACK_ASSIGNEE_SATELLITE: ${{ vars.SLACK_ASSIGNEE_SATELLITE }}
+          SLACK_ASSIGNEE_JD_SATELLITE: ${{ vars.SLACK_ASSIGNEE_JD_SATELLITE }}
+          SLACK_ASSIGNEE_JD_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JD_PRIMARY }}
+          SLACK_ASSIGNEE_PBACHI: ${{ vars.SLACK_ASSIGNEE_PBACHI }}
+          SLACK_ASSIGNEE_PBACHI_MUKSTAR: ${{ vars.SLACK_ASSIGNEE_PBACHI_MUKSTAR }}
+          SLACK_ASSIGNEE_PBACHI_OVERRIDE: ${{ vars.SLACK_ASSIGNEE_PBACHI_OVERRIDE }}
+          SLACK_ASSIGNEE_P_AWARENESS: ${{ vars.SLACK_ASSIGNEE_P_AWARENESS }}
+          SLACK_ASSIGNEE_P_OWNED_YOUTUBE: ${{ vars.SLACK_ASSIGNEE_P_OWNED_YOUTUBE }}
+          SLACK_ASSIGNEE_JG_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JG_PRIMARY }}
+          SLACK_ASSIGNEE_JG_ADDITIONAL: ${{ vars.SLACK_ASSIGNEE_JG_ADDITIONAL }}
+          YOUTUBE_OWNER_DEFAULT_PRODUCT_NAME: JD
+      - name: Record held-review outcome
+        if: ${{ always() && !(github.event_name == 'workflow_dispatch' && inputs.eval_golden) }}
+        continue-on-error: true
+        run: node src/record-auxiliary-outcome.js
+        env:
+          AUXILIARY_HEALTH_KEY: youtube_owner_held_review
+          AUXILIARY_OUTCOME: ${{ steps.held_review.outcome == 'success' && 'success' || 'failure' }}
+          # 보류 공개가 멈추면 정상 댓글이 계속 안 보인다(부정 공개는 아님). 2연속 실패부터 알린다.
+          AUXILIARY_FAILURE_THRESHOLD: '2'
+          AUXILIARY_ALERT_COOLDOWN_HOURS: '12'
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          AUXILIARY_COMPONENT: YouTube 소유채널 보류 댓글 공개 봇
+          AUXILIARY_REASON: held_review=${{ steps.held_review.outcome }}
+          FAILURE_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: Fail the job when the review step failed
+        if: ${{ steps.held_review.outcome == 'failure' }}
+        run: exit 1
