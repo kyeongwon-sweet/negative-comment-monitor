@@ -203,10 +203,14 @@ export async function judgeApprovals(config, comments, fetchImpl = fetch, now = 
   return out;
 }
 
-// 하드넷(확정 부정 표현)이 걸리면 모델이 공개라 해도 보류.
+// 링크·연락처가 든 댓글은 스팸 가능성이 있어 자동 공개하지 않는다(YouTube '기본' 검토가 보류한 건 포함).
+const LINK_PATTERN = /(https?:\/\/|www\.|\.com\b|\.kr\b|\.net\b|\.ly\b|t\.me\/|open\.kakao|카톡\s*아이디|텔레그램)/i;
+
+// 하드넷(확정 부정 표현)·링크가 걸리면 모델이 공개라 해도 보류.
 export function decideApprovals(comments, verdicts) {
   return comments.map((comment, index) => {
     if (matchesOwnedHardHostility(comment.text)) return { ...comment, approve: false, reason: '부정 확정 표현' };
+    if (LINK_PATTERN.test(String(comment.text || ''))) return { ...comment, approve: false, reason: '링크 포함(스팸 가능)' };
     const v = verdicts[index] || { approve: false, reason: '판정 없음' };
     return { ...comment, approve: v.approve === true, reason: v.reason };
   });

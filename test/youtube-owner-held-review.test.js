@@ -127,3 +127,11 @@ test('dry-run은 공개·알림·원장 쓰기를 하지 않는다', async () =>
   assert.equal(summary.channels[0].approved, 1);
   assert.equal(summary.channels[0].kept, 1);
 });
+
+test('링크·메신저 유도가 든 댓글은 모델이 공개라 해도 보류(스팸)', () => {
+  const out = decideApprovals(
+    [{ text: '맛있겠다 https://bit.ly/x' }, { text: '부업 문의 open.kakao 로' }, { text: '맛있겠다' }],
+    [{ approve: true }, { approve: true }, { approve: true }],
+  );
+  assert.deepEqual(out.map((c) => c.approve), [false, false, true]);
+});
