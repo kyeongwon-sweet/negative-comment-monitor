@@ -123,6 +123,8 @@ jobs:
           HELD_REVIEW_DRY_RUN: 'false'
           HELD_REVIEW_MODEL: gemini-3.5-flash-lite
           YOUTUBE_OWNER_DEFAULT_PRODUCT_NAME: JD
+          # cron 드롭에 영향받지 않도록 pending-hide와 오탐 공개복원을 같은 15분 self-chain에 편입한다.
+          YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5-20251001
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}

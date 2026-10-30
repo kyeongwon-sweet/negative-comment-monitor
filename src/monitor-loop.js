@@ -17,6 +17,10 @@ function positiveInt(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function truthy(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
+
 function runCommand(command, args, env = process.env) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -53,6 +57,10 @@ export async function runMonitorLoop(env = process.env, options = {}) {
   // 소유채널이 YouTube의 "모든 댓글 보류" 모드일 때 정상 댓글 공개도 15분 SLA를 갖는다.
   // 부정댓글 intensive gate와 독립적으로 루프를 유지하되, 전체 스캔까지 강제로 돌리지는 않는다.
   const heldReviewEnabled = Boolean(String(env.HELD_REVIEW_CHANNELS || '').trim());
+  // 분류된 소유채널 악플 숨김과 사람 오탐 공개복원도 GitHub cron 대신 같은 15분 루프에서 실행한다.
+  // 실행 스위치는 워크플로가 명시적으로 켜며, 기존 모더레이션 대상 조건은 각 본체가 그대로 지킨다.
+  const pendingHideEnabled = truthy(env.YOUTUBE_OWNER_PENDING_HIDE_LOOP);
+  const keepAuxiliaryLoopAlive = heldReviewEnabled || pendingHideEnabled;
   const coverageLoop = eventName === 'schedule' || chainRun;
   const gateConfig = {
     supabaseUrl: String(env.SUPABASE_URL || '').trim(),
@@ -82,6 +90,48 @@ export async function runMonitorLoop(env = process.env, options = {}) {
         : '',
     },
   ));
+  const hidePending = options.runPendingHide || ((pendingEnv) => runCommand(
+    'npm',
+    ['run', 'hide:youtube-owner-pending'],
+    pendingEnv,
+  ));
+  const restoreFalsePositives = options.runFalsePositiveRestore || ((restoreEnv) => runCommand(
+    'npm',
+    ['run', 'restore:youtube-false-positives'],
+    restoreEnv,
+  ));
+  const recordPendingOutcome = options.recordPendingHideOutcome || ((outcome, reason) => runCommand(
+    process.execPath,
+    ['src/record-auxiliary-outcome.js'],
+    {
+      ...env,
+      AUXILIARY_HEALTH_KEY: 'youtube_owner_pending_hide',
+      AUXILIARY_OUTCOME: outcome,
+      AUXILIARY_FAILURE_THRESHOLD: '3',
+      AUXILIARY_ALERT_COOLDOWN_HOURS: '24',
+      AUXILIARY_COMPONENT: 'YouTube 소유채널 15분 자동숨김',
+      AUXILIARY_REASON: reason,
+      FAILURE_RUN_URL: env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY && env.GITHUB_RUN_ID
+        ? `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`
+        : '',
+    },
+  ));
+  const recordRestoreOutcome = options.recordFalsePositiveRestoreOutcome || ((outcome, reason) => runCommand(
+    process.execPath,
+    ['src/record-auxiliary-outcome.js'],
+    {
+      ...env,
+      AUXILIARY_HEALTH_KEY: 'youtube_owner_fp_restore',
+      AUXILIARY_OUTCOME: outcome,
+      AUXILIARY_FAILURE_THRESHOLD: '3',
+      AUXILIARY_ALERT_COOLDOWN_HOURS: '24',
+      AUXILIARY_COMPONENT: 'YouTube 오탐 댓글 자동 공개복원',
+      AUXILIARY_REASON: reason,
+      FAILURE_RUN_URL: env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY && env.GITHUB_RUN_ID
+        ? `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`
+        : '',
+    },
+  ));
   const recordHeartbeat = options.recordHeartbeat || ((details) => recordMonitorScanHeartbeat(gateConfig, details));
   const chain = options.chain || ((details) => chainNextMonitor(env, details));
   const now = options.now || Date.now;
@@ -91,6 +141,10 @@ export async function runMonitorLoop(env = process.env, options = {}) {
   let lastScannedAt = null;
   let heldReviewRuns = 0;
   let heldReviewFailures = 0;
+  let pendingHideRuns = 0;
+  let pendingHideFailures = 0;
+  let falsePositiveRestoreRuns = 0;
+  let falsePositiveRestoreFailures = 0;
 
   for (let iteration = 0; iteration < iterations; iteration += 1) {
     let gateOpen = false;
@@ -112,7 +166,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
       `[monitor-loop] iteration=${iteration + 1}/${iterations} gate=${gateState} forced=${forced} decision=${shouldRun ? 'run' : 'skip'}`,
     );
 
-    if (shouldRun || heldReviewEnabled) {
+    if (shouldRun || keepAuxiliaryLoopAlive) {
       if (!dependenciesInstalled) {
         console.error('[monitor-loop] installing dependencies once before the first runnable task');
         await execute('npm', ['install', '--ignore-scripts'], env);
@@ -144,6 +198,60 @@ export async function runMonitorLoop(env = process.env, options = {}) {
       }
     }
 
+    if (pendingHideEnabled) {
+      let hideOutcome = 'success';
+      let hideReason = '15분 루프 정상';
+      try {
+        await hidePending({
+          ...env,
+          YOUTUBE_OWNER_BULK_HIDE_DRY_RUN: 'false',
+          YOUTUBE_OWNER_BULK_HIDE_CONFIRM: 'HIDE_ALL_YOUTUBE_AD_ALERTS',
+          YOUTUBE_OWNER_ALERT_SCOPE: 'organic_satellite',
+          YOUTUBE_OWNER_BULK_HIDE_BATCH_SIZE: '50',
+          YOUTUBE_OWNER_HIDE_VERIFY_ATTEMPTS: '5',
+          YOUTUBE_OWNER_HIDE_VERIFY_DELAY_MS: '3000',
+          YOUTUBE_OWNER_BULK_HIDE_ACTOR: 'youtube-owner-pending-auto-hide',
+        });
+        pendingHideRuns += 1;
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} pending_hide=success`);
+      } catch (error) {
+        pendingHideFailures += 1;
+        hideOutcome = 'failure';
+        hideReason = `15분 루프 실패: ${String(error.message || error).slice(0, 160)}`;
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} pending_hide=failure error=${error.message}`);
+      }
+      try {
+        await recordPendingOutcome(hideOutcome, hideReason);
+      } catch (error) {
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} pending_hide_health_write=failure error=${error.message}`);
+      }
+
+      let restoreOutcome = 'success';
+      let restoreReason = '15분 루프 정상';
+      try {
+        await restoreFalsePositives({
+          ...env,
+          YOUTUBE_FP_AUTO_RESTORE: 'AUTO_RESTORE_YOUTUBE_FALSE_POSITIVES',
+          YOUTUBE_FP_AUTO_RESTORE_LOOKBACK_HOURS: '72',
+          YOUTUBE_FP_AUTO_RESTORE_MAX_ROWS: '100',
+          YOUTUBE_RESTORE_VERIFY_ATTEMPTS: '5',
+          YOUTUBE_RESTORE_VERIFY_DELAY_MS: '3000',
+        });
+        falsePositiveRestoreRuns += 1;
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} fp_restore=success`);
+      } catch (error) {
+        falsePositiveRestoreFailures += 1;
+        restoreOutcome = 'failure';
+        restoreReason = `15분 루프 실패: ${String(error.message || error).slice(0, 160)}`;
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} fp_restore=failure error=${error.message}`);
+      }
+      try {
+        await recordRestoreOutcome(restoreOutcome, restoreReason);
+      } catch (error) {
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} fp_restore_health_write=failure error=${error.message}`);
+      }
+    }
+
     if (shouldRun) {
       await execute('npm', ['start'], env);
       monitorRuns += 1;
@@ -171,7 +279,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
     }
 
     if (iteration + 1 < iterations) {
-      if (coverageLoop && !gateOpen && !heldReviewEnabled) {
+      if (coverageLoop && !gateOpen && !keepAuxiliaryLoopAlive) {
         console.error('[monitor-loop] intensive gate closed; ending loop early so floor/backup schedules are not blocked');
         break;
       }
@@ -184,7 +292,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
   try {
     chainResult = await chain({
       gateOpen: verifiedGateOpen,
-      ...(heldReviewEnabled ? { keepAlive: true } : {}),
+      ...(keepAuxiliaryLoopAlive ? { keepAlive: true } : {}),
       scannedThisRun: monitorRuns > 0,
       lastScannedAt,
       now: now(),
@@ -195,13 +303,22 @@ export async function runMonitorLoop(env = process.env, options = {}) {
   }
   console.error(
     `[monitor-loop] complete iterations=${iterations} full_scans=${monitorRuns}`
-      + ` held_review_runs=${heldReviewRuns} held_review_failures=${heldReviewFailures} chain=${chainResult.reason}`,
+      + ` held_review_runs=${heldReviewRuns} held_review_failures=${heldReviewFailures}`
+      + ` pending_hide_runs=${pendingHideRuns} pending_hide_failures=${pendingHideFailures}`
+      + ` fp_restore_runs=${falsePositiveRestoreRuns} fp_restore_failures=${falsePositiveRestoreFailures}`
+      + ` chain=${chainResult.reason}`,
   );
   return {
     iterations,
     monitorRuns,
     dependenciesInstalled,
     ...(heldReviewEnabled ? { heldReviewRuns, heldReviewFailures } : {}),
+    ...(pendingHideEnabled ? {
+      pendingHideRuns,
+      pendingHideFailures,
+      falsePositiveRestoreRuns,
+      falsePositiveRestoreFailures,
+    } : {}),
     chain: chainResult,
   };
 }

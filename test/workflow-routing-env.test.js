@@ -32,6 +32,10 @@ const heldReviewWorkflow = readFileSync(
   new URL('../.github/workflows/youtube-owner-held-review.yml', import.meta.url),
   'utf8',
 );
+const pendingHideWorkflow = readFileSync(
+  new URL('../.github/workflows/youtube-owner-pending-hide.yml', import.meta.url),
+  'utf8',
+);
 
 function assigneeEnvCount(workflow, variable) {
   return (workflow.match(new RegExp(`${variable}:`, 'g')) || []).length;
@@ -221,6 +225,13 @@ test('보류 댓글 공개는 메인 15분 루프에 실운영 설정으로 배�
   assert.match(monitorStep, /YOUTUBE_OWNER_DEFAULT_PRODUCT_NAME:\s*JD/);
   assert.doesNotMatch(heldReviewWorkflow, /\bschedule:\s*\n/);
   assert.match(heldReviewWorkflow, /workflow_dispatch:/);
+});
+
+test('소유채널 pending-hide와 오탐 복원은 메인 15분 루프로 이동하고 단독 크론은 제거한다', () => {
+  const monitorStep = monitorWorkflow.match(/run:\s*node src\/monitor-loop\.js[\s\S]*?(?=\n\s{6}- name:)/)?.[0] || '';
+  assert.match(monitorStep, /YOUTUBE_OWNER_PENDING_HIDE_LOOP:\s*'true'/);
+  assert.doesNotMatch(pendingHideWorkflow, /\bschedule:\s*\n/);
+  assert.match(pendingHideWorkflow, /workflow_dispatch:/);
 });
 
 test('Anthropic 진단 실패는 일반 모니터 장애로 Slack에 발화하지 않는다', () => {

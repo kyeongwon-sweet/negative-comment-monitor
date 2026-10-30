@@ -124,6 +124,69 @@ test('held-review failure publishes nothing, stays fail-soft, and is retried nex
   assert.equal(result.heldReviewFailures, 2);
 });
 
+test('pending-hide와 오탐 복원은 intensive gate와 무관하게 매 iteration 실행된다', async () => {
+  const hides = [];
+  const restores = [];
+  const hideOutcomes = [];
+  const restoreOutcomes = [];
+  const chainCalls = [];
+  const result = await runMonitorLoop({
+    ...BASE_ENV,
+    MONITOR_LOOP_ITERATIONS: '2',
+    YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true',
+  }, {
+    gate: async () => false,
+    runCommand: async () => {},
+    runPendingHide: async (pendingEnv) => { hides.push(pendingEnv); },
+    runFalsePositiveRestore: async (restoreEnv) => { restores.push(restoreEnv); },
+    recordPendingHideOutcome: async (...args) => { hideOutcomes.push(args); },
+    recordFalsePositiveRestoreOutcome: async (...args) => { restoreOutcomes.push(args); },
+    recordHeartbeat: async () => {},
+    sleep: async () => {},
+    chain: async (details) => { chainCalls.push(details); return disabledChain; },
+  });
+
+  assert.equal(hides.length, 2);
+  assert.ok(hides.every((pendingEnv) => (
+    pendingEnv.YOUTUBE_OWNER_BULK_HIDE_DRY_RUN === 'false'
+    && pendingEnv.YOUTUBE_OWNER_BULK_HIDE_CONFIRM === 'HIDE_ALL_YOUTUBE_AD_ALERTS'
+    && pendingEnv.YOUTUBE_OWNER_BULK_HIDE_ACTOR === 'youtube-owner-pending-auto-hide'
+  )));
+  assert.equal(restores.length, 2);
+  assert.ok(restores.every((restoreEnv) => restoreEnv.YOUTUBE_FP_AUTO_RESTORE === 'AUTO_RESTORE_YOUTUBE_FALSE_POSITIVES'));
+  assert.deepEqual(hideOutcomes, [['success', '15분 루프 정상'], ['success', '15분 루프 정상']]);
+  assert.deepEqual(restoreOutcomes, [['success', '15분 루프 정상'], ['success', '15분 루프 정상']]);
+  assert.equal(chainCalls[0].keepAlive, true);
+  assert.equal(result.pendingHideRuns, 2);
+  assert.equal(result.pendingHideFailures, 0);
+  assert.equal(result.falsePositiveRestoreRuns, 2);
+  assert.equal(result.falsePositiveRestoreFailures, 0);
+});
+
+test('pending-hide 실패는 핵심 수집을 죽이지 않고 건강 원장에 실패로 남긴다', async () => {
+  const outcomes = [];
+  const result = await runMonitorLoop({
+    ...BASE_ENV,
+    MONITOR_LOOP_ITERATIONS: '1',
+    YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true',
+  }, {
+    gate: async () => false,
+    runCommand: async () => {},
+    runPendingHide: async () => { throw new Error('owner OAuth unavailable'); },
+    runFalsePositiveRestore: async () => {},
+    recordPendingHideOutcome: async (...args) => { outcomes.push(args); },
+    recordFalsePositiveRestoreOutcome: async () => {},
+    recordHeartbeat: async () => {},
+    sleep: async () => {},
+  });
+
+  assert.equal(result.monitorRuns, 0);
+  assert.equal(result.pendingHideRuns, 0);
+  assert.equal(result.pendingHideFailures, 1);
+  assert.equal(outcomes[0][0], 'failure');
+  assert.match(outcomes[0][1], /owner OAuth unavailable/);
+});
+
 test('floor schedule forces the first scan but gates later iterations', async () => {
   const commands = [];
   const result = await runMonitorLoop({

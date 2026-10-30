@@ -2,9 +2,8 @@ name: YouTube owner pending comment hide
 
 on:
   workflow_dispatch:
-  schedule:
-    # 핵심 수집과 분리한 경량 DB-outbox 모더레이터. UTC 정각 데드존을 피하면서 15분 지연 상한을 유지한다.
-    - cron: '7,22,37,52 * * * *'
+  # 정기 실행은 negative-comment-monitor의 15분 self-chain이 담당한다. 여기에는 수동 복구만 남겨
+  # 두 워크플로가 같은 댓글을 동시에 숨기거나 같은 오탐을 중복 복원하지 않게 한다.
 
 concurrency:
   group: youtube-owner-pending-hide-production

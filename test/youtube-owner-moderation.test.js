@@ -82,13 +82,14 @@ test('영상 소유 채널별로 알림을 나누고 누락 사유를 집계한�
     { post_url: 'https://youtube.com/watch?v=videoA1', comment_id: 'c5', review_decision: 'false_positive', reviewed_by: 'U1' },
     { post_url: 'https://youtube.com/watch?v=videoA1', comment_id: 'c6', review_decision: 'complete', reviewed_by: 'U2' },
     { post_url: 'https://youtube.com/watch?v=videoA1', comment_id: 'c7', review_decision: 'hide', reviewed_by: 'U3' },
+    { post_url: 'https://youtube.com/watch?v=videoA1', comment_id: 'c9', review_decision: 'hold', reviewed_by: 'owner-public-audit' },
   ], new Map([['videoA1', 'ownerA'], ['videoB1', 'ownerB']]));
   assert.equal(result.groups.get('ownerA').length, 1);
   assert.equal(result.groups.get('ownerB').length, 1);
   assert.equal(result.unmatchedVideo, 1);
   assert.equal(result.missingCommentId, 1);
   assert.equal(result.alreadyMarkedHidden, 1);
-  assert.equal(result.skippedHumanDecision, 3);
+  assert.equal(result.skippedHumanDecision, 4);
 
   const single = groupAlertsByOwner([
     { post_url: 'https://youtube.com/watch?v=videoA1', comment_id: 'c7', review_decision: 'hide', reviewed_by: 'U3' },
@@ -99,9 +100,10 @@ test('영상 소유 채널별로 알림을 나누고 누락 사유를 집계한�
     { post_url: 'https://youtube.com/watch?v=videoA1', comment_id: 'c6', review_decision: 'complete', reviewed_by: 'U2' },
     { post_url: 'https://youtube.com/watch?v=videoA1', comment_id: 'c7', review_decision: 'hide', reviewed_by: 'U3' },
     { post_url: 'https://youtube.com/watch?v=videoA1', comment_id: 'c8', review_decision: 'false_positive', reviewed_by: 'U4' },
+    { post_url: 'https://youtube.com/watch?v=videoA1', comment_id: 'c9', review_decision: 'hold', reviewed_by: 'owner-public-audit' },
   ], new Map([['videoA1', 'ownerA']]), { autoHideAllNegatives: true });
   assert.deepEqual(automatic.groups.get('ownerA').map((row) => row.comment_id), ['c6', 'c7']);
-  assert.equal(automatic.skippedHumanDecision, 1);
+  assert.equal(automatic.skippedHumanDecision, 2);
 });
 
 test('오가닉 위성 범위는 source=null YouTube 중 허용 영상만 읽는다', async () => {
