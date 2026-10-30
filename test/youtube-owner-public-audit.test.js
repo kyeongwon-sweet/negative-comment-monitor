@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runPublicAudit, auditAlertRow, PUBLIC_AUDIT_ACTOR } from '../src/youtube-owner-public-audit.js';
+import { runPublicAudit, auditAlertRow, productFromAdCreative, PUBLIC_AUDIT_ACTOR } from '../src/youtube-owner-public-audit.js';
 import { commentFingerprint } from '../src/dedup.js';
 import { actionDefinitions } from '../src/slack.js';
 
 const CH = 'UCxfjcCvRPOPzo6PeAttO4Dg';
+// Google Ads 조회 없이(광고 소재 없음) 제목 추론만 검증하는 기본 옵션.
+const NO_ADS = { loadAdCreatives: async () => new Map() };
 
-function world({ alerted = [], llm = 'ok', titleInState = true } = {}) {
+function world({ alerted = [], llm = 'ok', titleInState = true, fetchedTitle = '[26.10]새우깡제친_main_261029_제과_김하영' } = {}) {
   const calls = { cards: [], rows: [], hides: 0, videoLookups: 0 };
   const json = (body, ok = true, status = 200) => ({ ok, status, json: async () => body, text: async () => JSON.stringify(body) });
   const threads = [
@@ -20,7 +22,7 @@ function world({ alerted = [], llm = 'ok', titleInState = true } = {}) {
   const fetchImpl = async (url, init = {}) => {
     const u = String(url);
     if (u.includes('youtube_owner_video_state')) return json(titleInState ? [{ video_id: 'v1', video_title: '멜론 쫀득바' }] : []);
-    if (u.includes('/videos?')) { calls.videoLookups += 1; return json({ items: [{ id: 'v1', snippet: { title: '[26.10]새우깡제친_main_261029_제과_김하영' } }] }); }
+    if (u.includes('/videos?')) { calls.videoLookups += 1; return json({ items: [{ id: 'v1', snippet: { title: fetchedTitle } }] }); }
     if (u.includes('meta_tokens')) return json([{ kind: `youtube_owner:${CH}`, token: 'rt' }]);
     if (u.includes('oauth2.googleapis.com')) return json({ access_token: 'at' });
     if (u.includes('/channels') && u.includes('mine=true')) return json({ items: [{ id: CH }] });
@@ -55,7 +57,7 @@ const BASE = {
 
 test('재감사: 부정은 카드+hold 행으로만 올리고 절대 숨기지 않는다, 채널 본인·이미 판정된 댓글 제외', async () => {
   const { fetchImpl, calls, classifier } = world({ alerted: ['decided'] });
-  const summary = await runPublicAudit(BASE, fetchImpl, Date.parse('2026-10-30T02:00:00Z'), classifier);
+  const summary = await runPublicAudit(BASE, fetchImpl, Date.parse('2026-10-30T02:00:00Z'), classifier, NO_ADS);
   assert.equal(summary.flagged, 1);
   assert.equal(summary.cardsPosted, 1);
   assert.equal(calls.rows.length, 1);
@@ -78,7 +80,7 @@ test('재감사 카드는 소유 YouTube에도 [숨김] 버튼이 붙는다', ()
 
 test('dry-run은 카드·행을 만들지 않는다', async () => {
   const { fetchImpl, calls, classifier } = world();
-  const summary = await runPublicAudit({ ...BASE, publicAuditDryRun: true }, fetchImpl, Date.parse('2026-10-30T02:00:00Z'), classifier);
+  const summary = await runPublicAudit({ ...BASE, publicAuditDryRun: true }, fetchImpl, Date.parse('2026-10-30T02:00:00Z'), classifier, NO_ADS);
   assert.equal(summary.flagged, 2, '싸가지(LLM) + 광고 지겹다(하드넷)');
   assert.deepEqual([calls.cards.length, calls.rows.length, calls.hides], [0, 0, 0]);
 });
@@ -93,7 +95,7 @@ test('알림행 형식: hold·재감사 행위자·작성자 정보', () => {
 
 test('판정 실패(LLM null)면 LLM 판정분은 카드 없이 보류로 남기고, 결정적 하드넷 표현만 카드로 올린다', async () => {
   const { fetchImpl, calls, classifier } = world({ llm: 'fail' });
-  const summary = await runPublicAudit(BASE, fetchImpl, Date.parse('2026-10-30T02:00:00Z'), classifier);
+  const summary = await runPublicAudit(BASE, fetchImpl, Date.parse('2026-10-30T02:00:00Z'), classifier, NO_ADS);
   assert.deepEqual(calls.rows.map((r) => r.comment_id), ['decided']);
   assert.equal(calls.hides, 0);
   assert.ok(summary.deferred > 0);
@@ -102,7 +104,39 @@ test('판정 실패(LLM null)면 LLM 판정분은 카드 없이 보류로 남기
 
 test('상태표에 제목이 없는 영상은 videos.list로 제목을 채워 상품(제과)을 맞게 라우팅한다', async () => {
   const { fetchImpl, calls, classifier } = world({ titleInState: false, alerted: ['decided'] });
-  await runPublicAudit(BASE, fetchImpl, Date.parse('2026-10-30T02:00:00Z'), classifier);
+  await runPublicAudit(BASE, fetchImpl, Date.parse('2026-10-30T02:00:00Z'), classifier, NO_ADS);
   assert.equal(calls.videoLookups, 1);
   assert.equal(calls.rows[0].product_name, '제과');
+});
+
+test('광고 영상은 제목보다 Google Ads 소재·캠페인명 상품이 우선한다(제목엔 상품 없는 카라멜 영상 → P팝)', async () => {
+  const { fetchImpl, calls, classifier } = world({ alerted: ['decided'] });
+  const ads = { loadAdCreatives: async () => new Map([['v1', { adNames: [''], campaignNames: ['[26.10]인지_P팝_유튜브'] }]]) };
+  const summary = await runPublicAudit(BASE, fetchImpl, Date.parse('2026-10-30T02:00:00Z'), classifier, ads);
+  assert.equal(calls.rows[0].product_name, 'P팝');
+  assert.deepEqual(summary.productSources, { override: 0, ad: 1, title: 0, fallback: 0 });
+  assert.deepEqual(Object.keys(summary.flaggedByProduct), ['파인트|인지 광고(담당자없음)'], '파인트 스레드로(테스트는 담당자 맵 비움)');
+});
+
+test('Ads 조회 설정이 없으면 조용히 제목 추정하지 않고 errors에 남긴다', async () => {
+  const { fetchImpl, classifier } = world({ alerted: ['decided'] });
+  const summary = await runPublicAudit({ ...BASE, googleAdsLookup: null }, fetchImpl, Date.parse('2026-10-30T02:00:00Z'), classifier);
+  assert.ok(summary.errors.some((e) => e.includes('Google Ads 조회 설정 없음')));
+  assert.equal(summary.productSources.title, 1, '제목(멜론 쫀득바)으로 추정');
+});
+
+test('상품 미확인 제목은 fallback으로 집계된다(조용한 JD 배정을 숫자로 드러냄)', async () => {
+  const { fetchImpl, classifier } = world({ titleInState: false, alerted: ['decided'], fetchedTitle: '카라멜 1톤 태워먹은 전설의 직원' });
+  const summary = await runPublicAudit(BASE, fetchImpl, Date.parse('2026-10-30T02:00:00Z'), classifier, NO_ADS);
+  assert.equal(summary.productSources.fallback, 1);
+});
+
+test('productFromAdCreative: 코드 우선, 제과·파인트 단어, 상품이 섞이면 확정하지 않는다', () => {
+  assert.equal(productFromAdCreative({ adNames: ['[26.07]F_V_JD멜_숏츠_260731_빙과_정요한'] }), 'JD멜');
+  assert.equal(productFromAdCreative({ campaignNames: ['인지_P팝_유튜브'] }), 'P팝');
+  assert.equal(productFromAdCreative({ campaignNames: ['[26.10]제과_인지_CU1위'] }), '제과');
+  assert.equal(productFromAdCreative({ adNames: ['JD복_파인트_제과_콜라보'] }), 'JD복', 'JD복 코드는 다른 상품 단어에 밀리지 않는다');
+  assert.equal(productFromAdCreative({ campaignNames: ['인지_P팝', '[26.10]제과_인지'] }), '', '서로 다른 상품 → 추측 금지');
+  assert.equal(productFromAdCreative({ campaignNames: ['빙과_인지_CU1위'] }), '');
+  assert.equal(productFromAdCreative(undefined), '');
 });

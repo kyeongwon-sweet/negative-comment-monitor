@@ -11,7 +11,8 @@ export function awarenessProductName(defaultProductName, campaignName = '', adTi
   const identity = `${String(campaignName || '')} ${String(adTitle || '')}`;
   if (/JD복/i.test(`${fallback} ${identity}`)) return fallback;
   if (/블트하|제과|맛피아|감자스틱/i.test(identity)) return 'JG';
-  return /파인트/i.test(identity) ? 'P' : fallback;
+  // 파인트 캠페인은 '파인트' 대신 상품 코드 'P팝'만 적히기도 한다(10-30 사용자 확인). 'P바치'(바치케)는 별개.
+  return /파인트|(?:^|[^A-Za-z0-9가-힣])P팝/i.test(identity) ? 'P' : fallback;
 }
 
 // KST 아침 배치 창 판정. prefix = 'META_ADS' | 'TIKTOK_ADS' | 'YOUTUBE_ADS'.

@@ -13,6 +13,10 @@ test('인지 광고 캠페인명 파인트는 P로, 그 외와 JD복은 기존 �
   assert.equal(awarenessProductName('JD', '', '[파인트] 인지 소재'), 'P');
   assert.equal(awarenessProductName('JD', '[빙과] 쫀득바 인지', '소재'), 'JD');
   assert.equal(awarenessProductName('JD복', '[빙과] 파인트 인지', '소재'), 'JD복');
+  // 'P팝' 코드만 있는 파인트 캠페인(10-30), 'P바치'는 바치케라 파인트로 바꾸지 않는다.
+  assert.equal(awarenessProductName('JD', '[26.10]인지_P팝_유튜브', ''), 'P');
+  assert.equal(awarenessProductName('JD', '', '[26.10]F_V_P팝_숏츠_빙과_정요한'), 'P');
+  assert.notEqual(awarenessProductName('JD', '[26.10]인지_P바치', ''), 'P');
 });
 
 test('인지 광고 캠페인명·소재명 블트하/제과는 JG로 분류하고 JD복은 최우선 보호한다', () => {

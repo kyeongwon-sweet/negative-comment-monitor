@@ -9,7 +9,11 @@
 // 공개 레포라 로그에는 개수·영상ID·댓글ID만 남긴다.
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { loadYouTubeOwnerChannelConfig, ownerChannelTarget } from './youtube-owner-channel.js';
+import {
+  inferOwnerVideoProduct, loadYouTubeOwnerChannelConfig, ownerChannelTarget, YOUTUBE_OWNER_VIDEO_PRODUCT_OVERRIDES,
+} from './youtube-owner-channel.js';
+import { DEFAULT_GOOGLE_ADS_API_BASE, DEFAULT_GOOGLE_ADS_API_VERSION } from './youtube-ads.js';
+import { loadYouTubeAdCreativeMap, productCodesFromText } from './august-product-restore.js';
 import { loadYouTubeOwnerTokens, refreshAndVerifyOwner } from './youtube-owner-moderation.js';
 import { ownerThreadRoute } from './youtube-owner-channel-run.js';
 import { classifyTargetsBatched, isLlmDeferred } from './hybrid-classify.js';
@@ -21,6 +25,7 @@ import { kstDateKey } from './schedule.js';
 import { sendAlert } from './slack.js';
 
 export const PUBLIC_AUDIT_ACTOR = 'owner-public-audit';
+const NO_PRODUCT = '__no_product__';
 
 export function loadPublicAuditConfig(env = process.env, now = Date.now()) {
   const base = loadYouTubeOwnerChannelConfig(env, now);
@@ -33,7 +38,55 @@ export function loadPublicAuditConfig(env = process.env, now = Date.now()) {
     publicAuditMaxCards: Math.max(1, Math.min(200, Number(env.PUBLIC_AUDIT_MAX_CARDS || 30))),
     publicAuditMaxPages: Math.max(1, Math.min(100, Number(env.PUBLIC_AUDIT_MAX_PAGES || 30))),
     publicAuditMaxReplyPages: Math.max(1, Math.min(20, Number(env.PUBLIC_AUDIT_MAX_REPLY_PAGES || 5))),
+    googleAdsLookup: googleAdsLookupConfig(env, base),
   };
+}
+
+// 광고 영상의 상품은 제목보다 Google Ads 소재명·캠페인명이 정확하다(10-30: 제목엔 '카라멜 1톤…'뿐,
+// 캠페인명에 P팝·제과). 상품 라우팅용이라 캠페인명 필터 없이 전 캠페인을 본다.
+function googleAdsLookupConfig(env, base) {
+  const required = ['GOOGLE_ADS_DEVELOPER_TOKEN', 'GOOGLE_ADS_LOGIN_CUSTOMER_ID', 'GOOGLE_ADS_REFRESH_TOKEN'];
+  if (required.some((key) => !String(env[key] || '').trim())) return null;
+  const digits = (value) => String(value || '').replace(/\D/g, '');
+  return {
+    googleAdsApiBase: String(env.GOOGLE_ADS_API_BASE || DEFAULT_GOOGLE_ADS_API_BASE).trim().replace(/\/$/, ''),
+    googleAdsApiVersion: String(env.GOOGLE_ADS_API_VERSION || DEFAULT_GOOGLE_ADS_API_VERSION).trim(),
+    googleAdsDeveloperToken: String(env.GOOGLE_ADS_DEVELOPER_TOKEN).trim(),
+    googleAdsLoginCustomerId: digits(env.GOOGLE_ADS_LOGIN_CUSTOMER_ID),
+    googleAdsCustomerIds: String(env.GOOGLE_ADS_CUSTOMER_IDS || '').split(',').map(digits).filter(Boolean),
+    googleAdsClientId: base.googleAdsClientId,
+    googleAdsClientSecret: base.googleAdsClientSecret,
+    googleAdsRefreshToken: String(env.GOOGLE_ADS_REFRESH_TOKEN).trim(),
+    youtubeAdsCampaignNameFilter: '',
+  };
+}
+
+// 소재명·캠페인명에서 상품을 하나로 확정할 수 있을 때만 돌려준다. 이름마다 정확한 상품 코드(JD멜·P팝·P바치 등)를
+// 먼저 보고, 없으면 제과·파인트 단어를 본다. 서로 다른 상품이 섞이면 ''(제목 추론으로 넘김 — 추측 배정 금지).
+export function productFromAdCreative(creative) {
+  const found = new Set();
+  for (const value of [...(creative?.adNames || []), ...(creative?.campaignNames || [])]) {
+    const text = String(value || '');
+    const codes = productCodesFromText(text);
+    if (codes.length === 1) found.add(codes[0]);
+    else if (codes.length > 1) found.add('?');
+    else if (/제과|블트하|맛피아|감자스틱/.test(text)) found.add('제과');
+    else if (/파인트/.test(text)) found.add('P');
+  }
+  return found.size === 1 && !found.has('?') ? [...found][0] : '';
+}
+
+async function loadAdCreatives(config, fetchImpl, summary) {
+  if (!config.googleAdsLookup) {
+    summary.errors.push('Google Ads 조회 설정 없음 — 광고 영상 상품을 제목으로만 추정(오배정 위험)');
+    return new Map();
+  }
+  try {
+    return (await loadYouTubeAdCreativeMap(config.googleAdsLookup, fetchImpl)).byVideo;
+  } catch (error) {
+    summary.errors.push(`Google Ads 소재 조회 실패 — 제목으로만 추정: ${String(error.message || error).slice(0, 160)}`);
+    return new Map();
+  }
 }
 
 function sbHeaders(config, extra = {}) {
@@ -167,12 +220,15 @@ async function insertAuditAlert(config, row, fetchImpl) {
   if (!response.ok) throw new Error(`재감사 알림행 적재 실패(${response.status}): ${(await response.text()).slice(0, 160)}`);
 }
 
-export async function runPublicAudit(config, fetchImpl = fetch, now = Date.now(), classifier = undefined) {
+export async function runPublicAudit(config, fetchImpl = fetch, now = Date.now(), classifier = undefined, options = {}) {
   const summary = {
     dryRun: config.publicAuditDryRun, channels: [], videos: 0, publicComments: 0, alreadyJudged: 0,
-    reviewed: 0, flagged: 0, deferred: 0, cardsPosted: 0, cardsCapped: 0, errors: [],
+    reviewed: 0, flagged: 0, deferred: 0, cardsPosted: 0, cardsCapped: 0,
+    // 상품 결정 근거별 영상 수·상품별 판정 수. 카드 올리기 전(dry-run)에 담당자 배정이 맞는지 사람이 볼 수 있게.
+    productSources: { override: 0, ad: 0, title: 0, fallback: 0 }, flaggedByProduct: {}, errors: [],
   };
   const titles = await loadVideoTitles(config, fetchImpl);
+  const adCreatives = await (options.loadAdCreatives || loadAdCreatives)(config, fetchImpl, summary);
   const tokens = new Map((await loadYouTubeOwnerTokens(config, fetchImpl)).map((o) => [o.channelId, o]));
   const entries = [];
   for (const channel of config.youtubeOwnerChannels) {
@@ -196,6 +252,15 @@ export async function runPublicAudit(config, fetchImpl = fetch, now = Date.now()
       for (const [videoId, comments] of byVideo) {
         const video = { id: videoId, snippet: { title: titles.get(videoId) || '' }, statistics: { commentCount: String(comments.length) } };
         const target = ownerChannelTarget(config, channel, channelName, video, videoId, { current: comments.length, forceReclassify: true });
+        const titleProduct = target.productName;
+        const adProduct = productFromAdCreative(adCreatives.get(videoId));
+        let source = 'title';
+        if (YOUTUBE_OWNER_VIDEO_PRODUCT_OVERRIDES[videoId]) source = 'override';
+        else if (adProduct) { target.productName = adProduct; source = 'ad'; }
+        else if (inferOwnerVideoProduct(video, NO_PRODUCT) === NO_PRODUCT) source = 'fallback';
+        summary.productSources[source] += 1;
+        console.error(`[owner-public-audit:route] ${videoId} product=${target.productName} source=${source}`
+          + `${source === 'ad' && adProduct !== titleProduct ? ` title_guess=${titleProduct}` : ''}`);
         entries.push({ target, comments });
         row.videos += 1;
         row.comments += comments.length;
@@ -236,6 +301,12 @@ export async function runPublicAudit(config, fetchImpl = fetch, now = Date.now()
     });
   });
   summary.flagged = flagged.length;
+  for (const item of flagged) {
+    const route = ownerThreadRoute(item.target, config.slackAssignees);
+    // 공개 레포 로그라 Slack ID 대신 스레드 범위(상품|분류)와 담당자 유무만 남긴다.
+    const key = `${route.scopeKey}${route.assignee ? '' : '(담당자없음)'}`;
+    summary.flaggedByProduct[key] = (summary.flaggedByProduct[key] || 0) + 1;
+  }
   if (summary.deferred > 0) summary.errors.push(`판정 보류 ${summary.deferred}건(LLM 실패·예산) — 다음 회차 재판정`);
 
   const threads = new Map();
