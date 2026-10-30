@@ -187,6 +187,9 @@ test('영상ID 상품군 override는 제목 키워드보다 우선한다(제과 
   assert.equal(inferOwnerVideoProduct(video), '제과');
   assert.equal(productGroup(inferOwnerVideoProduct(video)), 'jg');
   assert.equal(inferOwnerVideoProduct({ id: 'W2PR9iMlfYw', snippet: { title: '쓰형 맛피아 건물주4 0904' } }), '제과');
+  // 카라멜 2편: 상품 없는 제목이라도 쫀득바 폴백이 아니라 제과(10-30 사용자 확인).
+  assert.equal(inferOwnerVideoProduct({ id: 'L_gjhYRNS9E', snippet: { title: '카라멜 1톤 태워먹은 전설의 라라스윗 직원' } }), '제과');
+  assert.equal(inferOwnerVideoProduct({ id: '3ZDNLKuVFsw', snippet: { title: '카라멜 1톤 태워먹은 전설의 중소 직원' } }), '제과');
 });
 
 test('맛피아·감자스틱은 영상ID override 없이도 제과로 분류한다(대표님 지정)', () => {

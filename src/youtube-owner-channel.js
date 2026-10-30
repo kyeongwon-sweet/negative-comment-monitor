@@ -29,6 +29,9 @@ export const YOUTUBE_BRAND_HOSTILITY_CHANNEL_IDS = new Set([
 export const YOUTUBE_OWNER_VIDEO_PRODUCT_OVERRIDES = Object.freeze({
   m08ivgAEkYY: '제과', // 쓰형 맛피아 건물주3 0904
   W2PR9iMlfYw: '제과', // 쓰형 맛피아 건물주4 0904
+  // 먹는김에 '카라멜 1톤…' 2편: 제목·설명에 상품 없고 연결된 Google Ads 캠페인에도 없음 → 사용자 확인 제과(10-30).
+  L_gjhYRNS9E: '제과',
+  '3ZDNLKuVFsw': '제과',
 });
 
 const DAY_MS = 24 * 60 * 60 * 1000;
