@@ -38,14 +38,16 @@ function verdict(result) {
   return result.alert === true ? 'hide' : 'keep';
 }
 
-export async function runOwnedPolicyEval(cases, config, classifier = classifyCommentsLLM) {
+// adPath=true: 소유채널에 올린 유튜브 광고 경로(인지광고+소유 플래그)로 같은 판정을 재본다.
+export async function runOwnedPolicyEval(cases, config, classifier = classifyCommentsLLM, { adPath = false } = {}) {
+  const target = adPath ? { ...EVAL_TARGET, awarenessAdScope: true, source: 'youtube_ads' } : EVAL_TARGET;
   const comments = cases.map((item) => ({ text: item.text }));
   const stats = {};
-  const risks = await classifyCommentsHybrid(comments, EVAL_TARGET, config, classifier, stats);
-  const final = suppressLowConfidenceOwnerRisks(EVAL_TARGET, comments, risks);
+  const risks = await classifyCommentsHybrid(comments, target, config, classifier, stats);
+  const final = adPath ? risks : suppressLowConfidenceOwnerRisks(target, comments, risks);
   // 단계별 진단(어느 모델이 놓쳤는지). 운영 판정은 위 final이다.
   // 운영처럼 스코프 플래그를 붙여야 [소유채널] 정책이 프롬프트에 들어간다.
-  const scoped = comments.map((comment) => ({ ...comment, ownedChannelBrandHostilityScope: true }));
+  const scoped = comments.map((comment) => ({ ...comment, ownedChannelBrandHostilityScope: true, ...(adPath ? { awarenessAdScope: true } : {}) }));
   const weak = await classifier(scoped, { ...config, ownedBrandEscalationModel: '' }) || [];
   const strong = config.ownedBrandEscalationModel
     ? await classifier(scoped, { ...config, geminiModel: config.ownedBrandEscalationModel }) || []
@@ -70,7 +72,9 @@ async function main() {
     process.exit(2);
   }
   const cases = loadGoldenCases();
-  const { rows, mismatches, stats } = await runOwnedPolicyEval(cases, config);
+  const adPath = String(process.env.OWNED_EVAL_AD_PATH || '').toLowerCase() === 'true';
+  const { rows, mismatches, stats } = await runOwnedPolicyEval(cases, config, undefined, { adPath });
+  if (adPath) console.log('[owned-policy-eval] path=youtube-ad (인지광고+소유채널)');
   console.log(`[owned-policy-eval] weak=${config.geminiModel} strong=${config.ownedBrandEscalationModel} cases=${rows.length}`);
   for (const row of rows) {
     const mark = row.got === row.expect ? 'ok  ' : 'MISS';

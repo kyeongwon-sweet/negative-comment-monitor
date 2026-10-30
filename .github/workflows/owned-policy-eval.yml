@@ -11,6 +11,11 @@ on:
         description: 1차 모델(비우면 운영 기본값)
         required: false
         type: string
+      ad_path:
+        description: 소유채널 유튜브 광고 경로(인지광고+소유 플래그)로 평가
+        required: false
+        type: boolean
+        default: false
       escalation_model:
         description: 강한 2차 모델(비우면 운영 기본값)
         required: false
@@ -34,3 +39,4 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ inputs.weak_model || 'gemini-3.1-flash-lite' }}
           OWNED_BRAND_ESCALATION_MODEL: ${{ inputs.escalation_model || 'gemini-3.5-flash-lite' }}
+          OWNED_EVAL_AD_PATH: ${{ inputs.ad_path && 'true' || 'false' }}

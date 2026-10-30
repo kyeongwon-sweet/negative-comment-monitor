@@ -163,22 +163,26 @@ test('LLM 프롬프트가 긍정 광고언급·잡담·가용성을 정상 예�
   assert.match(prompt, /제품\/브랜드를 직접 깎아내리지 않는 가용성·사실 관찰은 정상/);
 });
 
-test('인지광고 정책은 [인지광고] 표시 댓글에만 추가되고 소유채널 마커보다 우선한다', async () => {
+test('소유채널에 올린 유튜브 광고(두 플래그)는 인지광고·소유채널 정책을 모두 받는다', async () => {
   const prompts = [];
   const fetchImpl = async (url, init) => {
     prompts.push(JSON.parse(init.body).messages[0].content);
     return { ok: true, json: async () => ({ content: [{ text: '[]' }] }) };
   };
-  // 유튜브 광고는 두 플래그를 모두 가질 수 있다 → [인지광고]가 우선하고 인지광고 정책이 붙는다.
+  // 10-29 ZHJhbOaaWzE 재발방지: 예전엔 [인지광고]만 붙어 소유채널 정책('설레는 댓글창 열기' 등)이 빠졌다.
   await classifyCommentsLLM(
     [{ text: '또 광고냐', awarenessAdScope: true, ownedChannelBrandHostilityScope: true }],
     { anthropicKey: 'k' }, fetchImpl,
   );
   // 위성/협찬(마커 없음)에는 인지광고 정책이 붙지 않는다.
   await classifyCommentsLLM([{ text: '슈기님은 신전이 레전드긴 함' }], { anthropicKey: 'k' }, fetchImpl);
-  assert.match(prompts[0], /\[인지광고\] 또 광고냐/);
-  assert.doesNotMatch(prompts[0], /\[소유채널\]/);
+  // 메타·틱톡 인지광고(소유 플래그 없음)에는 소유채널 정책이 붙지 않는다.
+  await classifyCommentsLLM([{ text: '또 광고냐', awarenessAdScope: true }], { anthropicKey: 'k' }, fetchImpl);
+  assert.match(prompts[0], /\[인지광고\]\[소유채널\] 또 광고냐/);
   assert.match(prompts[0], /유료 인지광고 정책/);
+  assert.match(prompts[0], /소유 YouTube 채널 확대 정책/);
+  assert.match(prompts[2], /\[인지광고\] 또 광고냐/);
+  assert.doesNotMatch(prompts[2], /소유 YouTube 채널 확대 정책/);
   // 인지광고 전용 블록에는 타 인물 언급·발연기·댓글싸움만 남는다(광고 냉소·피로는 base로 이동).
   assert.match(prompts[0], /타 인물·연예인·지인 언급·비교·드립으로 광고 흐름을 흐리면 부정/);
   assert.doesNotMatch(prompts[1], /유료 인지광고 정책/);

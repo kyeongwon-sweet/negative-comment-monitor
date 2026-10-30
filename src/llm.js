@@ -239,16 +239,15 @@ const RESULT_SCHEMA = {
 };
 
 function buildPrompt(chunk) {
-  // 인지광고 마커가 소유채널 마커보다 우선한다(유튜브 광고는 두 플래그를 모두 가질 수 있다).
+  // 유튜브 광고는 소유채널에 올린 영상이라 두 플래그를 모두 가진다. 예전엔 [인지광고]만 붙여 소유채널 정책이
+  // 빠졌다(10-29 ZHJhbOaaWzE '두근두근 설레는댓글창 열기'가 광고 경로에서 정상 → 같은 지문 캐시로 소유 경로도 정상).
+  // 이제 두 마커·두 정책을 함께 붙인다.
   const hasAwarenessContext = chunk.some((comment) => comment?.awarenessAdScope === true);
-  const hasOwnedChannelContext = chunk.some((comment) => (
-    comment?.ownedChannelBrandHostilityScope === true && comment?.awarenessAdScope !== true
-  ));
+  const hasOwnedChannelContext = chunk.some((comment) => comment?.ownedChannelBrandHostilityScope === true);
   const numbered = chunk.map((comment, index) => {
-    const scope = comment?.awarenessAdScope === true ? '[인지광고] '
-      : comment?.ownedChannelBrandHostilityScope === true ? '[소유채널] '
-        : '';
-    return `${index}. ${scope}${String(comment?.text || '').slice(0, 300)}`;
+    const scope = (comment?.awarenessAdScope === true ? '[인지광고]' : '')
+      + (comment?.ownedChannelBrandHostilityScope === true ? '[소유채널]' : '');
+    return `${index}. ${scope ? `${scope} ` : ''}${String(comment?.text || '').slice(0, 300)}`;
   }).join('\n');
   return PROMPT_HEAD
     + (hasOwnedChannelContext ? OWNED_CHANNEL_POLICY : '')
