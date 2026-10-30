@@ -1,0 +1,88 @@
+name: YouTube owner public comment audit
+
+# 소유채널 공개 댓글을 매일 현재 기준으로 다시 판정한다(2026-10-30 사용자 승인).
+# 부정 판정은 숨기지 않고 데일리 스레드 카드 + 알림행 review_decision='hold'로만 올린다.
+# 'hold'는 15분 자동숨김(youtube-owner-pending-hide) 대상이 아니므로, 사람이 [숨김]을 눌러야 숨겨진다.
+# 이미 알림행이 있는 댓글(봇·사람 판정)은 다시 올리지 않는다. 로그엔 개수·ID만(공개 레포).
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 판정만 하고 카드·알림행을 만들지 않음
+        required: false
+        type: boolean
+        default: true
+  schedule:
+    # 매일 10:41 KST(01:41 UTC). 업무시간에 카드가 보이도록, UTC0 드롭 구간 회피.
+    - cron: '41 1 * * *'
+
+concurrency:
+  # 소유채널 감시와 같은 그룹 — 같은 댓글을 동시에 판정·카드화하지 않게 직렬화한다.
+  group: youtube-owner-channel-production
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - run: npm install --ignore-scripts
+      - name: Audit public owner-channel comments
+        id: audit
+        continue-on-error: true
+        run: node src/youtube-owner-public-audit.js
+        env:
+          PUBLIC_AUDIT_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+          PUBLIC_AUDIT_MAX_CARDS: '30'
+          LLM_PROVIDER: gemini
+          GEMINI_QUOTA_CLASS: bulk
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-3.1-flash-lite
+          GEMINI_REQUEST_INTERVAL_MS: '5000'
+          OWNED_BRAND_ESCALATION_MODEL: gemini-3.5-flash-lite
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          SLACK_ASSIGNEE_P_ADDITIONAL: ${{ vars.SLACK_ASSIGNEE_P_ADDITIONAL }}
+          SLACK_ASSIGNEE_JD_VIRAL: ${{ vars.SLACK_ASSIGNEE_JD_VIRAL }}
+          SLACK_ASSIGNEE_SATELLITE: ${{ vars.SLACK_ASSIGNEE_SATELLITE }}
+          SLACK_ASSIGNEE_JD_SATELLITE: ${{ vars.SLACK_ASSIGNEE_JD_SATELLITE }}
+          SLACK_ASSIGNEE_JD_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JD_PRIMARY }}
+          SLACK_ASSIGNEE_PBACHI: ${{ vars.SLACK_ASSIGNEE_PBACHI }}
+          SLACK_ASSIGNEE_PBACHI_MUKSTAR: ${{ vars.SLACK_ASSIGNEE_PBACHI_MUKSTAR }}
+          SLACK_ASSIGNEE_PBACHI_OVERRIDE: ${{ vars.SLACK_ASSIGNEE_PBACHI_OVERRIDE }}
+          SLACK_ASSIGNEE_P_AWARENESS: ${{ vars.SLACK_ASSIGNEE_P_AWARENESS }}
+          SLACK_ASSIGNEE_P_OWNED_YOUTUBE: ${{ vars.SLACK_ASSIGNEE_P_OWNED_YOUTUBE }}
+          SLACK_ASSIGNEE_JG_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JG_PRIMARY }}
+          SLACK_ASSIGNEE_JG_ADDITIONAL: ${{ vars.SLACK_ASSIGNEE_JG_ADDITIONAL }}
+          YOUTUBE_OWNER_DEFAULT_PRODUCT_NAME: JD
+      - name: Record public-audit outcome
+        if: ${{ always() }}
+        continue-on-error: true
+        run: node src/record-auxiliary-outcome.js
+        env:
+          AUXILIARY_HEALTH_KEY: youtube_owner_public_audit
+          AUXILIARY_OUTCOME: ${{ steps.audit.outcome == 'success' && 'success' || 'failure' }}
+          AUXILIARY_FAILURE_THRESHOLD: '2'
+          AUXILIARY_ALERT_COOLDOWN_HOURS: '24'
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ASSIGNEE_OTHER: ${{ vars.SLACK_ASSIGNEE_OTHER }}
+          AUXILIARY_COMPONENT: YouTube 소유채널 공개 댓글 매일 재감사
+          AUXILIARY_REASON: audit=${{ steps.audit.outcome }}
+          FAILURE_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: Fail the job when the audit step failed
+        if: ${{ steps.audit.outcome == 'failure' }}
+        run: exit 1

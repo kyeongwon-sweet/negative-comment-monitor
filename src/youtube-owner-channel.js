@@ -264,7 +264,7 @@ export function inferOwnerVideoProduct(video, fallback = 'JD') {
   return String(fallback || 'JD').trim() || 'JD';
 }
 
-function ownerChannelTarget(config, channel, channelName, video, videoId, decision) {
+export function ownerChannelTarget(config, channel, channelName, video, videoId, decision) {
   const ownedChannelBrandHostilityScope = YOUTUBE_BRAND_HOSTILITY_CHANNEL_IDS.has(channel.channelId);
   // videos.list(part=statistics)는 댓글이 켜진 0댓글 영상에도 commentCount: "0"을 준다.
   // statistics 응답은 왔지만 그 속성만 없으면 댓글 사용 중지 상태다. statistics 자체가
