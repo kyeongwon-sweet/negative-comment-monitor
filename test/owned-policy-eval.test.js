@@ -30,7 +30,7 @@ test('eval 워크플로 기본 모델이 운영 소유채널 워크플로와 같
 test('eval은 운영과 같은 경로를 탄다: 하드넷·게이트 반영, 단계별 진단, 불일치 집계', async () => {
   const cases = [
     { id: 'a', expect: 'hide', text: '또 광고냐' },
-    { id: 'b', expect: 'keep', text: '이게 뭔데' },
+    { id: 'b', expect: 'keep', text: '어디서 팔아요?' },
     { id: 'c', expect: 'hide', text: '요즘은 3000원이던데' },
   ];
   const allNormal = async (items) => items.map(() => ({ alert: false, category: '정상', reason: '', priority: 'normal' }));

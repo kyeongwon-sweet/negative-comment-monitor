@@ -18,8 +18,8 @@
     { "id": "h15-viral-fatigue", "expect": "hide", "decidedAt": "2026-10-28", "text": "제발 바이럴좀 그만해라" },
     { "id": "h16-ad-annoying", "expect": "hide", "decidedAt": "2026-10-12", "text": "짜증나게 광고하네" },
     { "id": "h17-competitor", "expect": "hide", "decidedAt": "2026-10-12", "text": "허니버터만하겠냐?" },
-    { "id": "k01-what-is-this", "expect": "keep", "decidedAt": "2026-10-28", "text": "이게 뭔데" },
-    { "id": "k02-what-is-this-student", "expect": "keep", "decidedAt": "2026-10-28", "text": "고1인데 이게 뭔데" },
+    { "id": "h39-what-is-this", "expect": "hide", "decidedAt": "2026-10-30 (10-28 keep 번복)", "text": "이게 뭔데" },
+    { "id": "h40-what-is-this-student", "expect": "hide", "decidedAt": "2026-10-30 (10-28 keep 번복)", "text": "고1인데 이게 뭔데" },
     { "id": "k03-mukbang-genre", "expect": "keep", "decidedAt": "2026-10-28", "text": "먹방 왜 보는지 모르겠다" },
     { "id": "k04-eating-joke", "expect": "keep", "decidedAt": "2026-10-28", "text": "밥은먹고사냐" },
     { "id": "k05-stock-observation", "expect": "keep", "decidedAt": "2026-10-28 (paraphrase)", "text": "편의점에 엄청 쌓여있던데" },
@@ -55,7 +55,7 @@
     { "id": "k14-reminds-old-ad", "expect": "keep", "decidedAt": "2026-10-29", "text": "미에로화이바 심부름 생각나네" },
     { "id": "k15-ad-targeting-joke", "expect": "keep", "decidedAt": "2026-10-29", "text": "아니 바치케 얘기 했더니 이 광고 나옴;;" },
     { "id": "k16-instagram-question", "expect": "keep", "decidedAt": "2026-10-29", "text": "인스타에 저런게 있었음?" },
-    { "id": "k17-what-is-bachike", "expect": "keep", "decidedAt": "2026-10-29", "text": "그래서 바치케가 뭔데요;;;" },
+    { "id": "h41-what-is-bachike", "expect": "hide", "decidedAt": "2026-10-30 (10-29 keep 번복)", "text": "그래서 바치케가 뭔데요;;;" },
     { "id": "k18-scene-question", "expect": "keep", "decidedAt": "2026-10-29", "text": "누가 아이스크림을 결제해놓고 카운터에 놔둠? ㅋㅋ" },
     { "id": "k19-what-nonsense", "expect": "keep", "decidedAt": "2026-10-29", "text": "뭔…. 소리.. 죠?" },
     { "id": "k20-eat-anything", "expect": "keep", "decidedAt": "2026-10-29", "text": "그냥 배에들어가면 끝임 암 거나 먹죠" },
@@ -67,6 +67,8 @@
     { "id": "k26-creator-praise", "expect": "keep", "decidedAt": "left-visible-2026-10-29", "text": "진짜 제일 착실한 먹방 가이야 먹는것도 모든게 가식이 없어서 인기가 있는거지 계속 하던데로 만 하시면 됩니다 화이팅!!!!! 최고" },
     { "id": "k27-price-question", "expect": "keep", "decidedAt": "left-visible-2026-10-29", "text": "얼마에요???" },
     { "id": "k28-where-to-buy", "expect": "keep", "decidedAt": "left-visible-2026-10-29", "text": "어디어디 팔아요" },
-    { "id": "k29-ad-praise", "expect": "keep", "decidedAt": "left-visible-2026-10-29", "text": "광고 잘하네 제발 광고에 침뱉는 애들 안나왔음 조켓다" }
+    { "id": "k29-ad-praise", "expect": "keep", "decidedAt": "left-visible-2026-10-29", "text": "광고 잘하네 제발 광고에 침뱉는 애들 안나왔음 조켓다" },
+    { "id": "h42-what-is-that", "expect": "hide", "decidedAt": "2026-10-30", "text": "그게 뭔데" },
+    { "id": "h43-what-is-this-grade5", "expect": "hide", "decidedAt": "2026-10-30", "text": "초5인데요 이게 뭔데요?" }
   ]
 }

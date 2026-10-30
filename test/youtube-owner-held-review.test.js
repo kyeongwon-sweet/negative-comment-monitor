@@ -53,7 +53,7 @@ test('공개 판정: 응답 누락은 보류, 호출 실패는 null(아무것도
 
 test('공개 프롬프트에 사람 기준(유행 부정·출연자 비하·장면 반박)이 들어간다', () => {
   const prompt = buildApprovePrompt([{ text: 'x' }]);
-  for (const phrase of ['나만 모름', '싸가지가 없네', '품절 아니던데', '조금이라도 애매하면 공개하지 마세요']) assert.ok(prompt.includes(phrase), phrase);
+  for (const phrase of ['나만 모름', '싸가지가 없네', '품절 아니던데', '그게 뭔데', '조금이라도 애매하면 공개하지 마세요']) assert.ok(prompt.includes(phrase), phrase);
 });
 
 function fakeWorld({ llmOk = true } = {}) {
