@@ -517,3 +517,8 @@ test('5q7z3FExo_Q 재발방지: 워크플로의 OWNED_BRAND_ESCALATION_MODEL이 
   assert.equal(config.ownedBrandEscalationModel, model);
   assert.ok(config.geminiKey, '강한 Gemini 모델 호출에 필요한 키도 전달돼야 함');
 });
+
+test('10-30 오배정 재발방지: 광고 소재명 제목의 "제과"·"새우깡"은 제과로 추론(JD 폴백 금지)', () => {
+  assert.equal(inferOwnerVideoProduct({ id: 'x', snippet: { title: '[26.10]F_V_BT틱_인지_CU1위_숏츠형_전화통화형.새우깡제친_var2.릴스_점주이모VS조카_요즘CU.X__이선민_261029_제과_김하영' } }), '제과');
+  assert.equal(inferOwnerVideoProduct({ id: 'y', snippet: { title: '멜론 좋아하면 무조건 좋아할 아이스크림' } }), 'JD');
+});

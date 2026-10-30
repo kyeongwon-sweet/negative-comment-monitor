@@ -6,8 +6,8 @@ import { actionDefinitions } from '../src/slack.js';
 
 const CH = 'UCxfjcCvRPOPzo6PeAttO4Dg';
 
-function world({ alerted = [], llm = 'ok' } = {}) {
-  const calls = { cards: [], rows: [], hides: 0 };
+function world({ alerted = [], llm = 'ok', titleInState = true } = {}) {
+  const calls = { cards: [], rows: [], hides: 0, videoLookups: 0 };
   const json = (body, ok = true, status = 200) => ({ ok, status, json: async () => body, text: async () => JSON.stringify(body) });
   const threads = [
     { snippet: { videoId: 'v1', totalReplyCount: 1, topLevelComment: { id: 'bad', snippet: { textOriginal: '싸가지가 읍네', authorChannelId: { value: 'UCx' }, authorDisplayName: '@a' } } },
@@ -19,7 +19,8 @@ function world({ alerted = [], llm = 'ok' } = {}) {
   const alertedFps = new Set(alerted.map((id) => commentFingerprint(target, { id, platform: 'youtube' })));
   const fetchImpl = async (url, init = {}) => {
     const u = String(url);
-    if (u.includes('youtube_owner_video_state')) return json([{ video_id: 'v1', video_title: '멜론 쫀득바' }]);
+    if (u.includes('youtube_owner_video_state')) return json(titleInState ? [{ video_id: 'v1', video_title: '멜론 쫀득바' }] : []);
+    if (u.includes('/videos?')) { calls.videoLookups += 1; return json({ items: [{ id: 'v1', snippet: { title: '[26.10]새우깡제친_main_261029_제과_김하영' } }] }); }
     if (u.includes('meta_tokens')) return json([{ kind: `youtube_owner:${CH}`, token: 'rt' }]);
     if (u.includes('oauth2.googleapis.com')) return json({ access_token: 'at' });
     if (u.includes('/channels') && u.includes('mine=true')) return json({ items: [{ id: CH }] });
@@ -97,4 +98,11 @@ test('판정 실패(LLM null)면 LLM 판정분은 카드 없이 보류로 남기
   assert.equal(calls.hides, 0);
   assert.ok(summary.deferred > 0);
   assert.ok(summary.errors.length > 0);
+});
+
+test('상태표에 제목이 없는 영상은 videos.list로 제목을 채워 상품(제과)을 맞게 라우팅한다', async () => {
+  const { fetchImpl, calls, classifier } = world({ titleInState: false, alerted: ['decided'] });
+  await runPublicAudit(BASE, fetchImpl, Date.parse('2026-10-30T02:00:00Z'), classifier);
+  assert.equal(calls.videoLookups, 1);
+  assert.equal(calls.rows[0].product_name, '제과');
 });

@@ -186,6 +186,13 @@ export async function runPublicAudit(config, fetchImpl = fetch, now = Date.now()
       const channelName = String(info?.items?.[0]?.snippet?.title || channel.name || channel.channelId);
       const { byVideo, truncated } = await listPublicCommentsByVideo(config, channel.channelId, accessToken, fetchImpl);
       row.truncated = truncated;
+      // 상태표에 없는 옛 영상·새 광고 영상은 제목이 비어 상품 추론이 JD 폴백으로 샌다(10-30 오배정 11장).
+      // 공개 댓글이 있는 영상만 videos.list로 제목을 채운다(50개당 1유닛).
+      const missing = [...byVideo.keys()].filter((id) => !titles.get(id));
+      for (let i = 0; i < missing.length; i += 50) {
+        const info = await googleGet(config, 'videos', { part: 'snippet', id: missing.slice(i, i + 50).join(','), maxResults: 50 }, accessToken, fetchImpl);
+        for (const item of info.items || []) titles.set(String(item.id), String(item.snippet?.title || ''));
+      }
       for (const [videoId, comments] of byVideo) {
         const video = { id: videoId, snippet: { title: titles.get(videoId) || '' }, statistics: { commentCount: String(comments.length) } };
         const target = ownerChannelTarget(config, channel, channelName, video, videoId, { current: comments.length, forceReclassify: true });
