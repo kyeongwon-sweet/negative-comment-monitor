@@ -54,6 +54,76 @@ test('open loop installs once, scans four times, and records each real scan', as
   assert.deepEqual(result, { iterations: 4, monitorRuns: 4, dependenciesInstalled: true, chain: disabledChain });
 });
 
+test('held-review keeps the 15-minute loop alive while the intensive gate is closed', async () => {
+  const commands = [];
+  const reviews = [];
+  const outcomes = [];
+  const sleeps = [];
+  const chainCalls = [];
+  const result = await runMonitorLoop({
+    ...BASE_ENV,
+    HELD_REVIEW_CHANNELS: 'UCOWNER@2026-10-29T02:32:00Z',
+    MONITOR_CHAIN_ENABLED: 'true',
+  }, {
+    gate: async () => false,
+    runCommand: async (command, args) => { commands.push([command, ...args]); },
+    runHeldReview: async (reviewEnv) => { reviews.push(reviewEnv); },
+    recordHeldReviewOutcome: async (...args) => { outcomes.push(args); },
+    recordHeartbeat: async () => {},
+    sleep: async (ms) => { sleeps.push(ms); },
+    now: () => Date.parse('2026-10-30T03:00:00Z'),
+    chain: async (details) => {
+      chainCalls.push(details);
+      return { dispatched: true, reason: 'queued' };
+    },
+  });
+
+  assert.deepEqual(commands, [['npm', 'install', '--ignore-scripts']]);
+  assert.equal(reviews.length, 4);
+  assert.ok(reviews.every((reviewEnv) => reviewEnv.HELD_REVIEW_DRY_RUN === 'false'));
+  assert.deepEqual(outcomes, Array.from({ length: 4 }, () => ['success', '15분 루프 정상']));
+  assert.deepEqual(sleeps, [1, 1, 1]);
+  assert.deepEqual(chainCalls, [{
+    gateOpen: false,
+    keepAlive: true,
+    scannedThisRun: false,
+    lastScannedAt: null,
+    now: Date.parse('2026-10-30T03:00:00Z'),
+  }]);
+  assert.deepEqual(result, {
+    iterations: 4,
+    monitorRuns: 0,
+    dependenciesInstalled: true,
+    heldReviewRuns: 4,
+    heldReviewFailures: 0,
+    chain: { dispatched: true, reason: 'queued' },
+  });
+});
+
+test('held-review failure publishes nothing, stays fail-soft, and is retried next iteration', async () => {
+  let attempts = 0;
+  const outcomes = [];
+  const result = await runMonitorLoop({
+    ...BASE_ENV,
+    MONITOR_LOOP_ITERATIONS: '2',
+    HELD_REVIEW_CHANNELS: 'UCOWNER@2026-10-29T02:32:00Z',
+  }, {
+    gate: async () => false,
+    runCommand: async () => {},
+    runHeldReview: async () => { attempts += 1; throw new Error('LLM unavailable'); },
+    recordHeldReviewOutcome: async (...args) => { outcomes.push(args); },
+    recordHeartbeat: async () => {},
+    sleep: async () => {},
+  });
+
+  assert.equal(attempts, 2);
+  assert.equal(outcomes.length, 2);
+  assert.ok(outcomes.every(([outcome, reason]) => outcome === 'failure' && reason.includes('LLM unavailable')));
+  assert.equal(result.monitorRuns, 0);
+  assert.equal(result.heldReviewRuns, 0);
+  assert.equal(result.heldReviewFailures, 2);
+});
+
 test('floor schedule forces the first scan but gates later iterations', async () => {
   const commands = [];
   const result = await runMonitorLoop({

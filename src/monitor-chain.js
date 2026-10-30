@@ -212,8 +212,9 @@ export async function chainNextMonitor(env = process.env, options = {}) {
   }
   if (!config.supabaseUrl || !config.supabaseKey) return { dispatched: false, reason: 'ledger-not-configured' };
 
-  // 집중 게이트가 열리면 기존 self-chain이 항상 우선한다. floor 원장/상한과 섞지 않는다.
-  if (options.gateOpen || smoke) {
+  // 집중 게이트가 열리거나 15분 SLA가 필요한 보조 작업(현재 held-review)이 켜져 있으면
+  // 기존 self-chain이 항상 우선한다. keepAlive는 전체 스캔을 강제하지 않고 다음 루프만 보장한다.
+  if (options.gateOpen || options.keepAlive || smoke) {
     return queueClaimedMonitor({
       config,
       env,

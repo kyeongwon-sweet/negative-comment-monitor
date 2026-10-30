@@ -117,6 +117,12 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.1-flash-lite
           GEMINI_REQUEST_INTERVAL_MS: '1500'
+          # 소유채널 '모든 댓글 보류' 모드: monitor-loop가 intensive gate와 독립적으로 15분마다
+          # 확실히 정상인 댓글만 공개한다. 채널별 시작시각 이전 보류 댓글은 본체가 제외한다.
+          HELD_REVIEW_CHANNELS: ${{ vars.HELD_REVIEW_CHANNELS }}
+          HELD_REVIEW_DRY_RUN: 'false'
+          HELD_REVIEW_MODEL: gemini-3.5-flash-lite
+          YOUTUBE_OWNER_DEFAULT_PRODUCT_NAME: JD
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5-20251001
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID }}

@@ -28,6 +28,10 @@ const youtubeAdsBackfillWorkflow = readFileSync(
   new URL('../.github/workflows/youtube-ads-backfill.yml', import.meta.url),
   'utf8',
 );
+const heldReviewWorkflow = readFileSync(
+  new URL('../.github/workflows/youtube-owner-held-review.yml', import.meta.url),
+  'utf8',
+);
 
 function assigneeEnvCount(workflow, variable) {
   return (workflow.match(new RegExp(`${variable}:`, 'g')) || []).length;
@@ -207,6 +211,16 @@ test('메인 감시는 예약 run 내부 15분 간격 4회 루프를 사용한�
   assert.match(monitorWorkflow, /group:\s*negative-comment-monitor-production[\s\S]*cancel-in-progress:\s*false/);
   assert.match(monitorWorkflow, /cron:\s*'17 1-22\/3 \* \* \*'/);
   assert.match(monitorWorkflow, /cron:\s*'9,39 6-16 \* \* \*'/);
+});
+
+test('보류 댓글 공개는 메인 15분 루프에 실운영 설정으로 배선하고 별도 크론은 제거한다', () => {
+  const monitorStep = monitorWorkflow.match(/run:\s*node src\/monitor-loop\.js[\s\S]*?(?=\n\s{6}- name:)/)?.[0] || '';
+  assert.match(monitorStep, /HELD_REVIEW_CHANNELS:\s*\$\{\{\s*vars\.HELD_REVIEW_CHANNELS\s*\}\}/);
+  assert.match(monitorStep, /HELD_REVIEW_DRY_RUN:\s*'false'/);
+  assert.match(monitorStep, /HELD_REVIEW_MODEL:\s*gemini-3\.5-flash-lite/);
+  assert.match(monitorStep, /YOUTUBE_OWNER_DEFAULT_PRODUCT_NAME:\s*JD/);
+  assert.doesNotMatch(heldReviewWorkflow, /\bschedule:\s*\n/);
+  assert.match(heldReviewWorkflow, /workflow_dispatch:/);
 });
 
 test('Anthropic 진단 실패는 일반 모니터 장애로 Slack에 발화하지 않는다', () => {

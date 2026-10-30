@@ -20,9 +20,8 @@ on:
         required: false
         type: boolean
         default: false
-  schedule:
-    # 공개 지연을 줄이려 매시 실행(정각 UTC0 드롭 구간 회피). GH 크론 지연이 커지면 monitor 루프 편입 검토.
-    - cron: '23 * * * *'
+  # 정기 실행은 negative-comment-monitor의 15분 루프가 담당한다. 여기에는 수동 dry-run과
+  # 골든셋 평가만 남겨, 두 워크플로가 같은 보류 댓글을 동시에 처리·중복 알림하지 않게 한다.
 
 concurrency:
   group: youtube-owner-held-review

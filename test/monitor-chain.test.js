@@ -332,6 +332,34 @@ test('open gate atomically claims a daily slot then queues one chain run', async
   assert.equal(claim.kst_date, '2026-09-22');
 });
 
+test('held-review keep-alive queues the guarded chain even when the intensive gate is closed', async () => {
+  const calls = [];
+  const dispatches = [];
+  const result = await chainNextMonitor(ENV, {
+    now: NOW,
+    gateOpen: false,
+    keepAlive: true,
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      if (String(url).includes('?select=run_key')) return jsonResponse([]);
+      if (String(url).includes('?on_conflict=run_key')) return jsonResponse([JSON.parse(options.body)]);
+      throw new Error(`unexpected URL: ${url}`);
+    },
+    dispatch: async (_env, _fetch, options) => { dispatches.push(options); },
+  });
+
+  assert.deepEqual(result, { dispatched: true, reason: 'queued', count: 1, maxPerDay: 2 });
+  assert.equal(calls.some((call) => call.url.includes('monitor_scan_heartbeats')), false);
+  assert.deepEqual(dispatches, [{
+    chain: true,
+    maxPerDay: 2,
+    smoke: false,
+    floor: false,
+    floorMinutes: 150,
+    floorMaxPerDay: 12,
+  }]);
+});
+
 test('dispatch failure releases the claim and remains fail-soft', async () => {
   const calls = [];
   const result = await chainNextMonitor(ENV, {
