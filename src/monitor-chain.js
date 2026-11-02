@@ -5,7 +5,7 @@ import { fetchLatestMonitorScanHeartbeat } from './monitor-scan-heartbeat.js';
 export const DEFAULT_MONITOR_CHAIN_MAX_PER_DAY = 24;
 export const DEFAULT_MONITOR_CHAIN_FLOOR_MINUTES = 150;
 export const DEFAULT_MONITOR_CHAIN_FLOOR_MAX_PER_DAY = 12;
-export const MONITOR_WATCHDOG_MAX_GAP_MINUTES = 210;
+export const MONITOR_WATCHDOG_MAX_GAP_MINUTES = 180;
 
 function headers(config, extra = {}) {
   return {

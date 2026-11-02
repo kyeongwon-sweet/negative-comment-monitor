@@ -396,3 +396,47 @@ test('only the first non-intensive iteration is forced', () => {
     eventName: 'workflow_dispatch', schedule: '', iteration: 0, chainRun: true, floorRun: true,
   }), true);
 });
+
+// 계약(재발방지): 보조 작업이 늘거나 트리거 방식이 바뀌어도, 마지막 스캔이 floor를 넘긴 조용한 구간에서
+// run은 (a) 스스로 스캔하거나 (b) floor 경로로 갈 수 있는 chain 요청(keepAlive 아님)을 남겨야 한다.
+// 11-01: keepAlive가 (b)를 막고 (a)도 안 해서 3h53m 무스캔. 새 보조 작업은 아래 AUX에 추가할 것.
+test('계약: floor 지난 조용한 구간에서 어떤 보조작업·트리거 조합이든 스캔하거나 floor 체인 경로를 남긴다', async () => {
+  const AUX = {
+    none: {},
+    held: { HELD_REVIEW_CHANNELS: 'UCOWNER@2026-10-29T02:32:00Z' },
+    pending: { YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true' },
+    both: { HELD_REVIEW_CHANNELS: 'UCOWNER@2026-10-29T02:32:00Z', YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true' },
+  };
+  const TRIGGERS = {
+    quarterHourCron: { MONITOR_TRIGGER_EVENT: 'schedule', MONITOR_TRIGGER_SCHEDULE: '*/15 * * * *' },
+    staggeredCron: { MONITOR_TRIGGER_EVENT: 'schedule', MONITOR_TRIGGER_SCHEDULE: '9,39 6-16 * * *' },
+    chainRun: { MONITOR_TRIGGER_EVENT: 'workflow_dispatch', MONITOR_CHAIN_RUN: 'true', MONITOR_LOOP_ITERATIONS: '4' },
+    floorRun: { MONITOR_TRIGGER_EVENT: 'workflow_dispatch', MONITOR_CHAIN_RUN: 'true', MONITOR_CHAIN_FLOOR_RUN: 'true', MONITOR_LOOP_ITERATIONS: '4' },
+  };
+  const now = Date.parse('2026-11-01T18:00:00Z');
+  for (const [auxName, auxEnv] of Object.entries(AUX)) {
+    for (const [triggerName, triggerEnv] of Object.entries(TRIGGERS)) {
+      const chainCalls = [];
+      const result = await runMonitorLoop({ ...BASE_ENV, ...triggerEnv, ...auxEnv }, {
+        gate: async () => false,
+        latestScan: async () => now - 200 * 60 * 1000,
+        runCommand: async () => {},
+        runHeldReview: async () => {},
+        recordHeldReviewOutcome: async () => {},
+        runPendingHide: async () => {},
+        runFalsePositiveRestore: async () => {},
+        recordPendingHideOutcome: async () => {},
+        recordFalsePositiveRestoreOutcome: async () => {},
+        recordHeartbeat: async () => {},
+        sleep: async () => {},
+        now: () => now,
+        chain: async (details) => { chainCalls.push(details); return disabledChain; },
+      });
+      const floorChainPossible = chainCalls.length === 1 && !chainCalls[0].keepAlive;
+      assert.ok(
+        result.monitorRuns >= 1 || floorChainPossible,
+        `${auxName}×${triggerName}: 스캔 0회인데 floor 경로도 막힘(chain=${JSON.stringify(chainCalls)})`,
+      );
+    }
+  }
+});

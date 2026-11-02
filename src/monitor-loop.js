@@ -182,7 +182,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
         const lastScan = lastScannedAt ?? await latestScan();
         floorDue = lastScan == null || now() - lastScan >= floorMs;
       } catch (error) {
-        // 조회 장애로 매 회차 스캔이 폭주하지 않게 강제하지 않는다. 워치독(3h30m)이 백스톱.
+        // 조회 장애로 매 회차 스캔이 폭주하지 않게 강제하지 않는다. 워치독(3h)이 백스톱.
         console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} floor_check_error=${error.message}`);
       }
     }

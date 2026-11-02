@@ -487,8 +487,8 @@ test('floor dispatch failure releases only the floor claim and remains fail-soft
   assert.match(calls.at(-1).url, /monitor-floor-chain%3A2026-09-22%3A123%3A1/);
 });
 
-test('floor interval is clamped below the 210-minute watchdog threshold', async () => {
-  const harness = floorWakeHarness(NOW - 208 * 60_000);
+test('floor interval is clamped below the 180-minute watchdog threshold', async () => {
+  const harness = floorWakeHarness(NOW - 178 * 60_000);
   const result = await chainNextMonitor({ ...ENV, MONITOR_CHAIN_FLOOR_MINUTES: '999' }, {
     now: NOW,
     gateOpen: false,
@@ -498,8 +498,8 @@ test('floor interval is clamped below the 210-minute watchdog threshold', async 
   });
 
   assert.equal(result.reason, 'floor-not-due');
-  assert.equal(result.ageMinutes, 208);
-  assert.equal(result.floorMinutes, 209);
+  assert.equal(result.ageMinutes, 178);
+  assert.equal(result.floorMinutes, 179);
   assert.equal(harness.wakes.length, 1);
   assert.equal(harness.wakes[0].wakeAt, NOW + 60_000);
 });

@@ -10,7 +10,8 @@ import { dispatchMonitor } from './monitor-dispatch.js';
 
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
-export const DEFAULT_MAX_GAP_MS = 3.5 * HOUR;
+// 정상 floor 스캔 간격은 150~165분(09-30~11-02 실측 67건, 165~195분 0건). 180분 초과는 floor 고장 신호(10-31·11-01 keepAlive 무스캔).
+export const DEFAULT_MAX_GAP_MS = 3 * HOUR;
 export const DEFAULT_ALERT_COOLDOWN_HOURS = 24;
 const HEARTBEAT_HEALTH_KEY = 'monitor_heartbeat';
 
@@ -192,7 +193,7 @@ function healthErrorSummary(health) {
 export async function runHeartbeatCheck(env = process.env, now = Date.now(), fetchImpl = fetch) {
   const runs = await fetchMonitorRuns(env, fetchImpl);
   const stateConfig = heartbeatStateConfig(env);
-  const configuredGapMinutes = Number(env.HEARTBEAT_MAX_GAP_MINUTES || 210);
+  const configuredGapMinutes = Number(env.HEARTBEAT_MAX_GAP_MINUTES || 180);
   const maxGapMs = Number.isFinite(configuredGapMinutes) && configuredGapMinutes > 0
     ? configuredGapMinutes * 60000
     : DEFAULT_MAX_GAP_MS;

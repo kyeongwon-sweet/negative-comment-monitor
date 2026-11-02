@@ -251,9 +251,9 @@ test('소유채널 보조 실패는 건강 원장으로 2회 임계·24시간 �
   assert.doesNotMatch(source, /run: node src\/notify-auxiliary-degraded\.js/);
 });
 
-test('하트비트는 하루 두 번을 유지하며 3.5시간 공백 임계를 전달한다', () => {
+test('하트비트는 하루 두 번을 유지하며 3시간 공백 임계를 전달한다', () => {
   assert.equal((heartbeatWorkflow.match(/- cron:/g) || []).length, 2);
-  assert.match(heartbeatWorkflow, /HEARTBEAT_MAX_GAP_MINUTES:\s*\$\{\{ inputs\.max_gap_minutes \|\| '210' \}\}/);
+  assert.match(heartbeatWorkflow, /HEARTBEAT_MAX_GAP_MINUTES:\s*\$\{\{ inputs\.max_gap_minutes \|\| '180' \}\}/);
   assert.match(heartbeatWorkflow, /HEARTBEAT_ALERT_COOLDOWN_HOURS:\s*'24'/);
   assert.match(heartbeatWorkflow, /SUPABASE_SERVICE_ROLE_KEY:\s*\$\{\{ secrets\.SUPABASE_SERVICE_ROLE_KEY \}\}/);
   assert.match(heartbeatWorkflow, /max_gap_minutes:/);
