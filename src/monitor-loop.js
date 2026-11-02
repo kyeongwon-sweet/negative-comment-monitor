@@ -3,8 +3,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { hasRecentNegativeAlerts } from './intensive-gate.js';
-import { recordMonitorScanHeartbeat } from './monitor-scan-heartbeat.js';
-import { chainNextMonitor, isMonitorChainFloorRun, isMonitorChainRun } from './monitor-chain.js';
+import { fetchLatestMonitorScanHeartbeat, recordMonitorScanHeartbeat } from './monitor-scan-heartbeat.js';
+import {
+  chainNextMonitor,
+  DEFAULT_MONITOR_CHAIN_FLOOR_MINUTES,
+  isMonitorChainFloorRun,
+  isMonitorChainRun,
+  MONITOR_WATCHDOG_MAX_GAP_MINUTES,
+} from './monitor-chain.js';
 
 const MINUTE = 60 * 1000;
 const GATE_ONLY_SCHEDULES = new Set([
@@ -133,6 +139,14 @@ export async function runMonitorLoop(env = process.env, options = {}) {
     },
   ));
   const recordHeartbeat = options.recordHeartbeat || ((details) => recordMonitorScanHeartbeat(gateConfig, details));
+  const latestScan = options.latestScan || (() => fetchLatestMonitorScanHeartbeat(gateConfig));
+  // 보조 작업(held-review·pending-hide)이 루프를 살려두면 chain은 keepAlive로만 이어지고 floor 경로를
+  // 타지 않는다. 그러면 조용한 시간엔 스캔 없이 루프만 돈다(11-01 00:37→04:30 KST 3h53m 무스캔 공백).
+  // 그래서 keepAlive 루프 안에서 직접 floor를 지킨다: 마지막 실제 스캔이 floor 분 이상 지났으면 스캔한다.
+  const floorMs = Math.min(
+    positiveInt(env.MONITOR_CHAIN_FLOOR_MINUTES, DEFAULT_MONITOR_CHAIN_FLOOR_MINUTES),
+    MONITOR_WATCHDOG_MAX_GAP_MINUTES - 1,
+  ) * MINUTE;
   const chain = options.chain || ((details) => chainNextMonitor(env, details));
   const now = options.now || Date.now;
   let dependenciesInstalled = false;
@@ -161,9 +175,21 @@ export async function runMonitorLoop(env = process.env, options = {}) {
     }
 
     const forced = forceFirstMonitor({ eventName, schedule, iteration, chainRun, floorRun });
-    const shouldRun = forced || gateOpen;
+    let floorDue = false;
+    if (!forced && !gateOpen && keepAuxiliaryLoopAlive) {
+      try {
+        // 이 run에서 이미 스캔했다면 그 시각, 아니면 DB 정본(monitor_scan_heartbeats) 최신 스캔.
+        const lastScan = lastScannedAt ?? await latestScan();
+        floorDue = lastScan == null || now() - lastScan >= floorMs;
+      } catch (error) {
+        // 조회 장애로 매 회차 스캔이 폭주하지 않게 강제하지 않는다. 워치독(3h30m)이 백스톱.
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} floor_check_error=${error.message}`);
+      }
+    }
+    const shouldRun = forced || gateOpen || floorDue;
     console.error(
-      `[monitor-loop] iteration=${iteration + 1}/${iterations} gate=${gateState} forced=${forced} decision=${shouldRun ? 'run' : 'skip'}`,
+      `[monitor-loop] iteration=${iteration + 1}/${iterations} gate=${gateState} forced=${forced}`
+        + `${floorDue ? ' floor_due=true' : ''} decision=${shouldRun ? 'run' : 'skip'}`,
     );
 
     if (shouldRun || keepAuxiliaryLoopAlive) {

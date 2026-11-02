@@ -66,6 +66,7 @@ test('held-review keeps the 15-minute loop alive while the intensive gate is clo
     MONITOR_CHAIN_ENABLED: 'true',
   }, {
     gate: async () => false,
+    latestScan: async () => Date.parse('2026-10-30T02:00:00Z'), // 1시간 전 스캔 → floor 미도래
     runCommand: async (command, args) => { commands.push([command, ...args]); },
     runHeldReview: async (reviewEnv) => { reviews.push(reviewEnv); },
     recordHeldReviewOutcome: async (...args) => { outcomes.push(args); },
@@ -100,6 +101,63 @@ test('held-review keeps the 15-minute loop alive while the intensive gate is clo
   });
 });
 
+// 11-01 00:37→04:30 KST: keepAlive 루프가 게이트 닫힘으로 4회 연속 스캔 없이 이어져 3h53m 무스캔 공백.
+test('keepAlive 루프도 마지막 실제 스캔이 floor(150분) 지나면 한 번 스캔하고, 같은 run에선 다시 강제하지 않는다', async () => {
+  const commands = [];
+  const heartbeats = [];
+  const now = Date.parse('2026-10-31T18:00:00Z');
+  const result = await runMonitorLoop({
+    ...BASE_ENV,
+    HELD_REVIEW_CHANNELS: 'UCOWNER@2026-10-29T02:32:00Z',
+  }, {
+    gate: async () => false,
+    latestScan: async () => Date.parse('2026-10-31T15:29:00Z'),
+    runCommand: async (command, args) => { commands.push([command, ...args]); },
+    runHeldReview: async () => {},
+    recordHeldReviewOutcome: async () => {},
+    recordHeartbeat: async (details) => { heartbeats.push(details); },
+    sleep: async () => {},
+    now: () => now + 9 * 60 * 1000, // 마지막 스캔 후 151분
+    chain: async () => disabledChain,
+  });
+
+  assert.equal(result.monitorRuns, 1, 'floor 도래 시 1회만 스캔');
+  assert.deepEqual(heartbeats.map((h) => h.iteration), [1]);
+  assert.deepEqual(commands.filter(([, a]) => a === 'start').length, 1);
+});
+
+test('keepAlive 루프에서 floor 미도래면 스캔하지 않는다', async () => {
+  const now = Date.parse('2026-10-31T18:00:00Z');
+  const result = await runMonitorLoop({ ...BASE_ENV, HELD_REVIEW_CHANNELS: 'UCOWNER@2026-10-29T02:32:00Z' }, {
+    gate: async () => false,
+    latestScan: async () => now - 149 * 60 * 1000,
+    runCommand: async () => {},
+    runHeldReview: async () => {},
+    recordHeldReviewOutcome: async () => {},
+    recordHeartbeat: async () => {},
+    sleep: async () => {},
+    now: () => now,
+    chain: async () => disabledChain,
+  });
+  assert.equal(result.monitorRuns, 0);
+});
+
+test('keepAlive 루프의 최신 스캔 조회가 실패하면 스캔을 강제하지 않는다(비용 폭주 방지, 워치독이 백스톱)', async () => {
+  const result = await runMonitorLoop({ ...BASE_ENV, YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true' }, {
+    gate: async () => false,
+    latestScan: async () => { throw new Error('heartbeat read HTTP 500'); },
+    runCommand: async () => {},
+    runPendingHide: async () => {},
+    runFalsePositiveRestore: async () => {},
+    recordPendingHideOutcome: async () => {},
+    recordFalsePositiveRestoreOutcome: async () => {},
+    recordHeartbeat: async () => {},
+    sleep: async () => {},
+    chain: async () => disabledChain,
+  });
+  assert.equal(result.monitorRuns, 0);
+});
+
 test('held-review failure publishes nothing, stays fail-soft, and is retried next iteration', async () => {
   let attempts = 0;
   const outcomes = [];
@@ -109,6 +167,7 @@ test('held-review failure publishes nothing, stays fail-soft, and is retried nex
     HELD_REVIEW_CHANNELS: 'UCOWNER@2026-10-29T02:32:00Z',
   }, {
     gate: async () => false,
+    latestScan: async () => Date.now(),
     runCommand: async () => {},
     runHeldReview: async () => { attempts += 1; throw new Error('LLM unavailable'); },
     recordHeldReviewOutcome: async (...args) => { outcomes.push(args); },
@@ -136,6 +195,7 @@ test('pending-hide와 오탐 복원은 intensive gate와 무관하게 매 iterat
     YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true',
   }, {
     gate: async () => false,
+    latestScan: async () => Date.now(),
     runCommand: async () => {},
     runPendingHide: async (pendingEnv) => { hides.push(pendingEnv); },
     runFalsePositiveRestore: async (restoreEnv) => { restores.push(restoreEnv); },
@@ -171,6 +231,7 @@ test('pending-hide 실패는 핵심 수집을 죽이지 않고 건강 원장에 
     YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true',
   }, {
     gate: async () => false,
+    latestScan: async () => Date.now(),
     runCommand: async () => {},
     runPendingHide: async () => { throw new Error('owner OAuth unavailable'); },
     runFalsePositiveRestore: async () => {},
