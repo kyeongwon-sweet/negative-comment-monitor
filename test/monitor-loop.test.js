@@ -498,3 +498,36 @@ test('소유채널 빠른 감시 실패는 자동숨김·핵심 수집을 막지
   assert.match(outcomes[0][1], /quotaExceeded/);
   assert.equal(result.ownerFastScanFailures, 1);
 });
+
+// 11-03: 수정 배포 후에도 이미 돌던 run이 옛 코드로 끝까지 돌아 같은 오탐을 두 번 더 냈다.
+test('master에 새 코드가 배포되면 다음 회차부터 돌지 않고 끝내 체인이 새 코드 run을 잇는다', async () => {
+  const iterationsRun = [];
+  const chainCalls = [];
+  let staleChecks = 0;
+  const result = await runMonitorLoop({ ...BASE_ENV, HELD_REVIEW_CHANNELS: 'UCOWNER@2026-10-29T02:32:00Z' }, {
+    gate: async () => false,
+    latestScan: async () => Date.now(),
+    runCommand: async () => {},
+    runHeldReview: async () => { iterationsRun.push('held'); },
+    recordHeldReviewOutcome: async () => {},
+    recordHeartbeat: async () => {},
+    sleep: async () => {},
+    codeIsStale: async () => { staleChecks += 1; return staleChecks >= 2; }, // 2회차 시작 전엔 아직, 3회차 전에 배포됨
+    chain: async (details) => { chainCalls.push(details); return { dispatched: true, reason: 'queued' }; },
+  });
+  assert.equal(iterationsRun.length, 2, '1·2회차만 돌고 3회차 전에 종료');
+  assert.equal(result.endedForNewCode, true);
+  assert.equal(chainCalls.length, 1, '끝내도 체인은 반드시 다음 run을 요청');
+  assert.equal(chainCalls[0].keepAlive, true);
+});
+
+test('runCodeIsStale: 최신 커밋과 다를 때만 true, 정보 없음·조회 실패는 false(계속 진행)', async () => {
+  const { runCodeIsStale } = await import('../src/monitor-loop.js');
+  const env = { GITHUB_REPOSITORY: 'o/r', GITHUB_SHA: 'a'.repeat(40), GH_TOKEN: 't', GITHUB_REF_NAME: 'master' };
+  const text = (body, ok = true) => async () => ({ ok, text: async () => body });
+  assert.equal(await runCodeIsStale(env, text('b'.repeat(40))), true);
+  assert.equal(await runCodeIsStale(env, text('a'.repeat(40))), false);
+  assert.equal(await runCodeIsStale(env, text('', false)), false);
+  assert.equal(await runCodeIsStale(env, async () => { throw new Error('net'); }), false);
+  assert.equal(await runCodeIsStale({ ...env, GH_TOKEN: '' }, text('b'.repeat(40))), false);
+});

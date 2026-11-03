@@ -53,6 +53,25 @@ export function forceFirstMonitor({ eventName, schedule, iteration, chainRun = f
   );
 }
 
+// 이 run의 코드(GITHUB_SHA)가 브랜치 최신 커밋과 다른가. 토큰·저장소 정보가 없거나 조회가 실패하면 false.
+export async function runCodeIsStale(env = process.env, fetchImpl = fetch) {
+  const repo = String(env.GITHUB_REPOSITORY || '').trim();
+  const sha = String(env.GITHUB_SHA || '').trim();
+  const token = String(env.GH_TOKEN || env.GITHUB_TOKEN || '').trim();
+  const ref = String(env.GITHUB_REF_NAME || 'master').trim() || 'master';
+  if (!repo || !sha || !token) return false;
+  try {
+    const response = await fetchImpl(`https://api.github.com/repos/${repo}/commits/${encodeURIComponent(ref)}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github.sha', 'X-GitHub-Api-Version': '2022-11-28' },
+    });
+    if (!response.ok) return false;
+    const latest = String(await response.text()).trim();
+    return /^[0-9a-f]{40}$/i.test(latest) && latest.toLowerCase() !== sha.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 export async function runMonitorLoop(env = process.env, options = {}) {
   const iterations = positiveInt(env.MONITOR_LOOP_ITERATIONS, env.MONITOR_TRIGGER_EVENT === 'schedule' ? 4 : 1);
   const intervalMs = positiveInt(env.MONITOR_LOOP_INTERVAL_MS, 15 * MINUTE);
@@ -172,6 +191,8 @@ export async function runMonitorLoop(env = process.env, options = {}) {
     MONITOR_WATCHDOG_MAX_GAP_MINUTES - 1,
   ) * MINUTE;
   const chain = options.chain || ((details) => chainNextMonitor(env, details));
+  const codeIsStale = options.codeIsStale || (() => runCodeIsStale(env));
+  let endedForNewCode = false;
   const now = options.now || Date.now;
   let dependenciesInstalled = false;
   let monitorRuns = 0;
@@ -187,6 +208,14 @@ export async function runMonitorLoop(env = process.env, options = {}) {
   let falsePositiveRestoreFailures = 0;
 
   for (let iteration = 0; iteration < iterations; iteration += 1) {
+    // 진행 중인 run은 시작 시점 코드로 끝까지(최대 ~1시간) 돈다. master에 수정이 배포됐으면 남은 회차를
+    // 옛 코드로 돌리지 않고 끝내, 체인이 새 코드 run을 바로 잇게 한다(11-03: 수정 배포 후에도 옛 run이
+    // 같은 오탐을 두 번 더 냄). 확인 실패는 계속 진행(fail-open).
+    if (iteration > 0 && await codeIsStale()) {
+      endedForNewCode = true;
+      console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} newer code on master; ending early so the chain runs it`);
+      break;
+    }
     let gateOpen = false;
     let gateState = 'closed';
     try {
@@ -383,7 +412,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
       + `${ownerFastScanEnabled ? ` owner_fast_scan_runs=${ownerFastScanRuns} owner_fast_scan_failures=${ownerFastScanFailures}` : ''}`
       + ` pending_hide_runs=${pendingHideRuns} pending_hide_failures=${pendingHideFailures}`
       + ` fp_restore_runs=${falsePositiveRestoreRuns} fp_restore_failures=${falsePositiveRestoreFailures}`
-      + ` chain=${chainResult.reason}`,
+      + ` chain=${chainResult.reason}${endedForNewCode ? ' ended_for_new_code=true' : ''}`,
   );
   return {
     iterations,
@@ -398,6 +427,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
       falsePositiveRestoreFailures,
     } : {}),
     chain: chainResult,
+    ...(endedForNewCode ? { endedForNewCode: true } : {}),
   };
 }
 
