@@ -125,6 +125,8 @@ jobs:
           YOUTUBE_OWNER_DEFAULT_PRODUCT_NAME: JD
           # cron 드롭에 영향받지 않도록 pending-hide와 오탐 공개복원을 같은 15분 self-chain에 편입한다.
           YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true'
+          # 매일 재감사 카드(hold)를 24시간 동안 아무도 처리하지 않으면 자동숨김이 숨긴다(11-03 사용자 결정).
+          YOUTUBE_OWNER_AUDIT_AUTO_HIDE_HOURS: '24'
           # 소유채널 빠른 감시: 채널당 최신 스레드 1페이지(1 unit)만 읽어 최근 6시간 새 댓글을 판정(11-03).
           # 3시간 크론이 실제 5~7시간으로 밀려 부정이 오래 공개되던 공백을 15분으로 줄인다. 숨김은 pending-hide.
           YOUTUBE_OWNER_FAST_SCAN_LOOP: 'true'

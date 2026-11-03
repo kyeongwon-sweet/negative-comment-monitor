@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   groupAlertsByOwner,
+  isExpiredAuditCard,
   loadYouTubeOwnerAlerts,
+  persistHiddenRows,
   loadYouTubeOwnerModerationConfig,
   moderateYouTubeOwnerAlerts,
   YOUTUBE_OWNER_ALERT_SCOPES,
@@ -502,3 +504,60 @@ test('한 소유자 refresh token 실패는 다른 채널 처리를 막지 않�
   assert.equal(result.unmatchedVideo, 1);
 });
 
+
+// 2026-11-03 사용자 결정 (가): 재감사 카드(hold)를 24시간 아무도 처리하지 않으면 자동숨김.
+const NOW_AUDIT = Date.parse('2026-11-03T06:00:00Z');
+const auditRow = (overrides = {}) => ({
+  id: 9, platform: 'youtube', source: null, comment_id: 'auditA', post_url: 'https://youtube.com/watch?v=untrackedOld',
+  review_decision: 'hold', reviewed_by: 'owner-public-audit', alerted_at: '2026-11-02T01:41:00Z', ...overrides,
+});
+
+test('재감사 카드 만료 판정: 재감사 행위자의 hold이고 기한이 지났을 때만', () => {
+  const opts = { auditAutoHideHours: 24, now: NOW_AUDIT };
+  assert.equal(isExpiredAuditCard(auditRow(), opts), true);
+  assert.equal(isExpiredAuditCard(auditRow({ alerted_at: '2026-11-02T10:00:00Z' }), opts), false, '24시간 미만');
+  assert.equal(isExpiredAuditCard(auditRow({ reviewed_by: 'U_PERSON' }), opts), false, '사람이 [보류]를 누른 카드는 대상 아님');
+  assert.equal(isExpiredAuditCard(auditRow({ review_decision: 'approve' }), opts), false);
+  assert.equal(isExpiredAuditCard(auditRow(), { auditAutoHideHours: 0, now: NOW_AUDIT }), false, '설정 없으면 꺼짐');
+});
+
+test('자동숨김 loader: 만료 재감사 카드를 서버 조건에 포함하고, 추적 밖 영상이어도 통과시킨다', async () => {
+  let requested = '';
+  const rows = [
+    auditRow(),
+    auditRow({ id: 10, comment_id: 'auditFresh', alerted_at: '2026-11-03T01:41:00Z' }),
+    { id: 11, platform: 'youtube', source: null, comment_id: 'third', post_url: 'https://youtube.com/watch?v=thirdPartyB' },
+  ];
+  const result = await loadYouTubeOwnerAlerts(config({
+    alertScope: YOUTUBE_OWNER_ALERT_SCOPES.ORGANIC_SATELLITE,
+    allowedVideoIds: new Set(['allowedA']),
+    autoHideAllNegatives: true,
+    auditAutoHideHours: 24,
+  }), async (input) => { requested = decodeURIComponent(String(input)); return response(200, rows); }, { actionableOnly: true, now: NOW_AUDIT });
+  assert.deepEqual(result.map((row) => row.id), [9], '만료 재감사 카드만(기한 전·제3자 영상 제외)');
+  assert.match(requested, /and\(review_decision\.eq\.hold,reviewed_by\.eq\.owner-public-audit,alerted_at\.lt\.2026-11-02T06:00:00\.000Z\)/);
+  assert.match(requested, /alerted_at/);
+});
+
+test('자동숨김 loader: 설정이 없으면 재감사 카드 조건을 넣지 않는다(기존 동작 유지)', async () => {
+  let requested = '';
+  await loadYouTubeOwnerAlerts(config({ alertScope: YOUTUBE_OWNER_ALERT_SCOPES.ADS, autoHideAllNegatives: true }),
+    async (input) => { requested = decodeURIComponent(String(input)); return response(200, []); }, { actionableOnly: true, now: NOW_AUDIT });
+  assert.doesNotMatch(requested, /owner-public-audit/);
+});
+
+test('숨김 확정 기록: 재감사 카드는 사람 결정이 아니므로 hidden+자동숨김 행위자로 기록', async () => {
+  const patches = [];
+  const fetchImpl = async (input, init = {}) => {
+    patches.push({ url: decodeURIComponent(String(input)), body: JSON.parse(init.body || '{}') });
+    return response(200, [{ id: 9 }]);
+  };
+  await persistHiddenRows(config({ actor: 'youtube-owner-pending-auto-hide' }), [
+    auditRow(), { id: 12, review_decision: 'hide', reviewed_by: 'U_PERSON' },
+  ], fetchImpl, NOW_AUDIT);
+  const auditPatch = patches.find((p) => p.url.includes('9') && p.body.review_decision === 'hidden');
+  assert.ok(auditPatch, '재감사 카드 → hidden');
+  assert.equal(auditPatch.body.reviewed_by, 'youtube-owner-pending-auto-hide');
+  const humanPatch = patches.find((p) => p.url.includes('12'));
+  assert.equal(humanPatch.body.review_decision, undefined, '사람 결정은 보존(hidden_confirmed만)');
+});

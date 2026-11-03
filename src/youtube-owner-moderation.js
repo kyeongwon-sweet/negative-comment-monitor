@@ -73,7 +73,22 @@ export function loadYouTubeOwnerModerationConfig(env = process.env) {
     actor: String(env.YOUTUBE_OWNER_BULK_HIDE_ACTOR || 'codex-bulk-owner-oauth').trim(),
     slackBotToken: String(env.SLACK_BOT_TOKEN || '').trim(),
     slackUpdateDelayMs: positiveInt(env.YOUTUBE_HIDDEN_SLACK_DELAY_MS, singleAlert ? 1 : 1100, 10_000),
+    // 매일 재감사 카드(hold)를 이 시간 동안 아무도 처리하지 않으면 자동 숨김(2026-11-03 사용자 결정 '(가)').
+    // 0/미설정 = 끔(재감사 카드는 사람만 숨김). 사람이 누른 결정은 reviewed_by가 바뀌어 대상이 아니다.
+    auditAutoHideHours: Math.max(0, Math.min(24 * 30, Number(env.YOUTUBE_OWNER_AUDIT_AUTO_HIDE_HOURS || 0) || 0)),
   };
+}
+
+// youtube-owner-public-audit.js의 PUBLIC_AUDIT_ACTOR와 같은 값(순환 import 방지로 여기 둔다).
+export const OWNER_PUBLIC_AUDIT_ACTOR = 'owner-public-audit';
+
+// 재감사가 올린 hold 카드이고, 사람이 손대지 않은 채 auditAutoHideHours가 지났는가.
+export function isExpiredAuditCard(alert, { auditAutoHideHours = 0, now = Date.now() } = {}) {
+  if (!(auditAutoHideHours > 0)) return false;
+  if (String(alert?.review_decision || '').trim().toLowerCase() !== 'hold') return false;
+  if (String(alert?.reviewed_by || '').trim() !== OWNER_PUBLIC_AUDIT_ACTOR) return false;
+  const alertedAt = Date.parse(alert?.alerted_at || '');
+  return Number.isFinite(alertedAt) && now - alertedAt >= auditAutoHideHours * 60 * 60 * 1000;
 }
 
 function supabaseHeaders(config, extra = {}) {
@@ -118,11 +133,17 @@ function allowedVideoIdSet(config) {
   return new Set(values.map((value) => String(value || '').trim()).filter(Boolean));
 }
 
-export async function loadYouTubeOwnerAlerts(config, fetchImpl = fetch, { actionableOnly = false } = {}) {
+export async function loadYouTubeOwnerAlerts(config, fetchImpl = fetch, { actionableOnly = false, now = Date.now() } = {}) {
   const rows = [];
+  const auditCutoff = config.auditAutoHideHours > 0
+    ? new Date(now - config.auditAutoHideHours * 60 * 60 * 1000).toISOString()
+    : '';
+  const expiredAuditFilter = auditCutoff
+    ? `,and(review_decision.eq.hold,reviewed_by.eq.${OWNER_PUBLIC_AUDIT_ACTOR},alerted_at.lt.${auditCutoff})`
+    : '';
   for (let offset = 0; ; offset += 1000) {
     let pathname = 'negative_comment_alerts'
-      + '?select=id,source,platform,comment_id,comment_text,post_url,review_decision,reviewed_by,reviewed_at,hidden_confirmed,hidden_confirmed_at,slack_channel_id,slack_ts'
+      + '?select=id,source,platform,comment_id,comment_text,post_url,review_decision,reviewed_by,reviewed_at,hidden_confirmed,hidden_confirmed_at,slack_channel_id,slack_ts,alerted_at'
       + alertSourceQuery(config)
       + '&order=alerted_at.asc'
       + `&offset=${offset}&limit=1000`;
@@ -135,8 +156,10 @@ export async function loadYouTubeOwnerAlerts(config, fetchImpl = fetch, { action
     if (actionableOnly && !config.singleAlert) {
       pathname += '&hidden_confirmed=not.is.true';
       pathname += config.autoHideAllNegatives
-        ? '&or=(and(review_decision.is.null,reviewed_by.is.null,reviewed_at.is.null),review_decision.in.(complete,hide))'
-        : '&review_decision=is.null&reviewed_by=is.null&reviewed_at=is.null';
+        ? `&or=(and(review_decision.is.null,reviewed_by.is.null,reviewed_at.is.null),review_decision.in.(complete,hide)${expiredAuditFilter})`
+        : expiredAuditFilter
+          ? `&or=(and(review_decision.is.null,reviewed_by.is.null,reviewed_at.is.null)${expiredAuditFilter})`
+          : '&review_decision=is.null&reviewed_by=is.null&reviewed_at=is.null';
     }
     const page = await supabaseJson(config, pathname, fetchImpl);
     rows.push(...page);
@@ -148,8 +171,11 @@ export async function loadYouTubeOwnerAlerts(config, fetchImpl = fetch, { action
   // 위성 YouTube 영상 ID 허용목록만 처리한다. 단일 [숨김]은 서명 검증된 웹 라우트가
   // 위성 카테고리를 확인한 뒤 dispatch하므로 해당 Slack 행 하나만 허용한다.
   if (config.singleAlert) return rows;
-  if (!allowed.size) return [];
-  return rows.filter((row) => allowed.has(videoIdFromAlert(row)));
+  // 재감사 카드는 소유·위성 채널 공개 댓글에서만 나오므로, 추적 목록 밖의 옛 영상이어도 기한이 지나면 숨긴다
+  // (11-03: 미처리 89건 중 10건이 추적 밖 영상 — 카라멜 2편·위성 3편).
+  const expired = (row) => isExpiredAuditCard(row, { auditAutoHideHours: config.auditAutoHideHours, now });
+  if (!allowed.size) return rows.filter(expired);
+  return rows.filter((row) => allowed.has(videoIdFromAlert(row)) || expired(row));
 }
 
 // 기존 광고 감사·동기화 호출부의 공개 API를 유지한다.
@@ -334,10 +360,12 @@ const KEEP_REVIEW_DECISIONS = new Set([
   'false_positive', 'ignore', 'complete', 'approve', 'hold', 'unhide',
 ]);
 
-function alertDisposition(alert, { singleAlert = false, autoHideAllNegatives = false } = {}) {
+function alertDisposition(alert, { singleAlert = false, autoHideAllNegatives = false, auditAutoHideHours = 0, now = Date.now() } = {}) {
   const decision = String(alert.review_decision || '').trim().toLowerCase();
   // author_banned = 작성자 밴으로 이미 플랫폼에서 숨겨진 종결 상태 → 재처리 대상 아님.
   if (alert.hidden_confirmed === true || decision === 'hidden' || decision === 'author_banned') return 'hidden';
+  // 사람이 기한 내 처리하지 않은 재감사 카드(hold, 행위자=재감사)는 자동 숨김 대상.
+  if (isExpiredAuditCard(alert, { auditAutoHideHours, now })) return 'eligible';
   // 인지 광고 상시 자동 숨김은 [완료]로 카드가 정리된 댓글도 실제 플랫폼에서 숨긴다.
   // persistHiddenRows는 사람의 결정/행위자를 덮지 않으므로 감사 이력은 그대로 남는다.
   if (autoHideAllNegatives && ['complete', 'hide'].includes(decision)) return 'eligible';
@@ -604,11 +632,14 @@ export async function persistHiddenRows(config, alerts, fetchImpl = fetch, now =
   // 사람의 결정·행위자는 감사 원본이다. [숨김] 클릭 행도 decision=hide와 실제
   // Slack user를 그대로 두고, 카드의 '숨김 처리 완료' 상태로 플랫폼 결과를 표현한다.
   // 자동 일괄 숨김으로 아직 사람이 검토하지 않은 행만 서비스 계정 결정으로 기록한다.
+  // 재감사 카드(hold, 행위자=재감사)는 사람 결정이 아니므로 자동 숨김 결과로 기록한다(감사 원본=사람 결정만 보존).
+  const isAuditCard = (alert) => String(alert.review_decision || '').toLowerCase() === 'hold'
+    && String(alert.reviewed_by || '') === OWNER_PUBLIC_AUDIT_ACTOR;
   const unreviewed = alerts
-    .filter((alert) => !alert.review_decision && !alert.reviewed_by && !alert.reviewed_at)
+    .filter((alert) => (!alert.review_decision && !alert.reviewed_by && !alert.reviewed_at) || isAuditCard(alert))
     .map((alert) => alert.id);
   const reviewed = alerts
-    .filter((alert) => alert.review_decision || alert.reviewed_by || alert.reviewed_at)
+    .filter((alert) => (alert.review_decision || alert.reviewed_by || alert.reviewed_at) && !isAuditCard(alert))
     .map((alert) => alert.id);
   const confirmedAt = new Date(now).toISOString();
   let confirmed = 0;
@@ -631,10 +662,12 @@ export async function persistHiddenRows(config, alerts, fetchImpl = fetch, now =
 }
 
 export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModerationConfig(), fetchImpl = fetch, now = Date.now()) {
-  const alerts = await loadYouTubeOwnerAlerts(config, fetchImpl, { actionableOnly: !config.singleAlert });
+  const alerts = await loadYouTubeOwnerAlerts(config, fetchImpl, { actionableOnly: !config.singleAlert, now });
   const dispositionOptions = {
     singleAlert: config.singleAlert,
     autoHideAllNegatives: config.autoHideAllNegatives,
+    auditAutoHideHours: config.auditAutoHideHours || 0,
+    now,
   };
   const candidateAlerts = alerts.filter((alert) => alertDisposition(alert, dispositionOptions) === 'eligible');
   const allowed = allowedVideoIdSet(config);
