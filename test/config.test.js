@@ -110,21 +110,51 @@ test('기한부 담당자 override: 지정일(KST, 당일 포함)까지만 임�
   assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: '인지 광고' }, loadSlackAssignees(env, at('2026-10-14T09:00:00+09:00'))), 'U_LEEJW');
 });
 
-test('바치케 협찬 (파워채널/먹스타)만 PBACHI_MUKSTAR(김보나), 나머지 바치케는 전담(이재원) — 일반·광고 로더 공통', async () => {
+test('바치케 협찬 전 카테고리는 PBACHI_SPONSORSHIP(김유진), 나머지 바치케는 전담(이재원) — 일반·광고 로더 공통', async () => {
   const { loadSlackAssignees } = await import('../src/config.js');
   const { loadMetaAdsConfig } = await import('../src/meta-ads.js');
   const { assigneeForTarget } = await import('../src/slack.js');
-  const env = { SLACK_ASSIGNEE_PBACHI: 'U_LEEJW', SLACK_ASSIGNEE_PBACHI_MUKSTAR: 'U_KIMBN', SLACK_ASSIGNEE_OTHER: 'U_OTHER' };
+  const env = { SLACK_ASSIGNEE_PBACHI: 'U_LEEJW', SLACK_ASSIGNEE_PBACHI_SPONSORSHIP: 'U_KIMYJ', SLACK_ASSIGNEE_OTHER: 'U_OTHER' };
   const adEnv = { ...env, SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc', SLACK_BOT_TOKEN: 'x' };
-  const now = Date.parse('2026-10-15T09:00:00+09:00');
+  const now = Date.parse('2026-11-03T09:00:00+09:00');
   for (const assignees of [loadSlackAssignees(env, now), loadMetaAdsConfig(adEnv, now).slackAssignees]) {
-    assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: '협찬 (파워채널/먹스타)' }, assignees), 'U_KIMBN');
-    for (const c of ['협찬 (파워채널/매거진)', '협찬 (인플루언서)', '인지 광고', '바이럴 (배너)', '위성채널']) {
+    for (const c of ['협찬 (파워채널/먹스타)', '협찬 (파워채널/매거진)', '협찬 (인플루언서)']) {
+      assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: c }, assignees), 'U_KIMYJ', c);
+    }
+    for (const c of ['인지 광고', '바이럴 (배너)', '바이럴 (영상)', '위성채널']) {
       assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: c }, assignees), 'U_LEEJW', c);
     }
-    // 다른 상품군 먹스타는 영향 없음
-    assert.notEqual(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (파워채널/먹스타)' }, assignees), 'U_KIMBN');
+    // 다른 상품군 협찬은 영향 없음
+    assert.notEqual(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_KIMYJ');
   }
   // 변수 비면 바치케 전담으로 폴백
-  assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: '협찬 (파워채널/먹스타)' }, loadSlackAssignees({ SLACK_ASSIGNEE_PBACHI: 'U_LEEJW' }, now)), 'U_LEEJW');
+  assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: '협찬 (인플루언서)' }, loadSlackAssignees({ SLACK_ASSIGNEE_PBACHI: 'U_LEEJW' }, now)), 'U_LEEJW');
+});
+
+test('지정 크리에이터(떵개) 협찬은 상품군 무관 그 담당자, 협찬이 아니면 영향 없음 — 일반·광고 로더 공통', async () => {
+  const { loadSlackAssignees } = await import('../src/config.js');
+  const { loadMetaAdsConfig } = await import('../src/meta-ads.js');
+  const { assigneeForTarget } = await import('../src/slack.js');
+  const env = {
+    SLACK_ASSIGNEE_SPONSORSHIP_CREATORS: '{"떵개":"U_KIMYJ"}',
+    SLACK_ASSIGNEE_JD_PRIMARY: 'U_KIMBD', SLACK_ASSIGNEE_P_SPONSORSHIP: 'U_KIMBN', SLACK_ASSIGNEE_OTHER: 'U_OTHER',
+  };
+  const adEnv = { ...env, SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc', SLACK_BOT_TOKEN: 'x' };
+  const now = Date.parse('2026-11-03T09:00:00+09:00');
+  for (const assignees of [loadSlackAssignees(env, now), loadMetaAdsConfig(adEnv, now).slackAssignees]) {
+    for (const channelName of ['떵개떵', '떵개떵 (인스타/미러링)', '떵 개떵']) {
+      for (const productName of ['P바치', 'JD멜', 'P혼']) {
+        assert.equal(assigneeForTarget({ productName, channelName, channelCategory: '협찬 (인플루언서)' }, assignees), 'U_KIMYJ', `${channelName}/${productName}`);
+      }
+    }
+    // 같은 상품의 다른 크리에이터 협찬은 원래 담당
+    assert.equal(assigneeForTarget({ productName: 'JD멜', channelName: '와뜨기', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_KIMBD');
+    assert.equal(assigneeForTarget({ productName: 'P혼', channelName: '돼지만두', channelCategory: '협찬 (인플루언서)' }, assignees), 'U_KIMBN');
+    // 협찬이 아닌 카테고리는 크리에이터 규칙을 타지 않는다
+    assert.equal(assigneeForTarget({ productName: 'JD멜', channelName: '떵개떵', channelCategory: '바이럴 (영상)' }, assignees), 'U_KIMBD');
+  }
+  // 잘못된 JSON은 규칙 없음(오류로 전체 라우팅을 깨지 않음)
+  const broken = loadSlackAssignees({ ...env, SLACK_ASSIGNEE_SPONSORSHIP_CREATORS: '{떵개' }, now);
+  assert.deepEqual(broken.sponsorshipCreators, {});
+  assert.equal(assigneeForTarget({ productName: 'JD멜', channelName: '떵개떵', channelCategory: '협찬 (인플루언서)' }, broken), 'U_KIMBD');
 });

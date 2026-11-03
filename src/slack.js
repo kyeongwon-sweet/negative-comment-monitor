@@ -123,6 +123,17 @@ export function hasProductName(target) {
   return String(target?.productName || '').trim().length > 0;
 }
 
+// 협찬 채널명에 크리에이터 키가 포함되면 그 담당자. 공백 차이는 무시한다. 키가 여럿 맞으면 가장 긴 키.
+export function sponsorshipCreatorAssignee(channelName, creators = {}) {
+  const name = String(channelName || '').replace(/\s+/g, '').toLowerCase();
+  if (!name || !creators || typeof creators !== 'object') return '';
+  const keys = Object.keys(creators)
+    .filter((key) => key.trim() && String(creators[key] || '').trim())
+    .filter((key) => name.includes(key.replace(/\s+/g, '').toLowerCase()))
+    .sort((a, b) => b.length - a.length);
+  return keys.length ? String(creators[keys[0]]).trim() : '';
+}
+
 // 담당자 라우팅 = (상품군 × 채널카테고리).
 //   - JD(쫀득바)는 위성채널만 김보나, 그 외 전 카테고리는 대표 담당 김바다(primary) 하나로.
 //   - P(파인트)의 지정 조합은 해당 담당자로.
@@ -138,10 +149,14 @@ export function assigneeForTarget(target, assignees = {}) {
   const isOwned = category.includes('온드'); // 온드미디어
   const isOwnedYoutube = category.includes('소유'); // 소유 YouTube(자사 유튜브 채널)
   const isAwareness = category.includes('인지'); // 인지(메타) 광고 부정댓글 전용 담당자
+  // 지정 크리에이터의 협찬은 상품군과 무관하게 그 담당자(2026-11-03: 떵개 → 김유진).
+  if (isSponsorship) {
+    const creator = sponsorshipCreatorAssignee(target?.channelName, assignees.sponsorshipCreators);
+    if (creator) return creator;
+  }
   if (group === 'pbachi') {
-    // 바치케: 협찬 (파워채널/먹스타)만 별도 담당(김보나), 그 외 전 카테고리는 바치케 전담(이재원).
-    // '먹스타'로 한정 — 협찬 (파워채널/매거진)·(인플루언서)는 바치케 전담 유지.
-    if (isSponsorship && category.includes('먹스타') && assignees.pbachiMukstar) return assignees.pbachiMukstar;
+    // 바치케: 협찬 전 카테고리는 협찬 담당(김유진), 그 외(인지광고·바이럴·위성 등)는 바치케 전담(이재원).
+    if (isSponsorship && assignees.pbachiSponsorship) return assignees.pbachiSponsorship;
     if (assignees.pbachi) return assignees.pbachi;
   } else if (group === 'jd') {
     // 쫀득바: 위성채널·바이럴(배너/영상)=김어진, 그 외 전 카테고리(인지광고·협찬·온드·소유YouTube 등)는

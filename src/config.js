@@ -48,8 +48,17 @@ export function loadSlackAssignees(env = process.env, now = Date.now()) {
     other: String(env.SLACK_ASSIGNEE_OTHER || '').trim(),
     owned: String(env.SLACK_ASSIGNEE_OWNED || '').trim(),
     pbachi: overrideAssignee(env, 'SLACK_ASSIGNEE_PBACHI', now), // 바치케(P바치) 전담(이재원). _OVERRIDE로 기한부 대체
-    // 바치케 협찬 (파워채널/먹스타)만 별도 담당(2026-10-15 대표 지정: 김보나). 비면 바치케 전담으로.
-    pbachiMukstar: String(env.SLACK_ASSIGNEE_PBACHI_MUKSTAR || '').trim(),
+    // 바치케 협찬 전 카테고리(인플루언서·파워채널/먹스타·매거진) 담당(2026-11-03 지정: 김유진). 비면 바치케 전담으로.
+    // 10-15의 '먹스타만 김보나'(PBACHI_MUKSTAR) 규칙을 대체한다.
+    pbachiSponsorship: String(env.SLACK_ASSIGNEE_PBACHI_SPONSORSHIP || '').trim(),
+    // 협찬 채널명(크리에이터) → 담당자. 상품군보다 우선(예: {"떵개":"U…"} — 떵개 관련 협찬은 상품 무관 김유진).
+    // 채널명에 키가 포함되면 매칭(떵개떵·떵개떵 (인스타/미러링)). 파싱 실패=빈 맵(규칙 없음).
+    sponsorshipCreators: (() => {
+      try {
+        const m = JSON.parse(env.SLACK_ASSIGNEE_SPONSORSHIP_CREATORS || '{}');
+        return (m && typeof m === 'object' && !Array.isArray(m)) ? m : {};
+      } catch { return {}; }
+    })(),
     awareness: scheduledAssignee(env, 'SLACK_ASSIGNEE_AWARENESS', 'SLACK_ASSIGNEE_AWARENESS_NEXT', nextRoutingActive),
     sponsorship: String(env.SLACK_ASSIGNEE_SPONSORSHIP || '').trim(),
     jd: {
