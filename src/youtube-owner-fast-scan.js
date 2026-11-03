@@ -252,17 +252,27 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
     // 봇 승인 없이 공개된 새 댓글을 즉시 보류로 돌린다 → 다음 회차 승인 봇이 판정해 괜찮은 건 다시 공개.
     // 결과적으로 '모두 보류'와 같고 노출은 최대 한 회차(15분). 경고는 그대로 보내 스튜디오 설정도 고치게 한다.
     if (leaks.length && !config.dryRun && config.holdEnforce) {
+      // 채널 단위로 묶어 한 요청(50개까지 50 unit)에 보류한다 — 영상마다 따로 부르면 소유채널 확대 시 quota가 샌다.
+      const byChannel = new Map();
       for (const leak of leaks) {
-        const owner = tokens.get(leak.channelId);
+        if (!byChannel.has(leak.channelId)) byChannel.set(leak.channelId, []);
+        byChannel.get(leak.channelId).push(leak);
+      }
+      for (const [channelId, channelLeaks] of byChannel) {
+        const owner = tokens.get(channelId);
         if (!owner) continue;
         try {
           // 댓글당 한 번만(원장 선점). YouTube가 보류를 무시하는 예외 댓글을 매 회차 다시 보류해 quota를 태우지 않게.
-          const fresh = await claimHoldEnforce(config, kstDateKey(now), leak.leaked.map((c) => c.id), fetchImpl);
-          const held = fresh.length ? await holdComments(config, fresh, await tokenFor(owner), fetchImpl) : 0;
-          leak.enforced = held;
-          summary.holdEnforced += held;
+          const fresh = new Set(await claimHoldEnforce(
+            config, kstDateKey(now), channelLeaks.flatMap((leak) => leak.leaked.map((c) => c.id)), fetchImpl,
+          ));
+          if (fresh.size) await holdComments(config, [...fresh], await tokenFor(owner), fetchImpl);
+          for (const leak of channelLeaks) {
+            leak.enforced = leak.leaked.filter((c) => fresh.has(c.id)).length;
+            summary.holdEnforced += leak.enforced;
+          }
         } catch (error) {
-          summary.errors.push(`보류 대행 실패 ${leak.videoId}: ${String(error.message || error).slice(0, 120)}`);
+          summary.errors.push(`보류 대행 실패 ${channelId}: ${String(error.message || error).slice(0, 120)}`);
         }
       }
     }

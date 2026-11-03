@@ -253,3 +253,24 @@ test("보류 대행: 설정이 꺼져 있으면 경고만 하고 보류하지 �
   assert.deepEqual(calls.holds, []);
   assert.equal(summary.holdLeakAlerted, 1);
 });
+
+test("보류 대행은 채널 단위로 한 요청에 묶는다(영상별 호출 금지 — quota)", async () => {
+  const base = world();
+  base.calls.holdMode = true;
+  let holdRequests = 0;
+  const fetchImpl = async (url, init = {}) => {
+    const u = new URL(String(url));
+    if (u.pathname.endsWith('/commentThreads') && u.searchParams.get('allThreadsRelatedToChannelId') === CH2) {
+      return { ok: true, status: 200, json: async () => ({ items: [
+        thread('a1', 'v3', '맛있겠다', ago(1)), thread('a2', 'v4', '좋아요', ago(1)), thread('a3', 'v5', '최고', ago(2)),
+      ] }) };
+    }
+    if (u.pathname.endsWith('/setModerationStatus') && u.searchParams.get('moderationStatus') === 'heldForReview') holdRequests += 1;
+    return base.fetchImpl(url, init);
+  };
+  const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, base.classifier);
+  assert.equal(summary.holdLeakVideos, 3);
+  assert.equal(holdRequests, 1, '영상 3개라도 채널 한 번');
+  assert.deepEqual(base.calls.holds.sort(), ['a1', 'a2', 'a3']);
+  assert.equal(summary.holdEnforced, 3);
+});
