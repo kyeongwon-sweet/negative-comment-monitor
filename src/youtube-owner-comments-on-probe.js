@@ -1,12 +1,14 @@
 // 읽기 전용. 소유채널마다 전체 업로드 중 댓글이 켜진 영상 목록을 만든다('모두 보류' 설정 작업 목록, 11-03).
 // YouTube API는 영상의 '검토(모두 보류)' 설정을 읽거나 바꿀 수 없다 → 댓글 켜짐만 판정하고, 보류 설정은 Studio에서 한다.
-// 판정: videos.list statistics에 commentCount 속성이 없으면 댓글 꺼짐(ownerChannelTarget과 같은 규칙).
-// 비용: 채널당 업로드 50개마다 playlistItems 1 + videos 1 unit. 로그엔 채널ID·영상ID·개수만 남긴다(공개 레포).
+// 판정: 영상마다 commentThreads(maxResults 1)를 불러 403 commentsDisabled면 꺼짐(isYouTubeCommentsDisabled).
+// ⚠️ 소유자 토큰의 videos.list statistics는 댓글 꺼진 영상에도 commentCount를 준다(11-03 먹는김에 995/995 오판정)
+//    → commentCount 유무로 판정하면 안 된다. 비용: 영상당 1 unit + 업로드 50개마다 playlistItems 1. 로그엔 채널ID·영상ID·개수만 남긴다(공개 레포).
 import { appendFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { loadYouTubeOwnerTokens } from './youtube-owner-moderation.js';
 import { refreshGoogleAccessToken } from './youtube-ads.js';
+import { isYouTubeCommentsDisabled } from './youtube-owner-overload.js';
 
 function required(env, name) {
   const value = String(env[name] || '').trim();
@@ -23,6 +25,8 @@ export function loadCommentsOnProbeConfig(env = process.env) {
     youtubeApiBase: String(env.YOUTUBE_API_BASE || 'https://www.googleapis.com/youtube/v3').trim().replace(/\/$/, ''),
     channelIds: String(env.COMMENTS_ON_PROBE_CHANNEL_IDS || '').split(',').map((v) => v.trim()).filter(Boolean),
     maxPages: Math.max(1, Math.min(100, Number(env.COMMENTS_ON_PROBE_MAX_PAGES || 60))),
+    // 검증용: 지정 영상만 판정(채널 전체 목록 대신). Studio 실측값과 대조할 때 쓴다.
+    videoIds: String(env.COMMENTS_ON_PROBE_VIDEO_IDS || '').split(',').map((v) => v.trim()).filter(Boolean),
   };
 }
 
@@ -38,32 +42,32 @@ async function youtubeGet(config, resource, params, accessToken, fetchImpl) {
   return payload;
 }
 
-export function commentsEnabled(video) {
-  // statistics가 없으면(부분 응답) 판정 불가 → 켜짐으로 본다(작업 목록에서 빠뜨리지 않는 쪽).
-  if (!video?.statistics) return true;
-  return Object.prototype.hasOwnProperty.call(video.statistics, 'commentCount');
-}
 
 export async function probeChannelCommentsOn(config, channelId, accessToken, fetchImpl = fetch) {
   const channel = await youtubeGet(config, 'channels', { part: 'contentDetails,snippet', id: channelId, maxResults: 1 }, accessToken, fetchImpl);
   const item = channel.items?.[0];
   const uploads = item?.contentDetails?.relatedPlaylists?.uploads;
   if (!uploads) throw new Error('uploads playlist 없음');
-  const ids = [];
-  let pageToken = '';
+  const ids = [...(config.videoIds || [])];
+  let pageToken = config.videoIds?.length ? '' : 'START';
   let pages = 0;
-  do {
-    const page = await youtubeGet(config, 'playlistItems', { part: 'contentDetails', playlistId: uploads, maxResults: 50, pageToken }, accessToken, fetchImpl);
+  while (pageToken) {
+    const page = await youtubeGet(config, 'playlistItems', { part: 'contentDetails', playlistId: uploads, maxResults: 50, pageToken: pageToken === 'START' ? '' : pageToken }, accessToken, fetchImpl);
     for (const row of page.items || []) if (row.contentDetails?.videoId) ids.push(String(row.contentDetails.videoId));
     pageToken = String(page.nextPageToken || '');
     pages += 1;
-  } while (pageToken && pages < config.maxPages);
-  const on = [];
-  for (let i = 0; i < ids.length; i += 50) {
-    const batch = await youtubeGet(config, 'videos', { part: 'statistics', id: ids.slice(i, i + 50).join(','), maxResults: 50 }, accessToken, fetchImpl);
-    for (const video of batch.items || []) if (commentsEnabled(video)) on.push(String(video.id));
+    if (pages >= config.maxPages) break;
   }
-  return { channelId, title: String(item?.snippet?.title || ''), videos: ids.length, commentsOn: on, truncated: Boolean(pageToken) };
+  const on = [];
+  const off = [];
+  const unknown = [];
+  for (const id of ids) {
+    const disabled = await isYouTubeCommentsDisabled(config, id, accessToken, fetchImpl);
+    // 판정 불가(null)는 켜짐 쪽으로 남긴다(작업 목록에서 빠뜨리지 않게) — 개수는 따로 보고.
+    if (disabled === true) off.push(id);
+    else { on.push(id); if (disabled === null) unknown.push(id); }
+  }
+  return { channelId, title: String(item?.snippet?.title || ''), videos: ids.length, commentsOn: on, commentsOff: off.length, unknown: unknown.length, truncated: Boolean(pageToken) };
 }
 
 export async function runCommentsOnProbe(config, fetchImpl = fetch) {
@@ -87,7 +91,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
       for (const c of result.channels) {
         console.log(c.error
           ? `[comments-on] ${c.channelId} error=${c.error}`
-          : `[comments-on] ${c.channelId} videos=${c.videos} comments_on=${c.commentsOn.length} truncated=${c.truncated} ids=${c.commentsOn.join(',')}`);
+          : `[comments-on] ${c.channelId} videos=${c.videos} comments_on=${c.commentsOn.length} off=${c.commentsOff} unknown=${c.unknown} truncated=${c.truncated} ids=${c.commentsOn.join(',')}`);
       }
       if (process.env.GITHUB_STEP_SUMMARY) {
         const lines = ['### 댓글 켜진 영상(소유채널)', '', '| 채널 | 업로드 | 댓글 켜짐 |', '|---|---|---|',

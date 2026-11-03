@@ -9,6 +9,10 @@ on:
         description: 점검할 채널ID(쉼표, 비우면 토큰 있는 소유채널 전체)
         required: false
         type: string
+      video_ids:
+        description: 검증용 — 지정 영상만 판정(쉼표). 비우면 채널 전체 업로드
+        required: false
+        type: string
 
 jobs:
   probe:
@@ -29,3 +33,4 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           COMMENTS_ON_PROBE_CHANNEL_IDS: ${{ inputs.channel_ids }}
+          COMMENTS_ON_PROBE_VIDEO_IDS: ${{ inputs.video_ids }}
