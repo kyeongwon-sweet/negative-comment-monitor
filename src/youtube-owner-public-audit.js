@@ -117,6 +117,7 @@ export function normalizeAuditComment(comment, videoId, parentId = '') {
     authorDisplayName: String(s.authorDisplayName || ''),
     text: String(s.textOriginal ?? s.textDisplay ?? ''),
     timestamp: String(s.publishedAt || s.updatedAt || ''),
+    updatedAt: String(s.updatedAt || ''),
     parentId: String(parentId || s.parentId || ''),
   };
 }

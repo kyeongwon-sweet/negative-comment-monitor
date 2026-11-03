@@ -61,8 +61,8 @@ export function loadFastScanConfig(env = process.env, now = Date.now()) {
 export function holdLeaksByVideo(byVideo, { since, approvedIds }) {
   const leaks = new Map();
   for (const [videoId, comments] of byVideo) {
-    const count = comments.filter((c) => Date.parse(c.timestamp) >= since && !approvedIds.has(c.id)).length;
-    if (count) leaks.set(videoId, count);
+    const leaked = comments.filter((c) => Date.parse(c.timestamp) >= since && !approvedIds.has(c.id));
+    if (leaked.length) leaks.set(videoId, leaked);
   }
   return leaks;
 }
@@ -106,7 +106,9 @@ export function holdLeakMessage(items, assignee = '') {
   const lines = [
     `:warning: *'모두 보류' 빠진 영상 ${items.length}개* — 봇 승인 없이 새 댓글이 바로 공개됐습니다.`,
     '스튜디오에서 영상별로 댓글 검토를 *모두 보류*로 바꿔주세요(댓글 켜짐/꺼짐은 그대로). 부정 댓글은 빠른 감시가 따로 숨깁니다.',
-    ...items.map((it) => `• <https://studio.youtube.com/video/${it.videoId}/edit|${it.videoId}> · ${it.channelName}${it.title ? ` · ${it.title.slice(0, 40)}` : ''} · 공개된 새 댓글 ${it.count}개`),
+    '이미 *모두 보류*로 되어 있다면 그 댓글 작성자가 "승인된 사용자" 목록에 있거나 사람이 직접 승인한 경우입니다 — 아래 댓글을 확인해주세요.',
+    ...items.map((it) => `• <https://studio.youtube.com/video/${it.videoId}/edit|${it.videoId}> · ${it.channelName}${it.title ? ` · ${it.title.slice(0, 40)}` : ''} · 공개된 새 댓글 ${it.count}개`
+      + (it.leaked || []).slice(0, 3).map((c) => ` <https://www.youtube.com/watch?v=${it.videoId}&lc=${c.id}|댓글>`).join('')),
   ];
   if (assignee) lines.push(`담당자: <@${assignee}>`);
   return lines.join('\n');
@@ -207,10 +209,10 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
     const approvedIds = ids.length ? await approvedByBot(config, ids, fetchImpl) : new Set();
     const leaks = [];
     for (const candidate of holdCandidates) {
-      const count = holdLeaksByVideo(new Map([[candidate.videoId, candidate.comments]]), {
+      const leaked = holdLeaksByVideo(new Map([[candidate.videoId, candidate.comments]]), {
         since: holdSince.get(candidate.channelId), approvedIds,
-      }).get(candidate.videoId) || 0;
-      if (count) leaks.push({ ...candidate, count });
+      }).get(candidate.videoId) || [];
+      if (leaked.length) leaks.push({ ...candidate, count: leaked.length, leaked });
     }
     summary.holdLeakVideos = leaks.length;
     if (leaks.length && !config.dryRun) {
@@ -236,7 +238,8 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
         }
       }
     }
-    if (leaks.length) console.error(`[owner-fast-scan:hold-missing] ${leaks.map((l) => `${l.videoId}=${l.count}`).join(' ')}`);
+    // 원인 추적용(공개 레포: ID·시각만): 11-03 첫 경고는 이미 '모두 보류'인 영상이었다(승인된 사용자·수정 댓글 의심).
+    if (leaks.length) console.error(`[owner-fast-scan:hold-missing] ${leaks.map((l) => `${l.videoId}=${l.leaked.map((c) => `${c.id}@${c.timestamp}${c.updatedAt && c.updatedAt !== c.timestamp ? `~${c.updatedAt}` : ''}`).join(',')}`).join(' ')}`);
   } catch (error) {
     summary.errors.push(`보류 누락 감시 실패: ${String(error.message || error).slice(0, 160)}`);
   }
