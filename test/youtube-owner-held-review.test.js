@@ -56,8 +56,8 @@ test('공개 프롬프트에 사람 기준(유행 부정·출연자 비하·장�
   for (const phrase of ['나만 모름', '싸가지가 없네', '품절 아니던데', '그게 뭔데', '조금이라도 애매하면 공개하지 마세요']) assert.ok(prompt.includes(phrase), phrase);
 });
 
-function fakeWorld({ llmOk = true, verifyFails = false } = {}) {
-  const calls = { publish: [], slack: [], ledger: [] };
+function fakeWorld({ llmOk = true, verifyFails = false, publishFails = false } = {}) {
+  const calls = { publish: [], slack: [], ledger: [], released: [], order: [] };
   const threads = [
     { snippet: { videoId: 'v1', topLevelComment: { id: 'oldHidden', snippet: { moderationStatus: 'heldForReview', textOriginal: '광고 지겹다', publishedAt: '2026-10-20T00:00:00Z' } } } },
     { snippet: { videoId: 'v1', topLevelComment: { id: 'good', snippet: { moderationStatus: 'heldForReview', textOriginal: '맛있겠다', publishedAt: '2026-10-29T04:00:00Z' } } } },
@@ -71,9 +71,13 @@ function fakeWorld({ llmOk = true, verifyFails = false } = {}) {
     if (u.includes('/channels')) return json({ items: [{ id: 'UCa' }] });
     if (u.includes('/commentThreads')) return json({ items: threads });
     if (u.includes('negative_comment_alerts')) return json([]);
+    if (u.includes('cost_usage_ledger') && init.method === 'DELETE') {
+      calls.released.push(...(decodeURIComponent(u).match(/held-review:[^",)]+/g) || []));
+      return json(null);
+    }
     if (u.includes('cost_usage_ledger') && init.method === 'POST') {
       const rows = JSON.parse(init.body);
-      if (Array.isArray(rows)) calls.ledger.push(...rows.map((r) => r.run_key));
+      if (Array.isArray(rows)) { calls.ledger.push(...rows.map((r) => r.run_key)); calls.order.push(...rows.map((r) => `ledger:${r.run_key}`)); }
       return json([]);
     }
     if (u.includes('cost_usage_ledger')) return json([]);
@@ -81,7 +85,12 @@ function fakeWorld({ llmOk = true, verifyFails = false } = {}) {
       if (!llmOk) return json({}, false, 503);
       return json({ candidates: [{ content: { parts: [{ text: '[{"i":0,"approve":true,"reason":""},{"i":1,"approve":false,"reason":"경쟁품 비교"}]' }] } }] });
     }
-    if (u.includes('setModerationStatus')) { calls.publish.push(new URL(u).searchParams.get('id')); return { ok: true, status: 204, json: async () => ({}) }; }
+    if (u.includes('setModerationStatus')) {
+      calls.publish.push(new URL(u).searchParams.get('id'));
+      calls.order.push(`publish:${new URL(u).searchParams.get('id')}`);
+      if (publishFails) return { ok: false, status: 500, json: async () => ({}) };
+      return { ok: true, status: 204, json: async () => ({}) };
+    }
     if (u.includes('/comments?')) {
       // 실제 YouTube: comments.list는 id와 maxResults를 함께 받으면 400 unexpectedParameter(11-03 운영 실패 재현).
       const params = new URL(u).searchParams;
@@ -149,4 +158,21 @@ test("공개 확인(comments.list)이 실패해도 공개된 댓글은 원장에
   assert.ok(calls.ledger.includes("held-review:meh"), "보류 알림이 나간 건도 원장 기록");
   assert.equal(summary.channels[0].unverified, 1);
   assert.ok(summary.errors.some((e) => e.includes("미확인 1")));
+});
+
+test("선기록: 공개 전에 원장을 남긴다(봇이 공개한 댓글은 반드시 원장이 있다 — 보류 누락 오탐 방지)", async () => {
+  const { fetchImpl, calls } = fakeWorld();
+  await runHeldReview(BASE, fetchImpl, Date.parse("2026-10-29T05:00:00Z"));
+  const ledgerAt = calls.order.indexOf("ledger:held-review:good");
+  const publishAt = calls.order.indexOf("publish:good");
+  assert.ok(ledgerAt >= 0 && publishAt >= 0);
+  assert.ok(ledgerAt < publishAt, "원장 → 공개 순서");
+});
+
+test("선기록: 공개 호출이 실패하면 원장을 지워 다음 회차가 다시 시도한다", async () => {
+  const { fetchImpl, calls } = fakeWorld({ publishFails: true });
+  const summary = await runHeldReview(BASE, fetchImpl, Date.parse("2026-10-29T05:00:00Z"));
+  assert.deepEqual(calls.released, ["held-review:good"]);
+  assert.equal(summary.channels[0].publishFailed, 1);
+  assert.ok(summary.errors.some((e) => e.includes("공개 실패 1")));
 });

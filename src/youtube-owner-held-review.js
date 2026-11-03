@@ -262,6 +262,17 @@ async function recordProcessed(config, ids, kstDate, fetchImpl) {
   if (!response.ok) throw new Error(`held-review 원장 기록 실패(${response.status})`);
 }
 
+async function releaseProcessed(config, ids, fetchImpl) {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return;
+  try {
+    const keys = unique.map((id) => `"${LEDGER_PREFIX}${String(id).replace(/"/g, '')}"`).join(',');
+    await fetchImpl(`${config.supabaseUrl}/rest/v1/cost_usage_ledger?run_key=${encodeURIComponent(`in.(${keys})`)}`, {
+      method: 'DELETE', headers: sbHeaders(config, { Prefer: 'return=minimal' }),
+    });
+  } catch { /* 지우기 실패 = 그 댓글은 보류로 남는다(공개 안 됨). 안전한 쪽이라 best-effort. */ }
+}
+
 async function loadVideoTitles(config, videoIds, fetchImpl) {
   const titles = new Map();
   const ids = [...new Set(videoIds)];
@@ -343,16 +354,19 @@ export async function runHeldReview(config, fetchImpl = fetch, now = Date.now())
         row.kept = kept.length;
         continue;
       }
-      const result = toApprove.length
-        ? await publishComments(config, toApprove.map((c) => c.id), accessToken, fetchImpl)
+      // 선기록(write-ahead): 공개하기 '전에' 원장을 남긴다. 봇이 공개한 댓글은 예외 없이 원장이 있어야
+      // 보류 누락 경보(빠른 감시)가 '봇 승인 없이 공개'로 오탐하지 않는다(11-03 두 번 오탐: 공개 후 확인
+      // 단계 실패로 원장 미기록). 원장 쓰기가 실패하면 공개하지 않는다(throw). 공개 호출이 실패한 건만
+      // 원장에서 지워 다음 회차에 재시도한다(지우기도 실패하면 그 댓글은 보류로 남는다 = 안전한 쪽).
+      const approveIds = toApprove.map((c) => c.id);
+      await recordProcessed(config, approveIds, kstDate, fetchImpl);
+      const result = approveIds.length
+        ? await publishComments(config, approveIds, accessToken, fetchImpl)
         : { published: [], verified: [], unverified: [], failed: [], verifyError: '' };
+      if (result.failed.length) await releaseProcessed(config, result.failed.map((f) => f.id), fetchImpl);
       row.approved = result.verified.length;
       row.unverified = result.unverified.length;
       row.publishFailed = result.failed.length;
-      // 원장을 먼저 남긴다: 공개 호출이 성공한 댓글은 더 이상 보류함에 없어 다음 회차가 다시 볼 수 없다.
-      // 원장이 없으면 '봇 승인 없이 공개된 댓글'로 보여 보류 누락 경보가 오탐한다(11-03 -9Yha1bKHsY).
-      // 공개 호출 자체가 실패한 건만 원장에서 빼 다음 회차에 재시도한다.
-      await recordProcessed(config, result.published, kstDate, fetchImpl);
       // 보류 유지 건은 알림이 나간 뒤에만 원장에 남긴다(알림 실패 시 다음 회차 재판정·재알림).
       if (kept.length) await postDigest(config, kept, now, fetchImpl);
       await recordProcessed(config, kept.map((c) => c.id), kstDate, fetchImpl);
