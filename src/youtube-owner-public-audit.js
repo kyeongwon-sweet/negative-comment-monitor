@@ -220,6 +220,21 @@ async function insertAuditAlert(config, row, fetchImpl) {
   if (!response.ok) throw new Error(`재감사 알림행 적재 실패(${response.status}): ${(await response.text()).slice(0, 160)}`);
 }
 
+// 재감사가 올린 카드 중 아직 사람이 처리하지 않은(hold) 댓글 ID.
+async function loadOpenAuditCardIds(config, fetchImpl) {
+  const ids = new Set();
+  for (let offset = 0; ; offset += 1000) {
+    const url = `${config.supabaseUrl}/rest/v1/negative_comment_alerts?select=comment_id`
+      + `&reviewed_by=eq.${PUBLIC_AUDIT_ACTOR}&review_decision=eq.hold&order=id.asc&offset=${offset}&limit=1000`;
+    const response = await fetchImpl(url, { headers: sbHeaders(config) });
+    if (!response.ok) throw new Error(`negative_comment_alerts read failed (${response.status})`);
+    const rows = await response.json();
+    for (const row of rows) if (row.comment_id) ids.add(String(row.comment_id));
+    if (rows.length < 1000) break;
+  }
+  return ids;
+}
+
 export async function runPublicAudit(config, fetchImpl = fetch, now = Date.now(), classifier = undefined, options = {}) {
   const summary = {
     dryRun: config.publicAuditDryRun, channels: [], videos: 0, publicComments: 0, alreadyJudged: 0,
@@ -272,6 +287,18 @@ export async function runPublicAudit(config, fetchImpl = fetch, now = Date.now()
   }
   summary.videos = entries.length;
   summary.publicComments = entries.reduce((sum, e) => sum + e.comments.length, 0);
+
+  // 재감사 카드(hold)는 사람이 [숨김]을 눌러야 숨겨진다. 그중 아직 공개 중인 것을 센다
+  // ("남은 부정댓글" 질문의 정본: 카드만 있고 실제로는 공개된 댓글).
+  try {
+    const openIds = await loadOpenAuditCardIds(config, fetchImpl);
+    const stillPublic = entries.flatMap((e) => e.comments.map((c) => c.id)).filter((id) => openIds.has(id));
+    summary.openAuditCards = openIds.size;
+    summary.openAuditCardsStillPublic = stillPublic.length;
+    if (stillPublic.length) console.error(`[owner-public-audit:open-still-public] ${stillPublic.join(' ')}`);
+  } catch (error) {
+    summary.errors.push(`재감사 미처리 카드 공개 여부 확인 실패: ${String(error.message || error).slice(0, 120)}`);
+  }
 
   // 이미 알림행이 있는 댓글(봇·사람 판정)은 다시 판정하지 않는다.
   const fresh = [];

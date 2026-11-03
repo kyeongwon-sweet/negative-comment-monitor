@@ -140,3 +140,16 @@ test('productFromAdCreative: 코드 우선, 제과·파인트 단어, 상품이 
   assert.equal(productFromAdCreative({ campaignNames: ['빙과_인지_CU1위'] }), '');
   assert.equal(productFromAdCreative(undefined), '');
 });
+
+test('재감사 미처리(hold) 카드 중 아직 공개 중인 댓글 수를 센다(남은 부정댓글 확인용)', async () => {
+  const base = world({ alerted: ['decided'] });
+  const fetchImpl = async (url, init = {}) => {
+    if (String(url).includes('reviewed_by=eq.owner-public-audit')) {
+      return { ok: true, status: 200, json: async () => [{ comment_id: 'decided' }, { comment_id: 'gone-already-hidden' }] };
+    }
+    return base.fetchImpl(url, init);
+  };
+  const summary = await runPublicAudit({ ...BASE, publicAuditDryRun: true }, fetchImpl, Date.parse('2026-10-30T02:00:00Z'), base.classifier, NO_ADS);
+  assert.equal(summary.openAuditCards, 2);
+  assert.equal(summary.openAuditCardsStillPublic, 1, '공개 목록에 있는 decided만');
+});
