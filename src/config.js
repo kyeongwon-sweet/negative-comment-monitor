@@ -39,6 +39,20 @@ export function overrideAssignee(env, baseName, now = Date.now()) {
   return kstDate(now) <= match[2] ? match[1] : base;
 }
 
+// SLACK_ASSIGNEE_SPONSORSHIP_CREATORS(JSON 배열) → [{ creator, product, assignee }]. 잘못된 항목은 버린다.
+export function parseSponsorshipCreators(raw) {
+  let rules;
+  try { rules = JSON.parse(String(raw || '[]')); } catch { return []; }
+  if (!Array.isArray(rules)) return [];
+  return rules
+    .map((rule) => ({
+      creator: String(rule?.creator || '').trim(),
+      product: String(rule?.product || '').trim(),
+      assignee: String(rule?.assignee || '').trim(),
+    }))
+    .filter((rule) => rule.creator && rule.assignee);
+}
+
 export function loadSlackAssignees(env = process.env, now = Date.now()) {
   const nextRoutingActive = scheduledRoutingActive(env.SLACK_ROUTING_EFFECTIVE_DATE_KST, now);
   return {
@@ -48,17 +62,12 @@ export function loadSlackAssignees(env = process.env, now = Date.now()) {
     other: String(env.SLACK_ASSIGNEE_OTHER || '').trim(),
     owned: String(env.SLACK_ASSIGNEE_OWNED || '').trim(),
     pbachi: overrideAssignee(env, 'SLACK_ASSIGNEE_PBACHI', now), // 바치케(P바치) 전담(이재원). _OVERRIDE로 기한부 대체
-    // 바치케 협찬 전 카테고리(인플루언서·파워채널/먹스타·매거진) 담당(2026-11-03 지정: 김유진). 비면 바치케 전담으로.
-    // 10-15의 '먹스타만 김보나'(PBACHI_MUKSTAR) 규칙을 대체한다.
-    pbachiSponsorship: String(env.SLACK_ASSIGNEE_PBACHI_SPONSORSHIP || '').trim(),
-    // 협찬 채널명(크리에이터) → 담당자. 상품군보다 우선(예: {"떵개":"U…"} — 떵개 관련 협찬은 상품 무관 김유진).
-    // 채널명에 키가 포함되면 매칭(떵개떵·떵개떵 (인스타/미러링)). 파싱 실패=빈 맵(규칙 없음).
-    sponsorshipCreators: (() => {
-      try {
-        const m = JSON.parse(env.SLACK_ASSIGNEE_SPONSORSHIP_CREATORS || '{}');
-        return (m && typeof m === 'object' && !Array.isArray(m)) ? m : {};
-      } catch { return {}; }
-    })(),
+    // 바치케 협찬 (파워채널/먹스타)만 별도 담당(2026-10-15 대표 지정: 김보나). 비면 바치케 전담으로.
+    pbachiMukstar: String(env.SLACK_ASSIGNEE_PBACHI_MUKSTAR || '').trim(),
+    // 특정 크리에이터 × 상품의 협찬 '카드'만 다른 담당자로 태그(부모 스레드 담당은 그대로).
+    // 형식: [{"creator":"떵개","product":"P바치","assignee":"U…"}] — 2026-11-03: 떵개의 바치케 협찬만 김유진.
+    // creator는 채널명 포함 매칭(공백 무시), product는 상품군 일치(생략하면 전 상품). 파싱 실패=규칙 없음.
+    sponsorshipCreators: parseSponsorshipCreators(env.SLACK_ASSIGNEE_SPONSORSHIP_CREATORS),
     awareness: scheduledAssignee(env, 'SLACK_ASSIGNEE_AWARENESS', 'SLACK_ASSIGNEE_AWARENESS_NEXT', nextRoutingActive),
     sponsorship: String(env.SLACK_ASSIGNEE_SPONSORSHIP || '').trim(),
     jd: {

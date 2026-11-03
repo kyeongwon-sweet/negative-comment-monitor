@@ -123,15 +123,19 @@ export function hasProductName(target) {
   return String(target?.productName || '').trim().length > 0;
 }
 
-// 협찬 채널명에 크리에이터 키가 포함되면 그 담당자. 공백 차이는 무시한다. 키가 여럿 맞으면 가장 긴 키.
-export function sponsorshipCreatorAssignee(channelName, creators = {}) {
-  const name = String(channelName || '').replace(/\s+/g, '').toLowerCase();
-  if (!name || !creators || typeof creators !== 'object') return '';
-  const keys = Object.keys(creators)
-    .filter((key) => key.trim() && String(creators[key] || '').trim())
-    .filter((key) => name.includes(key.replace(/\s+/g, '').toLowerCase()))
-    .sort((a, b) => b.length - a.length);
-  return keys.length ? String(creators[keys[0]]).trim() : '';
+// 협찬 카드의 크리에이터×상품 지정 담당자. 협찬 카테고리이고, 채널명에 creator가 포함되며(공백 무시),
+// product가 있으면 상품군까지 같을 때만. 여럿 맞으면 가장 긴 creator. 부모 스레드 담당에는 쓰지 않는다
+// (스레드는 상품×카테고리 단위라 담당자가 결정적이어야 한다).
+export function sponsorshipCreatorAssignee(target, rules = []) {
+  if (!String(target?.channelCategory || '').includes('협찬') || !Array.isArray(rules)) return '';
+  const name = String(target?.channelName || '').replace(/\s+/g, '').toLowerCase();
+  if (!name) return '';
+  const group = productGroup(target?.productName);
+  const matches = rules
+    .filter((rule) => name.includes(rule.creator.replace(/\s+/g, '').toLowerCase()))
+    .filter((rule) => !rule.product || productGroup(rule.product) === group)
+    .sort((a, b) => b.creator.length - a.creator.length);
+  return matches.length ? matches[0].assignee : '';
 }
 
 // 담당자 라우팅 = (상품군 × 채널카테고리).
@@ -149,14 +153,11 @@ export function assigneeForTarget(target, assignees = {}) {
   const isOwned = category.includes('온드'); // 온드미디어
   const isOwnedYoutube = category.includes('소유'); // 소유 YouTube(자사 유튜브 채널)
   const isAwareness = category.includes('인지'); // 인지(메타) 광고 부정댓글 전용 담당자
-  // 지정 크리에이터의 협찬은 상품군과 무관하게 그 담당자(2026-11-03: 떵개 → 김유진).
-  if (isSponsorship) {
-    const creator = sponsorshipCreatorAssignee(target?.channelName, assignees.sponsorshipCreators);
-    if (creator) return creator;
-  }
   if (group === 'pbachi') {
-    // 바치케: 협찬 전 카테고리는 협찬 담당(김유진), 그 외(인지광고·바이럴·위성 등)는 바치케 전담(이재원).
-    if (isSponsorship && assignees.pbachiSponsorship) return assignees.pbachiSponsorship;
+    // 바치케: 협찬 (파워채널/먹스타)만 별도 담당(김보나), 그 외 전 카테고리는 바치케 전담(이재원).
+    // '먹스타'로 한정 — 협찬 (파워채널/매거진)·(인플루언서)는 바치케 전담 유지.
+    // (떵개 바치케 협찬 '카드'의 김유진 태그는 buildAlertBlocks의 크리에이터 규칙이 처리한다.)
+    if (isSponsorship && category.includes('먹스타') && assignees.pbachiMukstar) return assignees.pbachiMukstar;
     if (assignees.pbachi) return assignees.pbachi;
   } else if (group === 'jd') {
     // 쫀득바: 위성채널·바이럴(배너/영상)=김어진, 그 외 전 카테고리(인지광고·협찬·온드·소유YouTube 등)는
@@ -272,7 +273,11 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
     ? [...new Set([baseAssignee, ...(assignees.jg?.additional || [])].filter(Boolean))]
     : [];
   const isCreatorCard = isAdCommentSource(target) || isViral;
-  const assigneeIds = pintAwarenessAssignees.length
+  // 협찬 크리에이터×상품 지정(예: 떵개의 바치케 협찬 → 김유진)이면 그 카드는 지정 담당자만 태그한다.
+  const sponsorshipCreator = sponsorshipCreatorAssignee(target, assignees.sponsorshipCreators);
+  const assigneeIds = sponsorshipCreator
+    ? [sponsorshipCreator]
+    : pintAwarenessAssignees.length
     ? pintAwarenessAssignees
     : pintTeamAssignees.length
       ? pintTeamAssignees

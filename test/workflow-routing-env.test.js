@@ -282,18 +282,20 @@ test('바치케 기한부 담당자(PBACHI_OVERRIDE)는 PBACHI를 넘기는 모�
   }
 });
 
-test('바치케 협찬 담당(PBACHI_SPONSORSHIP)·크리에이터 협찬 담당(SPONSORSHIP_CREATORS)은 PBACHI를 넘기는 모든 스텝에 동반된다', () => {
-  // 빠진 스텝은 바치케 협찬·떵개 협찬 카드를 원래 담당(이재원 등)으로 보낸다.
+test('바치케 협찬(파워채널/먹스타) 담당자(PBACHI_MUKSTAR)는 PBACHI를 넘기는 모든 스텝에 동반된다', () => {
+  // 빠진 스텝은 먹스타 카드를 바치케 전담(이재원)으로 보낸다.
   const dir = new URL('../.github/workflows/', import.meta.url);
   for (const name of readdirSync(dir).filter((file) => file.endsWith('.yml'))) {
     const workflow = readFileSync(new URL(name, dir), 'utf8');
-    for (const key of ['SLACK_ASSIGNEE_PBACHI_SPONSORSHIP', 'SLACK_ASSIGNEE_SPONSORSHIP_CREATORS']) {
+    // 크리에이터×상품 협찬 카드 규칙(떵개 바치케 → 김유진)도 같은 스텝에 동반돼야 카드가 새지 않는다.
+    for (const key of ['SLACK_ASSIGNEE_PBACHI_MUKSTAR', 'SLACK_ASSIGNEE_SPONSORSHIP_CREATORS']) {
       assert.equal(
         assigneeEnvCount(workflow, key),
         assigneeEnvCount(workflow, 'SLACK_ASSIGNEE_PBACHI'),
         `${name}: ${key} must accompany SLACK_ASSIGNEE_PBACHI`,
       );
     }
-    assert.equal(assigneeEnvCount(workflow, 'SLACK_ASSIGNEE_PBACHI_MUKSTAR'), 0, `${name}: 먹스타 전용 슬롯은 11-03 폐기`);
+    // 11-03 잘못 넣었다 되돌린 '바치케 협찬 전부' 슬롯은 다시 쓰지 않는다(사용자: 떵개 바치케만).
+    assert.equal(assigneeEnvCount(workflow, 'SLACK_ASSIGNEE_PBACHI_SPONSORSHIP'), 0, `${name}: PBACHI_SPONSORSHIP 폐기`);
   }
 });

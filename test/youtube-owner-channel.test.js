@@ -473,7 +473,7 @@ test('2026-10-16 재발방지: 소유채널 로더 담당자 = 단일 정본(loa
   const now = Date.parse('2026-10-16T01:05:00+09:00');
   const owner = loadYouTubeOwnerChannelConfig(env, now).slackAssignees;
   const canonical = loadSlackAssignees(env, now);
-  for (const key of ['jd', 'p', 'jg', 'pbachi', 'pbachiSponsorship', 'sponsorshipCreators', 'awareness', 'owned']) {
+  for (const key of ['jd', 'p', 'jg', 'pbachi', 'pbachiMukstar', 'sponsorshipCreators', 'awareness', 'owned']) {
     assert.deepEqual(owner[key], canonical[key], `owner loader must not override ${key}`);
   }
   // 소유 YouTube(쫀득바)는 '[쫀득바] 인지 광고' 스레드로 묶이고 담당은 김바다(jd.primary) — 황경원(awareness) 아님.
