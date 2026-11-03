@@ -45,7 +45,8 @@ function world({ alerted = [], failChannel = '', titleInState = true } = {}) {
       return json({ items: threadsByChannel[channelId] || [] });
     }
     if (u.includes('/videos?')) { calls.videoLookups += 1; return json({ items: [{ id: 'v1', snippet: { title: '[26.10]새우깡제친_main_제과' } }] }); }
-    if (u.includes('/channels')) throw new Error('fast scan must not verify owner channel (quota)');
+    if (u.includes('/channels') && u.includes('mine=true')) throw new Error('fast scan must not verify owner channel (quota)');
+    if (u.includes('/channels')) { calls.channelLookups = (calls.channelLookups || 0) + 1; return json({ items: [{ id: CH, snippet: { title: '먹짱언니_mukzzang unnie' } }, { id: CH2, snippet: { title: '먹는김에' } }] }); }
     if (u.includes('comment_classification_cache')) return json(init.method === 'POST' ? null : []);
     if (u.includes('cost_usage_ledger')) return json([]);
     if (u.includes('negative_comment_alerts') && init.method === 'POST') { calls.rows.push(JSON.parse(init.body)); return json([{ id: 1 }]); }
@@ -71,7 +72,7 @@ function world({ alerted = [], failChannel = '', titleInState = true } = {}) {
 const BASE = {
   youtubeOwnerChannels: [
     { name: '먹짱언니', channelId: CH, channelCategory: '소유 YouTube' },
-    { name: '먹는김에', channelId: CH2, channelCategory: '소유 YouTube' },
+    { name: '썰푸는앵무새', channelId: CH2, channelCategory: '소유 YouTube' },
   ],
   googleAdsClientId: 'c', googleAdsClientSecret: 's', youtubeApiBase: 'https://yt.test/youtube/v3',
   supabaseUrl: 'https://db.test', supabaseKey: 'svc', slackBotToken: 'xb', slackChannelId: 'C1', slackAssignees: {},
@@ -84,7 +85,10 @@ test('빠른 감시: 채널당 1페이지(1 unit)만 읽고, 최근 6시간 새 
   const { fetchImpl, calls, classifier } = world({ alerted: [['v2', 'seen']] });
   const summary = await runOwnerFastScan(BASE, fetchImpl, NOW, classifier);
   assert.equal(calls.threadReads, 2, '채널당 commentThreads 1회');
-  assert.equal(summary.quotaUnits, 2);
+  assert.equal(summary.quotaUnits, 3, '채널 2 + 채널명 일괄 1');
+  assert.equal(calls.channelLookups, 1, '채널명은 회당 한 번에');
+  // 카드·행의 채널명은 설정 이름(먹는김에 설정명=옛 이름)이 아니라 실제 채널 제목
+  assert.equal(calls.rows.find((r) => r.comment_id === 'bad2').channel_name, '먹는김에');
   assert.equal(summary.channels, 2);
   // 30시간 전 댓글·채널 본인 댓글·이미 알림행 있는 댓글은 판정하지 않는다
   // (약한 모델+강한 모델이 같은 목 분류기를 쓰므로 중복 제거 후 비교)

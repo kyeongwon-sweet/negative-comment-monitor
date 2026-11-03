@@ -4,7 +4,8 @@
 // 이 잡은 15분 루프에서 채널마다 최신 댓글 스레드 1페이지(100개, quota 1 unit)만 읽어
 // 최근 N시간 안의 새 댓글을 판정하고, 부정이면 소유채널 모니터와 같은 카드+알림행(결정 없음)을 남긴다.
 // 숨김은 같은 루프의 pending-hide가 한다(기존 대상 조건 그대로 — 추적 영상만).
-// - 전체 영상 목록·통계 조회(회당 ~70 unit)는 하지 않는다: 프로젝트 일일 quota 10,000을 지킨다(회당 11 unit).
+// - 전체 영상 목록·통계 조회(회당 ~70 unit)는 하지 않는다: 프로젝트 일일 quota 10,000을 지킨다
+//   (회당 채널 11 + 채널명 1 = 12 unit).
 // - 공개 댓글만 읽으므로 토큰 소유 검증(channels mine, 1 unit)은 생략하고 재발급만 한다.
 // - 한계: order=time은 스레드(최상위 댓글) 기준이라 옛 스레드에 새로 달린 답글은 3시간 모니터가 잡는다.
 // 공개 레포라 로그에는 개수·영상ID·댓글ID만 남긴다.
@@ -69,11 +70,31 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
   const titles = await loadVideoTitles(config, fetchImpl);
   const tokens = new Map((await loadYouTubeOwnerTokens(config, fetchImpl)).map((o) => [o.channelId, o]));
   const entries = [];
+  const accessTokens = new Map();
+  const tokenFor = async (owner) => {
+    if (!accessTokens.has(owner.channelId)) accessTokens.set(owner.channelId, await refreshGoogleAccessToken(config, owner.refreshToken, fetchImpl));
+    return accessTokens.get(owner.channelId);
+  };
+  // 카드·시트의 채널명은 실제 채널 제목으로(설정 이름은 옛 이름일 수 있음: 11-03 먹는김에가 '썰푸는앵무새'로 표기).
+  // 전 채널을 한 번에 조회(1 unit). 실패하면 설정 이름으로 폴백한다.
+  const channelTitles = new Map();
+  try {
+    const firstOwner = config.youtubeOwnerChannels.map((c) => tokens.get(c.channelId)).find(Boolean);
+    if (firstOwner) {
+      const info = await googleGet(config, 'channels', {
+        part: 'snippet', id: config.youtubeOwnerChannels.map((c) => c.channelId).join(','), maxResults: 50,
+      }, await tokenFor(firstOwner), fetchImpl);
+      summary.quotaUnits += 1;
+      for (const item of info.items || []) channelTitles.set(String(item.id), String(item.snippet?.title || ''));
+    }
+  } catch (error) {
+    summary.errors.push(`채널명 조회 실패(설정 이름 사용): ${String(error.message || error).slice(0, 120)}`);
+  }
   for (const channel of config.youtubeOwnerChannels) {
     const owner = tokens.get(channel.channelId);
     if (!owner) { summary.errors.push(`${channel.channelId}: owner token 없음`); continue; }
     try {
-      const accessToken = await refreshGoogleAccessToken(config, owner.refreshToken, fetchImpl);
+      const accessToken = await tokenFor(owner);
       const payload = await googleGet(config, 'commentThreads', {
         part: 'snippet,replies', allThreadsRelatedToChannelId: channel.channelId, maxResults: 100,
         textFormat: 'plainText', order: 'time',
@@ -91,7 +112,8 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
       }
       for (const [videoId, comments] of byVideo) {
         const video = { id: videoId, snippet: { title: titles.get(videoId) || '' } };
-        const target = ownerChannelTarget(config, channel, channel.name || channel.channelId, video, videoId, { current: comments.length });
+        const channelName = channelTitles.get(channel.channelId) || channel.name || channel.channelId;
+        const target = ownerChannelTarget(config, channel, channelName, video, videoId, { current: comments.length });
         entries.push({ target, comments });
         summary.recentComments += comments.length;
       }
