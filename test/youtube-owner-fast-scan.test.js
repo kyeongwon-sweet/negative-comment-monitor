@@ -18,7 +18,7 @@ function thread(id, videoId, text, publishedAt, { author = 'UCx', replies = [] }
   };
 }
 
-function world({ alerted = [], failChannel = '', titleInState = true, approved = [], alreadyClaimed = [], alreadyEnforced = [] } = {}) {
+function world({ alerted = [], failChannel = '', titleInState = true, approved = [], alreadyClaimed = [], alreadyEnforced = [], enforcedAt = NOW - 5 * 60 * 1000, holdFails = false } = {}) {
   const calls = { stateInserts: [], cards: [], rows: [], hides: 0, holds: [], threadReads: 0, videoLookups: 0, classified: [], claims: [], releases: 0 };
   const enforcedKeys = new Set(alreadyEnforced.map((id) => `hold-enforce:${id}`));
   const claimedKeys = new Set(alreadyClaimed);
@@ -56,7 +56,7 @@ function world({ alerted = [], failChannel = '', titleInState = true, approved =
       fresh.forEach((row) => enforcedKeys.add(row.run_key));
       return json(fresh);
     }
-    if (u.includes('cost_usage_ledger') && init.method === 'POST' && String(init.body).includes('hold-missing:')) {
+    if (u.includes('cost_usage_ledger') && init.method === 'POST' && /hold-(missing|stuck):/.test(String(init.body))) {
       const { run_key: key } = JSON.parse(init.body);
       calls.claims.push(key);
       if (claimedKeys.has(key)) return json([]);
@@ -66,6 +66,9 @@ function world({ alerted = [], failChannel = '', titleInState = true, approved =
     if (u.includes('cost_usage_ledger') && init.method === 'DELETE') { calls.releases += 1; return json(null); }
     if (u.includes('cost_usage_ledger') && decodeURIComponent(u).includes('held-review:')) {
       return json(approved.map((id) => ({ run_key: `held-review:${id}` })));
+    }
+    if (u.includes('cost_usage_ledger') && decodeURIComponent(u).includes('hold-enforce:')) {
+      return json(alreadyEnforced.map((id) => ({ run_key: `hold-enforce:${id}`, created_at: new Date(enforcedAt).toISOString() })));
     }
     if (u.includes('cost_usage_ledger')) return json([]);
     if (u.includes('negative_comment_alerts') && init.method === 'POST') { calls.rows.push(JSON.parse(init.body)); return json([{ id: 1 }]); }
@@ -78,6 +81,7 @@ function world({ alerted = [], failChannel = '', titleInState = true, approved =
     if (u.includes('reactions')) return json({ ok: true });
     if (u.includes('setModerationStatus')) {
       const params = new URL(u).searchParams;
+      if (params.get('moderationStatus') === 'heldForReview' && holdFails) return json({ error: { errors: [{ reason: 'backendError' }] } }, false, 500);
       if (params.get('moderationStatus') === 'heldForReview' && calls.holdMode) { calls.holds.push(...params.get('id').split(',')); return json({}); }
       calls.hides += 1;
       return json({});
@@ -188,7 +192,7 @@ const HOLD = {
   holdWatchChannels: [{ channelId: CH2, since: Date.parse('2026-10-30T13:14:45Z') }],
   holdWatchSince: NOW - 5 * 3600 * 1000,
 };
-const holdPosts = (calls) => calls.cards.filter((card) => String(card.text || '').includes('모두 보류'));
+const holdPosts = (calls) => calls.cards.filter((card) => /모두 보류|보류로 못 돌린/.test(String(card.text || '')));
 
 test('보류 누락: 보류 채널에서 봇 승인 없이 공개된 새 댓글이 있으면 그 영상을 경고한다(최상위, 스튜디오 링크)', async () => {
   const { fetchImpl, calls, classifier } = world();
@@ -248,21 +252,44 @@ test('보류 누락: Slack 실패면 선점을 풀어 다음 회차가 다시 �
 });
 
 // 봇 보류 대행(11-03 재발방지): 보류 누락 영상의 새 공개 댓글을 봇이 보류로 돌린다(한 댓글 한 번).
-test("보류 대행: 누락 영상의 봇 미승인 공개 댓글을 보류로 돌리고 경고에 적는다", async () => {
+test("보류 대행: 누락 영상의 봇 미승인 공개 댓글을 보류로 돌리고, 알림은 보내지 않는다(11-03 사용자: 봇이 알아서)", async () => {
   const { fetchImpl, calls, classifier } = world();
   calls.holdMode = true;
   const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, classifier);
   assert.deepEqual(calls.holds, ["bad2"]);
   assert.equal(summary.holdEnforced, 1);
-  assert.match(holdPosts(calls)[0].text, /1개를 일단 보류로 돌렸습니다/);
+  assert.equal(summary.holdLeakSilenced, 1);
+  assert.equal(summary.holdLeakAlerted, 0);
+  assert.equal(holdPosts(calls).length, 0);
+  assert.equal(calls.claims.length, 0, '알림 선점도 하지 않는다');
 });
 
-test("보류 대행: 이미 한 번 보류를 시도한 댓글은 다시 하지 않는다(quota 보호)", async () => {
+test("보류 대행: 보류한 지 1시간이 지났는데도 공개면(보류 안 먹음) 그때만 알린다", async () => {
+  const { fetchImpl, calls, classifier } = world({ alreadyEnforced: ["bad2"], enforcedAt: NOW - 2 * 3600 * 1000 });
+  calls.holdMode = true;
+  const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, classifier);
+  assert.deepEqual(calls.holds, [], '같은 댓글을 다시 보류하지 않는다(quota)');
+  assert.equal(summary.holdLeakAlerted, 1);
+  assert.deepEqual(calls.claims, ['hold-stuck:2026-11-03:v3'], '누락 알림과 별도 키(하루 1회)');
+  assert.match(holdPosts(calls)[0].text, /봇이 보류로 못 돌린/);
+  assert.match(holdPosts(calls)[0].text, /보류 후 다시 공개/);
+});
+
+test("보류 대행: 봇 보류 API가 실패하면 알린다", async () => {
+  const { fetchImpl, calls, classifier } = world({ holdFails: true });
+  const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, classifier);
+  assert.equal(summary.holdLeakAlerted, 1);
+  assert.match(holdPosts(calls)[0].text, /봇 보류 실패/);
+  assert.ok(summary.errors.some((e) => e.includes('보류 대행 실패')));
+});
+
+test("보류 대행: 이미 한 번 보류를 시도한 댓글은 다시 하지 않고, 반영 지연(1시간 안)은 알리지 않는다", async () => {
   const { fetchImpl, calls, classifier } = world({ alreadyEnforced: ["bad2"] });
   calls.holdMode = true;
   const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, classifier);
   assert.deepEqual(calls.holds, []);
   assert.equal(summary.holdEnforced, 0);
+  assert.equal(holdPosts(calls).length, 0);
 });
 
 test("보류 대행: 설정이 꺼져 있으면 경고만 하고 보류하지 않는다", async () => {

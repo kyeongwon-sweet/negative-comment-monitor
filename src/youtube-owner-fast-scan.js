@@ -28,6 +28,8 @@ import { parseHeldReviewChannels } from './youtube-owner-held-review.js';
 
 const HOUR = 60 * 60 * 1000;
 const HELD_REVIEW_LEDGER_PREFIX = 'held-review:';
+// 보류 후 YouTube 반영 지연(목록에 잠시 공개로 남음)을 실패로 보지 않는 유예. 15분 회차 4번.
+const HOLD_STUCK_GRACE_MS = 60 * 60 * 1000;
 
 function sbHeaders(config, extra = {}) {
   return { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, ...extra };
@@ -84,8 +86,8 @@ async function approvedByBot(config, ids, fetchImpl) {
 }
 
 // 같은 영상은 하루 한 번만 알린다(원장 키 선점). 선점 성공=true.
-async function claimHoldLeak(config, kstDate, videoId, fetchImpl) {
-  const runKey = `hold-missing:${kstDate}:${videoId}`;
+async function claimHoldLeak(config, kstDate, videoId, fetchImpl, prefix = 'hold-missing') {
+  const runKey = `${prefix}:${kstDate}:${videoId}`;
   const response = await fetchImpl(`${config.supabaseUrl}/rest/v1/cost_usage_ledger?on_conflict=run_key`, {
     method: 'POST',
     headers: sbHeaders(config, { 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=representation' }),
@@ -118,7 +120,6 @@ async function claimHoldEnforce(config, kstDate, ids, fetchImpl) {
   return (Array.isArray(rows) ? rows : []).map((row) => String(row.run_key).slice('hold-enforce:'.length));
 }
 
-// 소유자 토큰으로 댓글을 보류(heldForReview)로 돌린다. 50개씩 한 요청(50 unit). 성공한 개수를 돌려준다.
 async function registerNewOwnerVideos(config, channelId, items, now, fetchImpl) {
   const rows = items.map((item) => ({
     channel_id: channelId,
@@ -136,6 +137,22 @@ async function registerNewOwnerVideos(config, channelId, items, now, fetchImpl) 
   return rows.length;
 }
 
+// 이미 보류를 시도한 댓글의 시도 시각(원장 created_at). 시도 후 한참 지나도 공개면 보류가 안 먹은 것.
+async function holdEnforceTimes(config, ids, fetchImpl) {
+  const times = new Map();
+  for (let i = 0; i < ids.length; i += 50) {
+    const keys = ids.slice(i, i + 50).map((id) => `"hold-enforce:${String(id).replace(/"/g, '')}"`).join(',');
+    const response = await fetchImpl(
+      `${config.supabaseUrl}/rest/v1/cost_usage_ledger?select=run_key,created_at&run_key=${encodeURIComponent(`in.(${keys})`)}`,
+      { headers: sbHeaders(config) },
+    );
+    if (!response.ok) throw new Error(`보류 대행 원장 조회 실패(${response.status})`);
+    for (const row of await response.json()) times.set(String(row.run_key).slice('hold-enforce:'.length), Date.parse(row.created_at));
+  }
+  return times;
+}
+
+// 소유자 토큰으로 댓글을 보류(heldForReview)로 돌린다. 50개씩 한 요청(50 unit). 성공한 개수를 돌려준다.
 async function holdComments(config, ids, accessToken, fetchImpl) {
   let held = 0;
   for (let i = 0; i < ids.length; i += 50) {
@@ -164,6 +181,19 @@ export function holdLeakMessage(items, assignee = '') {
   return lines.join('\n');
 }
 
+// 봇 보류가 안 먹은 경우에만 사람에게 알린다(11-03 사용자: 보류 누락은 알림 말고 봇이 알아서).
+export function holdStuckMessage(items, assignee = '') {
+  const lines = [
+    `:warning: *봇이 보류로 못 돌린 공개 댓글* — 영상 ${items.length}개`,
+    '새 영상의 공개 댓글은 봇이 자동으로 보류하는데, 아래 댓글은 보류가 실패했거나 보류 후에도 다시 공개돼 있습니다.',
+    '사람이 스튜디오에서 직접 승인했거나, 작성자가 "승인된 사용자"이면 정상일 수 있습니다. 아니면 확인해주세요.',
+    ...items.map((it) => `• <https://studio.youtube.com/video/${it.videoId}/edit|${it.videoId}> · ${it.channelName}${it.title ? ` · ${it.title.slice(0, 40)}` : ''} · ${it.problem.length}개(${it.reason})`
+      + it.problem.slice(0, 3).map((c) => ` <https://www.youtube.com/watch?v=${it.videoId}&lc=${c.id}|댓글>`).join('')),
+  ];
+  if (assignee) lines.push(`담당자: <@${assignee}>`);
+  return lines.join('\n');
+}
+
 // 채널 최신 스레드 1페이지에서 최근 댓글(최상위+포함 답글)만 영상별로 모은다. 채널 본인 댓글은 제외.
 export function recentCommentsByVideo(threads, channelId, cutoff) {
   const byVideo = new Map();
@@ -187,7 +217,7 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
   const summary = {
     channels: 0, threadsRead: 0, recentComments: 0, alreadyAlerted: 0, classified: 0,
     flagged: 0, sentAlerts: 0, capped: 0, deferred: 0, quotaUnits: 0,
-    ownerGateSuppressed: 0, ownerGateUnreviewed: 0, holdLeakVideos: 0, holdLeakAlerted: 0, holdEnforced: 0,
+    ownerGateSuppressed: 0, ownerGateUnreviewed: 0, holdLeakVideos: 0, holdLeakAlerted: 0, holdLeakSilenced: 0, holdEnforced: 0,
     newVideosTracked: 0, errors: [],
   };
   const holdSince = new Map((config.holdWatchChannels || []).map((c) => [
@@ -282,7 +312,8 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
     summary.holdLeakVideos = leaks.length;
     // 봇이 '모두 보류'를 대신한다: 새 영상에 사람이 보류를 안 걸어도(유튜브 API로는 영상 보류 설정을 못 바꿈)
     // 봇 승인 없이 공개된 새 댓글을 즉시 보류로 돌린다 → 다음 회차 승인 봇이 판정해 괜찮은 건 다시 공개.
-    // 결과적으로 '모두 보류'와 같고 노출은 최대 한 회차(15분). 경고는 그대로 보내 스튜디오 설정도 고치게 한다.
+    // 결과적으로 '모두 보류'와 같고 노출은 최대 한 회차(15분). 그래서 누락 자체는 알리지 않고(11-03 사용자 지시),
+    // 봇 보류가 실패했거나 보류 후에도 공개로 남은 댓글만 알린다(hold-stuck, 영상당 하루 1회).
     if (leaks.length && !config.dryRun && config.holdEnforce) {
       // 채널 단위로 묶어 한 요청(50개까지 50 unit)에 보류한다 — 영상마다 따로 부르면 소유채널 확대 시 quota가 샌다.
       const byChannel = new Map();
@@ -292,27 +323,39 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
       }
       for (const [channelId, channelLeaks] of byChannel) {
         const owner = tokens.get(channelId);
-        if (!owner) continue;
+        if (!owner) {
+          for (const leak of channelLeaks) { leak.problem = leak.leaked; leak.reason = '소유자 토큰 없음'; }
+          continue;
+        }
         try {
           // 댓글당 한 번만(원장 선점). YouTube가 보류를 무시하는 예외 댓글을 매 회차 다시 보류해 quota를 태우지 않게.
-          const fresh = new Set(await claimHoldEnforce(
-            config, kstDateKey(now), channelLeaks.flatMap((leak) => leak.leaked.map((c) => c.id)), fetchImpl,
-          ));
+          const allIds = channelLeaks.flatMap((leak) => leak.leaked.map((c) => c.id));
+          const fresh = new Set(await claimHoldEnforce(config, kstDateKey(now), allIds, fetchImpl));
           if (fresh.size) await holdComments(config, [...fresh], await tokenFor(owner), fetchImpl);
+          // 예전에 이미 보류했는데 또 공개 = 보류가 안 먹음(사람 승인·승인된 사용자 등). 반영 지연은 유예한다.
+          const retried = allIds.filter((id) => !fresh.has(id));
+          const triedAt = retried.length ? await holdEnforceTimes(config, retried, fetchImpl) : new Map();
           for (const leak of channelLeaks) {
             leak.enforced = leak.leaked.filter((c) => fresh.has(c.id)).length;
             summary.holdEnforced += leak.enforced;
+            leak.problem = leak.leaked.filter((c) => !fresh.has(c.id) && now - (triedAt.get(c.id) ?? now) >= HOLD_STUCK_GRACE_MS);
+            if (leak.problem.length) leak.reason = '보류 후 다시 공개';
           }
         } catch (error) {
+          for (const leak of channelLeaks) { leak.problem = leak.leaked; leak.reason = '봇 보류 실패'; }
           summary.errors.push(`보류 대행 실패 ${channelId}: ${String(error.message || error).slice(0, 120)}`);
         }
       }
     }
-    if (leaks.length && !config.dryRun) {
+    // 봇 보류 대행이 켜져 있으면 보류 누락 자체는 알리지 않는다(봇이 처리). 보류가 안 먹은 댓글만 알린다.
+    const enforcing = config.holdEnforce && !config.dryRun;
+    const toAlert = enforcing ? leaks.filter((leak) => leak.problem?.length) : leaks;
+    summary.holdLeakSilenced = leaks.length - toAlert.length;
+    if (toAlert.length && !config.dryRun) {
       const kstDate = kstDateKey(now);
       const claimed = [];
-      for (const leak of leaks) {
-        const claim = await claimHoldLeak(config, kstDate, leak.videoId, fetchImpl);
+      for (const leak of toAlert) {
+        const claim = await claimHoldLeak(config, kstDate, leak.videoId, fetchImpl, enforcing ? 'hold-stuck' : 'hold-missing');
         if (claim.claimed) claimed.push({ ...leak, runKey: claim.runKey });
       }
       if (claimed.length) {
@@ -320,7 +363,7 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
           const response = await fetchImpl('https://slack.com/api/chat.postMessage', {
             method: 'POST',
             headers: { Authorization: `Bearer ${config.slackBotToken}`, 'Content-Type': 'application/json; charset=utf-8' },
-            body: JSON.stringify({ channel: config.slackChannelId, text: holdLeakMessage(claimed, config.slackAssignees?.other || ''), unfurl_links: false }),
+            body: JSON.stringify({ channel: config.slackChannelId, text: (enforcing ? holdStuckMessage : holdLeakMessage)(claimed, config.slackAssignees?.other || ''), unfurl_links: false }),
           });
           const payload = await response.json().catch(() => ({}));
           if (!response.ok || !payload.ok) throw new Error(`Slack: ${payload.error || response.status}`);
