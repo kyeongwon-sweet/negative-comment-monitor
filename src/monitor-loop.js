@@ -66,7 +66,10 @@ export async function runMonitorLoop(env = process.env, options = {}) {
   // 분류된 소유채널 악플 숨김과 사람 오탐 공개복원도 GitHub cron 대신 같은 15분 루프에서 실행한다.
   // 실행 스위치는 워크플로가 명시적으로 켜며, 기존 모더레이션 대상 조건은 각 본체가 그대로 지킨다.
   const pendingHideEnabled = truthy(env.YOUTUBE_OWNER_PENDING_HIDE_LOOP);
-  const keepAuxiliaryLoopAlive = heldReviewEnabled || pendingHideEnabled;
+  // 소유채널 빠른 감시(채널당 최신 스레드 1페이지): 3시간 크론이 5~7시간으로 밀려 부정이 오래 공개되던 공백을
+  // 15분으로 줄인다(11-03). 자동숨김(pending-hide)보다 먼저 돌아 같은 회차에 숨겨지게 한다.
+  const ownerFastScanEnabled = truthy(env.YOUTUBE_OWNER_FAST_SCAN_LOOP);
+  const keepAuxiliaryLoopAlive = heldReviewEnabled || pendingHideEnabled || ownerFastScanEnabled;
   const coverageLoop = eventName === 'schedule' || chainRun;
   const gateConfig = {
     supabaseUrl: String(env.SUPABASE_URL || '').trim(),
@@ -90,6 +93,27 @@ export async function runMonitorLoop(env = process.env, options = {}) {
       AUXILIARY_FAILURE_THRESHOLD: '2',
       AUXILIARY_ALERT_COOLDOWN_HOURS: '12',
       AUXILIARY_COMPONENT: 'YouTube 소유채널 보류 댓글 공개 봇',
+      AUXILIARY_REASON: reason,
+      FAILURE_RUN_URL: env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY && env.GITHUB_RUN_ID
+        ? `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`
+        : '',
+    },
+  ));
+  const fastScanOwners = options.runOwnerFastScan || ((scanEnv) => runCommand(
+    'npm',
+    ['run', 'scan:youtube-owner-fast'],
+    scanEnv,
+  ));
+  const recordFastScanOutcome = options.recordOwnerFastScanOutcome || ((outcome, reason) => runCommand(
+    process.execPath,
+    ['src/record-auxiliary-outcome.js'],
+    {
+      ...env,
+      AUXILIARY_HEALTH_KEY: 'youtube_owner_fast_scan',
+      AUXILIARY_OUTCOME: outcome,
+      AUXILIARY_FAILURE_THRESHOLD: '3',
+      AUXILIARY_ALERT_COOLDOWN_HOURS: '24',
+      AUXILIARY_COMPONENT: 'YouTube 소유채널 15분 빠른 감시',
       AUXILIARY_REASON: reason,
       FAILURE_RUN_URL: env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY && env.GITHUB_RUN_ID
         ? `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`
@@ -155,6 +179,8 @@ export async function runMonitorLoop(env = process.env, options = {}) {
   let lastScannedAt = null;
   let heldReviewRuns = 0;
   let heldReviewFailures = 0;
+  let ownerFastScanRuns = 0;
+  let ownerFastScanFailures = 0;
   let pendingHideRuns = 0;
   let pendingHideFailures = 0;
   let falsePositiveRestoreRuns = 0;
@@ -221,6 +247,30 @@ export async function runMonitorLoop(env = process.env, options = {}) {
         await recordHeldOutcome(heldOutcome, heldReason);
       } catch (error) {
         console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} held_review_health_write=failure error=${error.message}`);
+      }
+    }
+
+    if (ownerFastScanEnabled) {
+      let scanOutcome = 'success';
+      let scanReason = '15분 루프 정상';
+      try {
+        await fastScanOwners({
+          ...env,
+          OWNED_BRAND_ESCALATION_MODEL: String(env.YOUTUBE_OWNER_FAST_ESCALATION_MODEL || env.OWNED_BRAND_ESCALATION_MODEL || '').trim(),
+        });
+        ownerFastScanRuns += 1;
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} owner_fast_scan=success`);
+      } catch (error) {
+        // 빠른 감시 실패는 핵심 수집·숨김을 막지 않는다. 3시간 소유채널 모니터가 백스톱.
+        ownerFastScanFailures += 1;
+        scanOutcome = 'failure';
+        scanReason = `15분 루프 실패: ${String(error.message || error).slice(0, 160)}`;
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} owner_fast_scan=failure error=${error.message}`);
+      }
+      try {
+        await recordFastScanOutcome(scanOutcome, scanReason);
+      } catch (error) {
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} owner_fast_scan_health_write=failure error=${error.message}`);
       }
     }
 
@@ -330,6 +380,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
   console.error(
     `[monitor-loop] complete iterations=${iterations} full_scans=${monitorRuns}`
       + ` held_review_runs=${heldReviewRuns} held_review_failures=${heldReviewFailures}`
+      + `${ownerFastScanEnabled ? ` owner_fast_scan_runs=${ownerFastScanRuns} owner_fast_scan_failures=${ownerFastScanFailures}` : ''}`
       + ` pending_hide_runs=${pendingHideRuns} pending_hide_failures=${pendingHideFailures}`
       + ` fp_restore_runs=${falsePositiveRestoreRuns} fp_restore_failures=${falsePositiveRestoreFailures}`
       + ` chain=${chainResult.reason}`,
@@ -339,6 +390,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
     monitorRuns,
     dependenciesInstalled,
     ...(heldReviewEnabled ? { heldReviewRuns, heldReviewFailures } : {}),
+    ...(ownerFastScanEnabled ? { ownerFastScanRuns, ownerFastScanFailures } : {}),
     ...(pendingHideEnabled ? {
       pendingHideRuns,
       pendingHideFailures,

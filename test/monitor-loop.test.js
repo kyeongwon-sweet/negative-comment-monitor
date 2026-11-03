@@ -406,6 +406,8 @@ test('계약: floor 지난 조용한 구간에서 어떤 보조작업·트리거
     held: { HELD_REVIEW_CHANNELS: 'UCOWNER@2026-10-29T02:32:00Z' },
     pending: { YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true' },
     both: { HELD_REVIEW_CHANNELS: 'UCOWNER@2026-10-29T02:32:00Z', YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true' },
+    ownerFast: { YOUTUBE_OWNER_FAST_SCAN_LOOP: 'true' },
+    all: { HELD_REVIEW_CHANNELS: 'UCOWNER@2026-10-29T02:32:00Z', YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true', YOUTUBE_OWNER_FAST_SCAN_LOOP: 'true' },
   };
   const TRIGGERS = {
     quarterHourCron: { MONITOR_TRIGGER_EVENT: 'schedule', MONITOR_TRIGGER_SCHEDULE: '*/15 * * * *' },
@@ -427,6 +429,8 @@ test('계약: floor 지난 조용한 구간에서 어떤 보조작업·트리거
         runFalsePositiveRestore: async () => {},
         recordPendingHideOutcome: async () => {},
         recordFalsePositiveRestoreOutcome: async () => {},
+        runOwnerFastScan: async () => {},
+        recordOwnerFastScanOutcome: async () => {},
         recordHeartbeat: async () => {},
         sleep: async () => {},
         now: () => now,
@@ -439,4 +443,58 @@ test('계약: floor 지난 조용한 구간에서 어떤 보조작업·트리거
       );
     }
   }
+});
+
+test('소유채널 빠른 감시: 매 회차 자동숨김보다 먼저 돌고, 강한 모델 설정은 이 잡에만 넘긴다', async () => {
+  const order = [];
+  const scanEnvs = [];
+  const outcomes = [];
+  const result = await runMonitorLoop({
+    ...BASE_ENV,
+    MONITOR_LOOP_ITERATIONS: '2',
+    YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true',
+    YOUTUBE_OWNER_FAST_SCAN_LOOP: 'true',
+    YOUTUBE_OWNER_FAST_ESCALATION_MODEL: 'gemini-3.5-flash-lite',
+  }, {
+    gate: async () => false,
+    latestScan: async () => Date.now(),
+    runCommand: async (command, args, env) => { if (args?.[0] === 'start') order.push(`start:${env?.OWNED_BRAND_ESCALATION_MODEL || ''}`); },
+    runOwnerFastScan: async (env) => { order.push('fast'); scanEnvs.push(env); },
+    recordOwnerFastScanOutcome: async (...args) => { outcomes.push(args); },
+    runPendingHide: async () => { order.push('hide'); },
+    runFalsePositiveRestore: async () => {},
+    recordPendingHideOutcome: async () => {},
+    recordFalsePositiveRestoreOutcome: async () => {},
+    recordHeartbeat: async () => {},
+    sleep: async () => {},
+    chain: async () => disabledChain,
+  });
+  assert.deepEqual(order, ['fast', 'hide', 'fast', 'hide']);
+  assert.ok(scanEnvs.every((env) => env.OWNED_BRAND_ESCALATION_MODEL === 'gemini-3.5-flash-lite'));
+  assert.deepEqual(outcomes, [['success', '15분 루프 정상'], ['success', '15분 루프 정상']]);
+  assert.equal(result.ownerFastScanRuns, 2);
+  assert.equal(result.ownerFastScanFailures, 0);
+});
+
+test('소유채널 빠른 감시 실패는 자동숨김·핵심 수집을 막지 않고 건강 원장에 실패로 남긴다', async () => {
+  const order = [];
+  const outcomes = [];
+  const result = await runMonitorLoop({ ...BASE_ENV, MONITOR_LOOP_ITERATIONS: '1', YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true', YOUTUBE_OWNER_FAST_SCAN_LOOP: 'true' }, {
+    gate: async () => false,
+    latestScan: async () => Date.now(),
+    runCommand: async () => {},
+    runOwnerFastScan: async () => { throw new Error('quotaExceeded'); },
+    recordOwnerFastScanOutcome: async (...args) => { outcomes.push(args); },
+    runPendingHide: async () => { order.push('hide'); },
+    runFalsePositiveRestore: async () => {},
+    recordPendingHideOutcome: async () => {},
+    recordFalsePositiveRestoreOutcome: async () => {},
+    recordHeartbeat: async () => {},
+    sleep: async () => {},
+    chain: async () => disabledChain,
+  });
+  assert.deepEqual(order, ['hide']);
+  assert.equal(outcomes[0][0], 'failure');
+  assert.match(outcomes[0][1], /quotaExceeded/);
+  assert.equal(result.ownerFastScanFailures, 1);
 });

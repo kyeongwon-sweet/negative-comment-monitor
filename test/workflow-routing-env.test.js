@@ -299,3 +299,14 @@ test('바치케 협찬(파워채널/먹스타) 담당자(PBACHI_MUKSTAR)는 PBAC
     assert.equal(assigneeEnvCount(workflow, 'SLACK_ASSIGNEE_PBACHI_SPONSORSHIP'), 0, `${name}: PBACHI_SPONSORSHIP 폐기`);
   }
 });
+
+test('15분 루프는 소유채널 빠른 감시를 켜고, 강한 모델은 빠른 감시 전용 변수로만 넘긴다', () => {
+  const loopStep = monitorWorkflow.slice(
+    monitorWorkflow.indexOf('run: node src/monitor-loop.js'),
+    monitorWorkflow.indexOf('- name:', monitorWorkflow.indexOf('run: node src/monitor-loop.js')),
+  );
+  assert.match(loopStep, /YOUTUBE_OWNER_FAST_SCAN_LOOP:\s*'true'/);
+  assert.match(loopStep, /YOUTUBE_OWNER_FAST_ESCALATION_MODEL:\s*gemini-/);
+  // 같은 스텝의 핵심 수집(npm start) 판정을 바꾸지 않도록 일반 변수명은 루프 스텝에 두지 않는다.
+  assert.doesNotMatch(loopStep, /^\s*OWNED_BRAND_ESCALATION_MODEL:/m);
+});

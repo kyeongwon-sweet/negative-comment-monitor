@@ -93,7 +93,7 @@ function sbHeaders(config, extra = {}) {
   return { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, ...extra };
 }
 
-async function googleGet(config, resource, params, accessToken, fetchImpl) {
+export async function googleGet(config, resource, params, accessToken, fetchImpl) {
   const url = new URL(`${config.youtubeApiBase}/${resource}`);
   for (const [key, value] of Object.entries(params)) if (value !== '' && value != null) url.searchParams.set(key, String(value));
   const response = await fetchImpl(url, { headers: { Authorization: `Bearer ${accessToken}` } });
@@ -162,7 +162,7 @@ export async function listPublicCommentsByVideo(config, channelId, accessToken, 
   return { byVideo, truncated: Boolean(pageToken) };
 }
 
-async function loadVideoTitles(config, fetchImpl) {
+export async function loadVideoTitles(config, fetchImpl) {
   const titles = new Map();
   for (let offset = 0; ; offset += 1000) {
     const response = await fetchImpl(
