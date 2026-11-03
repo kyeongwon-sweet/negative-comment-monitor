@@ -18,8 +18,9 @@ function thread(id, videoId, text, publishedAt, { author = 'UCx', replies = [] }
   };
 }
 
-function world({ alerted = [], failChannel = '', titleInState = true } = {}) {
-  const calls = { cards: [], rows: [], hides: 0, threadReads: 0, videoLookups: 0, classified: [] };
+function world({ alerted = [], failChannel = '', titleInState = true, approved = [], alreadyClaimed = [] } = {}) {
+  const calls = { cards: [], rows: [], hides: 0, threadReads: 0, videoLookups: 0, classified: [], claims: [], releases: 0 };
+  const claimedKeys = new Set(alreadyClaimed);
   const json = (body, ok = true, status = 200) => ({ ok, status, json: async () => body, text: async () => JSON.stringify(body) });
   const threadsByChannel = {
     [CH]: [
@@ -48,6 +49,17 @@ function world({ alerted = [], failChannel = '', titleInState = true } = {}) {
     if (u.includes('/channels') && u.includes('mine=true')) throw new Error('fast scan must not verify owner channel (quota)');
     if (u.includes('/channels')) { calls.channelLookups = (calls.channelLookups || 0) + 1; return json({ items: [{ id: CH, snippet: { title: '먹짱언니_mukzzang unnie' } }, { id: CH2, snippet: { title: '먹는김에' } }] }); }
     if (u.includes('comment_classification_cache')) return json(init.method === 'POST' ? null : []);
+    if (u.includes('cost_usage_ledger') && init.method === 'POST' && String(init.body).includes('hold-missing:')) {
+      const { run_key: key } = JSON.parse(init.body);
+      calls.claims.push(key);
+      if (claimedKeys.has(key)) return json([]);
+      claimedKeys.add(key);
+      return json([{ run_key: key }]);
+    }
+    if (u.includes('cost_usage_ledger') && init.method === 'DELETE') { calls.releases += 1; return json(null); }
+    if (u.includes('cost_usage_ledger') && decodeURIComponent(u).includes('held-review:')) {
+      return json(approved.map((id) => ({ run_key: `held-review:${id}` })));
+    }
     if (u.includes('cost_usage_ledger')) return json([]);
     if (u.includes('negative_comment_alerts') && init.method === 'POST') { calls.rows.push(JSON.parse(init.body)); return json([{ id: 1 }]); }
     if (u.includes('negative_comment_alerts')) {
@@ -138,4 +150,69 @@ test('recentCommentsByVideo: 최근·비본인 댓글만, 포함 답글도 같�
   const threads = [thread('a', 'v1', 'x', ago(1), { replies: [{ id: 'a.r', text: 'y', publishedAt: ago(10) }, { id: 'a.s', text: 'z', publishedAt: ago(2) }] })];
   const byVideo = recentCommentsByVideo(threads, CH, NOW - 6 * 3600 * 1000);
   assert.deepEqual(byVideo.get('v1').map((c) => c.id), ['a', 'a.s']);
+});
+
+// '모두 보류' 누락 감시: 보류 채널(CH2=먹는김에)에서 봇 승인 없이 공개된 새 댓글 → 영상 경고(하루 1회).
+const HOLD = {
+  ...BASE,
+  holdWatchChannels: [{ channelId: CH2, since: Date.parse('2026-10-30T13:14:45Z') }],
+  holdWatchSince: NOW - 5 * 3600 * 1000,
+};
+const holdPosts = (calls) => calls.cards.filter((card) => String(card.text || '').includes('모두 보류'));
+
+test('보류 누락: 보류 채널에서 봇 승인 없이 공개된 새 댓글이 있으면 그 영상을 경고한다(최상위, 스튜디오 링크)', async () => {
+  const { fetchImpl, calls, classifier } = world();
+  const summary = await runOwnerFastScan(HOLD, fetchImpl, NOW, classifier);
+  assert.equal(summary.holdLeakVideos, 1);
+  assert.equal(summary.holdLeakAlerted, 1);
+  const posts = holdPosts(calls);
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].thread_ts, undefined, '운영 경고는 최상위');
+  assert.match(posts[0].text, /studio\.youtube\.com\/video\/v3\/edit/);
+  assert.match(posts[0].text, /먹는김에/);
+  assert.doesNotMatch(posts[0].text, /v1/, '보류 채널이 아닌 먹짱언니(CH) 영상은 대상 아님');
+});
+
+test('보류 누락: 봇이 공개한 댓글(held-review 원장)은 누락이 아니다', async () => {
+  const { fetchImpl, calls, classifier } = world({ approved: ['bad2'] });
+  const summary = await runOwnerFastScan(HOLD, fetchImpl, NOW, classifier);
+  assert.equal(summary.holdLeakVideos, 0);
+  assert.equal(holdPosts(calls).length, 0);
+});
+
+test('보류 누락: 감시 시작 전에 달린 댓글은 세지 않는다(설정 전 댓글로 오경보 방지)', async () => {
+  const { fetchImpl, calls, classifier } = world();
+  const summary = await runOwnerFastScan({ ...HOLD, holdWatchSince: NOW - 1 * 3600 * 1000 }, fetchImpl, NOW, classifier);
+  assert.equal(summary.holdLeakVideos, 0, 'bad2는 3시간 전 댓글');
+  assert.equal(holdPosts(calls).length, 0);
+});
+
+test('보류 누락: 같은 영상은 하루 한 번만 알린다', async () => {
+  const { fetchImpl, calls, classifier } = world({ alreadyClaimed: ['hold-missing:2026-11-03:v3'] });
+  const summary = await runOwnerFastScan(HOLD, fetchImpl, NOW, classifier);
+  assert.equal(summary.holdLeakVideos, 1);
+  assert.equal(summary.holdLeakAlerted, 0);
+  assert.equal(holdPosts(calls).length, 0);
+});
+
+test('보류 누락: 시작 시각 변수가 없으면 감시하지 않는다(안전 기본값)', async () => {
+  const { fetchImpl, calls, classifier } = world();
+  const summary = await runOwnerFastScan({ ...HOLD, holdWatchSince: null }, fetchImpl, NOW, classifier);
+  assert.equal(summary.holdLeakVideos, 0);
+  assert.equal(calls.claims.length, 0);
+});
+
+test('보류 누락: Slack 실패면 선점을 풀어 다음 회차가 다시 알린다', async () => {
+  const base = world();
+  const fetchImpl = async (url, init = {}) => {
+    if (String(url).includes('chat.postMessage') && String(init.body).includes('모두 보류')) {
+      return { ok: true, status: 200, json: async () => ({ ok: false, error: 'ratelimited' }) };
+    }
+    return base.fetchImpl(url, init);
+  };
+  const summary = await runOwnerFastScan(HOLD, fetchImpl, NOW, base.classifier);
+  assert.equal(summary.holdLeakAlerted, 0);
+  assert.equal(base.calls.releases, 1);
+  assert.ok(summary.errors.some((e) => e.includes('보류 누락 감시 실패')));
+  assert.equal(base.calls.rows.length, 3, '보류 감시 실패가 부정 카드 경로를 막지 않는다(부정 3건 모두 카드)');
 });
