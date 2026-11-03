@@ -3,7 +3,7 @@
 // (예: 11-03 06:43 한 회차에서 38건 일괄 숨김, 밤 10시 댓글이 새벽 4시 숨김).
 // 이 잡은 15분 루프에서 채널마다 최신 댓글 스레드 1페이지(100개, quota 1 unit)만 읽어
 // 최근 N시간 안의 새 댓글을 판정하고, 부정이면 소유채널 모니터와 같은 카드+알림행(결정 없음)을 남긴다.
-// 숨김은 같은 루프의 pending-hide가 한다(기존 대상 조건 그대로 — 추적 영상만).
+// 숨김은 같은 루프의 pending-hide가 한다(대상 조건=추적 영상 — 그래서 처음 본 새 영상은 이 잡이 상태표에 등록한다).
 // - 전체 영상 목록·통계 조회(회당 ~70 unit)는 하지 않는다: 프로젝트 일일 quota 10,000을 지킨다
 //   (회당 채널 11 + 채널명 1 = 12 unit).
 // - 공개 댓글만 읽으므로 토큰 소유 검증(channels mine, 1 unit)은 생략하고 재발급만 한다.
@@ -119,6 +119,23 @@ async function claimHoldEnforce(config, kstDate, ids, fetchImpl) {
 }
 
 // 소유자 토큰으로 댓글을 보류(heldForReview)로 돌린다. 50개씩 한 요청(50 unit). 성공한 개수를 돌려준다.
+async function registerNewOwnerVideos(config, channelId, items, now, fetchImpl) {
+  const rows = items.map((item) => ({
+    channel_id: channelId,
+    video_id: String(item.id),
+    video_title: String(item.snippet?.title || ''),
+    published_at: item.snippet?.publishedAt || null,
+    last_seen_at: new Date(now).toISOString(),
+  }));
+  const response = await fetchImpl(`${config.supabaseUrl}/rest/v1/youtube_owner_video_state?on_conflict=channel_id,video_id`, {
+    method: 'POST',
+    headers: sbHeaders(config, { 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' }),
+    body: JSON.stringify(rows),
+  });
+  if (!response.ok) throw new Error(`상태표 등록 실패(${response.status})`);
+  return rows.length;
+}
+
 async function holdComments(config, ids, accessToken, fetchImpl) {
   let held = 0;
   for (let i = 0; i < ids.length; i += 50) {
@@ -170,7 +187,8 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
   const summary = {
     channels: 0, threadsRead: 0, recentComments: 0, alreadyAlerted: 0, classified: 0,
     flagged: 0, sentAlerts: 0, capped: 0, deferred: 0, quotaUnits: 0,
-    ownerGateSuppressed: 0, ownerGateUnreviewed: 0, holdLeakVideos: 0, holdLeakAlerted: 0, holdEnforced: 0, errors: [],
+    ownerGateSuppressed: 0, ownerGateUnreviewed: 0, holdLeakVideos: 0, holdLeakAlerted: 0, holdEnforced: 0,
+    newVideosTracked: 0, errors: [],
   };
   const holdSince = new Map((config.holdWatchChannels || []).map((c) => [
     c.channelId, Math.max(c.since, config.holdWatchSince ?? Infinity),
@@ -214,11 +232,25 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
       summary.threadsRead += (payload.items || []).length;
       const byVideo = recentCommentsByVideo(payload.items, channel.channelId, cutoff);
       const missing = [...byVideo.keys()].filter((id) => !titles.get(id));
+      const newVideos = [];
       for (let i = 0; i < missing.length; i += 50) {
         // 상태표에 없는 새 영상은 제목을 채워야 상품 라우팅이 JD 폴백으로 새지 않는다(10-30 제과 오배정).
         const info = await googleGet(config, 'videos', { part: 'snippet', id: missing.slice(i, i + 50).join(','), maxResults: 50 }, accessToken, fetchImpl);
         summary.quotaUnits += 1;
-        for (const item of info.items || []) titles.set(String(item.id), String(item.snippet?.title || ''));
+        for (const item of info.items || []) {
+          titles.set(String(item.id), String(item.snippet?.title || ''));
+          if (String(item.snippet?.channelId || '') === channel.channelId) newVideos.push(item);
+        }
+      }
+      // pending-hide는 상태표(추적) 영상만 숨긴다. 3시간 모니터가 새 영상을 등록하기 전(실제 5~7시간)엔
+      // 빠른 감시 알림이 숨겨지지 않았다(11-03 5VNRIdPcGE4). 실제 채널이 확인된 새 영상만 최소 행으로 등록 —
+      // 기존 행은 건드리지 않고(ignore-duplicates), 카운트는 비워 두어 3시간 모니터가 첫 스캔처럼 전체를 읽는다.
+      if (newVideos.length && !config.dryRun) {
+        try {
+          summary.newVideosTracked += await registerNewOwnerVideos(config, channel.channelId, newVideos, now, fetchImpl);
+        } catch (error) {
+          summary.errors.push(`새 영상 등록 실패 ${channel.channelId}: ${String(error.message || error).slice(0, 120)}`);
+        }
       }
       for (const [videoId, comments] of byVideo) {
         const video = { id: videoId, snippet: { title: titles.get(videoId) || '' } };

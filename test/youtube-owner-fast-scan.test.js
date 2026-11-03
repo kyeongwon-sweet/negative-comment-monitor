@@ -19,7 +19,7 @@ function thread(id, videoId, text, publishedAt, { author = 'UCx', replies = [] }
 }
 
 function world({ alerted = [], failChannel = '', titleInState = true, approved = [], alreadyClaimed = [], alreadyEnforced = [] } = {}) {
-  const calls = { cards: [], rows: [], hides: 0, holds: [], threadReads: 0, videoLookups: 0, classified: [], claims: [], releases: 0 };
+  const calls = { stateInserts: [], cards: [], rows: [], hides: 0, holds: [], threadReads: 0, videoLookups: 0, classified: [], claims: [], releases: 0 };
   const enforcedKeys = new Set(alreadyEnforced.map((id) => `hold-enforce:${id}`));
   const claimedKeys = new Set(alreadyClaimed);
   const json = (body, ok = true, status = 200) => ({ ok, status, json: async () => body, text: async () => JSON.stringify(body) });
@@ -37,6 +37,7 @@ function world({ alerted = [], failChannel = '', titleInState = true, approved =
   )));
   const fetchImpl = async (url, init = {}) => {
     const u = String(url);
+    if (u.includes('youtube_owner_video_state') && init.method === 'POST') { calls.stateInserts.push({ prefer: init.headers.Prefer, rows: JSON.parse(init.body) }); return json(null); }
     if (u.includes('youtube_owner_video_state')) return json(titleInState ? [{ video_id: 'v1', video_title: '멜론 쫀득바' }, { video_id: 'v2', video_title: '멜론 쫀득바' }, { video_id: 'v3', video_title: '멜론 쫀득바' }] : []);
     if (u.includes('meta_tokens')) return json([{ kind: `youtube_owner:${CH}`, token: 'rt1' }, { kind: `youtube_owner:${CH2}`, token: 'rt2' }]);
     if (u.includes('oauth2.googleapis.com')) return json({ access_token: 'at' });
@@ -46,7 +47,7 @@ function world({ alerted = [], failChannel = '', titleInState = true, approved =
       if (channelId === failChannel) return json({ error: { errors: [{ reason: 'quotaExceeded' }] } }, false, 403);
       return json({ items: threadsByChannel[channelId] || [] });
     }
-    if (u.includes('/videos?')) { calls.videoLookups += 1; return json({ items: [{ id: 'v1', snippet: { title: '[26.10]새우깡제친_main_제과' } }] }); }
+    if (u.includes('/videos?')) { calls.videoLookups += 1; return json({ items: [{ id: 'v1', snippet: { title: '[26.10]새우깡제친_main_제과', channelId: CH, publishedAt: ago(2) } }, { id: 'v3', snippet: { title: '남의 영상', channelId: 'UCother' } }] }); }
     if (u.includes('/channels') && u.includes('mine=true')) throw new Error('fast scan must not verify owner channel (quota)');
     if (u.includes('/channels')) { calls.channelLookups = (calls.channelLookups || 0) + 1; return json({ items: [{ id: CH, snippet: { title: '먹짱언니_mukzzang unnie' } }, { id: CH2, snippet: { title: '먹는김에' } }] }); }
     if (u.includes('comment_classification_cache')) return json(init.method === 'POST' ? null : []);
@@ -155,6 +156,24 @@ test('상태표에 제목이 없는 새 영상은 videos.list로 제목을 채�
   await runOwnerFastScan(BASE, fetchImpl, NOW, classifier);
   assert.ok(calls.videoLookups >= 1);
   assert.equal(calls.rows.find((r) => r.comment_id === 'bad1').product_name, '제과');
+});
+
+test('상태표에 없는 새 영상은 실제 채널이 맞을 때만 최소 행으로 등록한다(pending-hide 추적 대상이 되게, 기존 행 불변)', async () => {
+  const { fetchImpl, calls, classifier } = world({ titleInState: false });
+  const summary = await runOwnerFastScan(BASE, fetchImpl, NOW, classifier);
+  const inserted = calls.stateInserts.flatMap((i) => i.rows);
+  // v1은 CH 영상으로 확인 → 등록. v3 조회 응답은 다른 채널 → 등록하지 않는다.
+  assert.deepEqual(inserted.map((r) => [r.channel_id, r.video_id]), [[CH, 'v1']]);
+  assert.equal(inserted[0].video_title, '[26.10]새우깡제친_main_제과');
+  assert.ok(!('comment_count' in inserted[0]) && !('last_scanned_count' in inserted[0]), '카운트 비움 → 3시간 모니터가 전체 스캔');
+  assert.ok(calls.stateInserts.every((i) => i.prefer.includes('ignore-duplicates')), '기존 추적 행 덮어쓰기 금지');
+  assert.equal(summary.newVideosTracked, 1);
+});
+
+test('dry-run은 새 영상을 상태표에 등록하지 않는다', async () => {
+  const { fetchImpl, calls, classifier } = world({ titleInState: false });
+  await runOwnerFastScan({ ...BASE, dryRun: true }, fetchImpl, NOW, classifier);
+  assert.equal(calls.stateInserts.length, 0);
 });
 
 test('recentCommentsByVideo: 최근·비본인 댓글만, 포함 답글도 같은 영상으로', () => {
