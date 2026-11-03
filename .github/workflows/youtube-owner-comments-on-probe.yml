@@ -1,0 +1,31 @@
+name: YouTube owner comments-on probe
+
+# 읽기 전용. 소유채널별 전체 업로드 중 댓글이 켜진 영상 목록('모두 보류' Studio 작업 목록).
+# 댓글 상태·설정을 바꾸지 않는다. 로그엔 채널ID·영상ID·개수만 남는다.
+on:
+  workflow_dispatch:
+    inputs:
+      channel_ids:
+        description: 점검할 채널ID(쉼표, 비우면 토큰 있는 소유채널 전체)
+        required: false
+        type: string
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: List comments-on videos per owned channel
+        run: node src/youtube-owner-comments-on-probe.js
+        env:
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          COMMENTS_ON_PROBE_CHANNEL_IDS: ${{ inputs.channel_ids }}
