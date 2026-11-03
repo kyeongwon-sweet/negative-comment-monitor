@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { loadYouTubeOwnerChannelConfig, inferOwnerVideoProduct } from './youtube-owner-channel.js';
 import { loadYouTubeOwnerTokens, refreshAndVerifyOwner } from './youtube-owner-moderation.js';
+import { refreshGoogleAccessToken } from './youtube-ads.js';
 import { ownerThreadRoute } from './youtube-owner-channel-run.js';
 import { ensureDailyThread } from './threads.js';
 import { kstDateKey } from './schedule.js';
@@ -42,6 +43,9 @@ export function loadHeldReviewConfig(env = process.env, now = Date.now()) {
     heldReviewDryRun: String(env.HELD_REVIEW_DRY_RUN || 'true').toLowerCase() !== 'false',
     heldReviewModel: String(env.HELD_REVIEW_MODEL || base.ownedBrandEscalationModel || 'gemini-3.5-flash-lite').trim(),
     heldReviewMaxPages: Math.max(1, Math.min(50, Number(env.HELD_REVIEW_MAX_PAGES || 20))),
+    // 보류함은 최근 이 시간치만 읽는다(페이지 전체가 이보다 오래되면 중단). 15분마다 전체를 읽으면 채널을 늘릴 때
+    // 일일 quota 10,000을 넘는다(11-03 먹짱언니 확대 전 계산). 72h = 승인 봇이 사흘 연속 멈춰도 따라잡는 여유.
+    heldReviewLookbackHours: Math.max(1, Math.min(24 * 30, Number(env.HELD_REVIEW_LOOKBACK_HOURS || 72))),
   };
 }
 
@@ -88,7 +92,17 @@ export function extractHeldComments(threads) {
   return out.filter((c) => c.id);
 }
 
-async function listHeldThreads(config, channelId, accessToken, fetchImpl) {
+// 페이지 안 모든 댓글(최상위+답글)이 stopBefore보다 오래됐는가. 목록은 최신순이므로 그 뒤 페이지도 더 오래됐다.
+export function pageIsOlderThan(items, stopBefore) {
+  if (!Number.isFinite(stopBefore) || !items?.length) return false;
+  return items.every((thread) => {
+    const times = [thread?.snippet?.topLevelComment, ...(thread?.replies?.comments || [])]
+      .map((c) => Date.parse(c?.snippet?.publishedAt || '')).filter(Number.isFinite);
+    return times.length > 0 && times.every((t) => t < stopBefore);
+  });
+}
+
+async function listHeldThreads(config, channelId, accessToken, fetchImpl, stopBefore = NaN) {
   const threads = [];
   let pageToken = '';
   let pages = 0;
@@ -104,8 +118,9 @@ async function listHeldThreads(config, channelId, accessToken, fetchImpl) {
     threads.push(...(payload.items || []));
     pageToken = payload.nextPageToken || '';
     pages += 1;
+    if (pageIsOlderThan(payload.items, stopBefore)) return { threads, truncated: false, pages };
   } while (pageToken && pages < config.heldReviewMaxPages);
-  return { threads, truncated: Boolean(pageToken) };
+  return { threads, truncated: Boolean(pageToken), pages };
 }
 
 async function existingIds(config, table, column, ids, fetchImpl) {
@@ -332,8 +347,11 @@ export async function runHeldReview(config, fetchImpl = fetch, now = Date.now())
     try {
       const owner = owners.get(channelId);
       if (!owner) throw new Error('owner token 없음');
-      const accessToken = await refreshAndVerifyOwner(config, owner, fetchImpl);
-      const { threads, truncated } = await listHeldThreads(config, channelId, accessToken, fetchImpl);
+      // 목록 읽기는 재발급만(검증 호출 1 unit 절약). 실제 공개 직전에만 토큰 소유 채널을 검증한다.
+      let accessToken = await refreshGoogleAccessToken(config, owner.refreshToken, fetchImpl);
+      const stopBefore = Math.max(since, now - config.heldReviewLookbackHours * 60 * 60 * 1000);
+      const { threads, truncated, pages } = await listHeldThreads(config, channelId, accessToken, fetchImpl, stopBefore);
+      row.pages = pages;
       row.truncated = truncated;
       const held = extractHeldComments(threads);
       row.held = held.length;
@@ -361,7 +379,7 @@ export async function runHeldReview(config, fetchImpl = fetch, now = Date.now())
       const approveIds = toApprove.map((c) => c.id);
       await recordProcessed(config, approveIds, kstDate, fetchImpl);
       const result = approveIds.length
-        ? await publishComments(config, approveIds, accessToken, fetchImpl)
+        ? await publishComments(config, approveIds, (accessToken = await refreshAndVerifyOwner(config, owner, fetchImpl)), fetchImpl)
         : { published: [], verified: [], unverified: [], failed: [], verifyError: '' };
       if (result.failed.length) await releaseProcessed(config, result.failed.map((f) => f.id), fetchImpl);
       row.approved = result.verified.length;

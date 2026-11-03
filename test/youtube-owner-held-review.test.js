@@ -2,8 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseHeldReviewChannels, extractHeldComments, selectNewHeld, decideApprovals,
-  judgeApprovals, buildApprovePrompt, runHeldReview,
-} from '../src/youtube-owner-held-review.js';
+  judgeApprovals, buildApprovePrompt, runHeldReview, pageIsOlderThan } from '../src/youtube-owner-held-review.js';
 
 const SINCE = Date.parse('2026-10-29T03:00:00Z');
 
@@ -68,7 +67,7 @@ function fakeWorld({ llmOk = true, verifyFails = false, publishFails = false } =
     const u = String(url);
     if (u.includes('meta_tokens')) return json([{ kind: 'youtube_owner:UCa', token: 'rt' }]);
     if (u.includes('oauth2.googleapis.com')) return json({ access_token: 'at' });
-    if (u.includes('/channels')) return json({ items: [{ id: 'UCa' }] });
+    if (u.includes('/channels')) { calls.verify = (calls.verify || 0) + 1; return json({ items: [{ id: 'UCa' }] }); }
     if (u.includes('/commentThreads')) return json({ items: threads });
     if (u.includes('negative_comment_alerts')) return json([]);
     if (u.includes('cost_usage_ledger') && init.method === 'DELETE') {
@@ -175,4 +174,28 @@ test("선기록: 공개 호출이 실패하면 원장을 지워 다음 회차가
   assert.deepEqual(calls.released, ["held-review:good"]);
   assert.equal(summary.channels[0].publishFailed, 1);
   assert.ok(summary.errors.some((e) => e.includes("공개 실패 1")));
+});
+
+// quota(11-03 소유채널 확대 전): 목록은 재발급만, 소유 검증은 실제 공개할 때만. 보류함은 최근치만 읽는다.
+test("공개할 게 없으면(dry-run 포함) 토큰 소유 검증 호출을 하지 않는다", async () => {
+  const { fetchImpl, calls } = fakeWorld();
+  await runHeldReview({ ...BASE, heldReviewDryRun: true }, fetchImpl, Date.parse("2026-10-29T05:00:00Z"));
+  assert.equal(calls.verify || 0, 0);
+});
+
+test("실제 공개할 때는 공개 직전에 토큰 소유 채널을 검증한다", async () => {
+  const { fetchImpl, calls } = fakeWorld();
+  await runHeldReview(BASE, fetchImpl, Date.parse("2026-10-29T05:00:00Z"));
+  assert.equal(calls.verify, 1);
+  assert.deepEqual(calls.publish, ["good"]);
+});
+
+test("pageIsOlderThan: 페이지의 모든 댓글(답글 포함)이 기준보다 오래됐을 때만 중단", () => {
+  const t = (top, replies = []) => ({ snippet: { topLevelComment: { snippet: { publishedAt: top } } }, replies: { comments: replies.map((p) => ({ snippet: { publishedAt: p } })) } });
+  const stop = Date.parse("2026-11-01T00:00:00Z");
+  assert.equal(pageIsOlderThan([t("2026-10-30T00:00:00Z"), t("2026-10-29T00:00:00Z")], stop), true);
+  assert.equal(pageIsOlderThan([t("2026-10-30T00:00:00Z", ["2026-11-02T00:00:00Z"])], stop), false, "옛 스레드에 새 답글이 있으면 계속 읽는다");
+  assert.equal(pageIsOlderThan([t("2026-11-02T00:00:00Z")], stop), false);
+  assert.equal(pageIsOlderThan([], stop), false);
+  assert.equal(pageIsOlderThan([t("2026-10-30T00:00:00Z")], NaN), false, "기준 없으면 중단 안 함");
 });
