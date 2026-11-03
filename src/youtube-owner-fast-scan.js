@@ -53,6 +53,8 @@ export function loadFastScanConfig(env = process.env, now = Date.now()) {
     holdWatchChannels: safeHeldChannels(env.HELD_REVIEW_CHANNELS),
     holdWatchSince: Number.isFinite(Date.parse(env.YOUTUBE_OWNER_HOLD_WATCH_SINCE || ''))
       ? Date.parse(env.YOUTUBE_OWNER_HOLD_WATCH_SINCE) : null,
+    // 보류 누락 영상의 새 공개 댓글을 봇이 보류로 돌릴지(11-03 사용자 '재발방지'). 명시적으로 켤 때만.
+    holdEnforce: String(env.YOUTUBE_OWNER_HOLD_ENFORCE || '').toLowerCase() === 'true',
   };
 }
 
@@ -102,9 +104,40 @@ async function releaseHoldLeak(config, runKey, fetchImpl) {
   } catch { /* Slack 실패 시 다음 회차 재시도를 위한 best-effort */ }
 }
 
+// 보류 대행을 아직 한 적 없는 댓글 ID만 돌려준다(원장 hold-enforce:<id> 선점, 이미 있으면 제외).
+async function claimHoldEnforce(config, kstDate, ids, fetchImpl) {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return [];
+  const response = await fetchImpl(`${config.supabaseUrl}/rest/v1/cost_usage_ledger?on_conflict=run_key`, {
+    method: 'POST',
+    headers: sbHeaders(config, { 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=representation' }),
+    body: JSON.stringify(unique.map((id) => ({ run_key: `hold-enforce:${id}`, kst_date: kstDate, apify_usd: 0, anthropic_usd: 0 }))),
+  });
+  if (!response.ok) throw new Error(`보류 대행 선점 실패(${response.status})`);
+  const rows = await response.json();
+  return (Array.isArray(rows) ? rows : []).map((row) => String(row.run_key).slice('hold-enforce:'.length));
+}
+
+// 소유자 토큰으로 댓글을 보류(heldForReview)로 돌린다. 50개씩 한 요청(50 unit). 성공한 개수를 돌려준다.
+async function holdComments(config, ids, accessToken, fetchImpl) {
+  let held = 0;
+  for (let i = 0; i < ids.length; i += 50) {
+    const chunk = ids.slice(i, i + 50);
+    const url = new URL(`${config.youtubeApiBase}/comments/setModerationStatus`);
+    url.searchParams.set('id', chunk.join(','));
+    url.searchParams.set('moderationStatus', 'heldForReview');
+    const response = await fetchImpl(url, { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!response.ok) throw new Error(`setModerationStatus ${response.status}`);
+    held += chunk.length;
+  }
+  return held;
+}
+
 export function holdLeakMessage(items, assignee = '') {
+  const enforced = items.reduce((sum, it) => sum + (it.enforced || 0), 0);
   const lines = [
     `:warning: *'모두 보류' 빠진 영상 ${items.length}개* — 봇 승인 없이 새 댓글이 바로 공개됐습니다.`,
+    ...(enforced ? [`봇이 그 댓글 ${enforced}개를 일단 보류로 돌렸습니다(괜찮은 댓글은 승인 봇이 15분 안에 다시 공개).`] : []),
     '스튜디오에서 영상별로 댓글 검토를 *모두 보류*로 바꿔주세요(댓글 켜짐/꺼짐은 그대로). 부정 댓글은 빠른 감시가 따로 숨깁니다.',
     '이미 *모두 보류*로 되어 있다면 그 댓글 작성자가 "승인된 사용자" 목록에 있거나 사람이 직접 승인한 경우입니다 — 아래 댓글을 확인해주세요.',
     ...items.map((it) => `• <https://studio.youtube.com/video/${it.videoId}/edit|${it.videoId}> · ${it.channelName}${it.title ? ` · ${it.title.slice(0, 40)}` : ''} · 공개된 새 댓글 ${it.count}개`
@@ -137,7 +170,7 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
   const summary = {
     channels: 0, threadsRead: 0, recentComments: 0, alreadyAlerted: 0, classified: 0,
     flagged: 0, sentAlerts: 0, capped: 0, deferred: 0, quotaUnits: 0,
-    ownerGateSuppressed: 0, ownerGateUnreviewed: 0, holdLeakVideos: 0, holdLeakAlerted: 0, errors: [],
+    ownerGateSuppressed: 0, ownerGateUnreviewed: 0, holdLeakVideos: 0, holdLeakAlerted: 0, holdEnforced: 0, errors: [],
   };
   const holdSince = new Map((config.holdWatchChannels || []).map((c) => [
     c.channelId, Math.max(c.since, config.holdWatchSince ?? Infinity),
@@ -215,6 +248,24 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
       if (leaked.length) leaks.push({ ...candidate, count: leaked.length, leaked });
     }
     summary.holdLeakVideos = leaks.length;
+    // 봇이 '모두 보류'를 대신한다: 새 영상에 사람이 보류를 안 걸어도(유튜브 API로는 영상 보류 설정을 못 바꿈)
+    // 봇 승인 없이 공개된 새 댓글을 즉시 보류로 돌린다 → 다음 회차 승인 봇이 판정해 괜찮은 건 다시 공개.
+    // 결과적으로 '모두 보류'와 같고 노출은 최대 한 회차(15분). 경고는 그대로 보내 스튜디오 설정도 고치게 한다.
+    if (leaks.length && !config.dryRun && config.holdEnforce) {
+      for (const leak of leaks) {
+        const owner = tokens.get(leak.channelId);
+        if (!owner) continue;
+        try {
+          // 댓글당 한 번만(원장 선점). YouTube가 보류를 무시하는 예외 댓글을 매 회차 다시 보류해 quota를 태우지 않게.
+          const fresh = await claimHoldEnforce(config, kstDateKey(now), leak.leaked.map((c) => c.id), fetchImpl);
+          const held = fresh.length ? await holdComments(config, fresh, await tokenFor(owner), fetchImpl) : 0;
+          leak.enforced = held;
+          summary.holdEnforced += held;
+        } catch (error) {
+          summary.errors.push(`보류 대행 실패 ${leak.videoId}: ${String(error.message || error).slice(0, 120)}`);
+        }
+      }
+    }
     if (leaks.length && !config.dryRun) {
       const kstDate = kstDateKey(now);
       const claimed = [];

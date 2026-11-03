@@ -309,6 +309,7 @@ test('15분 루프는 소유채널 빠른 감시를 켜고, 강한 모델은 빠
   // 보류 누락 감시는 시작 시각이 있어야 켜진다(없으면 꺼짐) — HELD_REVIEW_CHANNELS와 같은 스텝에 있어야 한다.
   assert.match(loopStep, /YOUTUBE_OWNER_HOLD_WATCH_SINCE:\s*'\d{4}-\d{2}-\d{2}T[\d:]+Z'/);
   assert.match(loopStep, /HELD_REVIEW_CHANNELS:/);
+  assert.match(loopStep, /YOUTUBE_OWNER_HOLD_ENFORCE:\s*'true'/);
   assert.match(loopStep, /YOUTUBE_OWNER_FAST_ESCALATION_MODEL:\s*gemini-/);
   // 같은 스텝의 핵심 수집(npm start) 판정을 바꾸지 않도록 일반 변수명은 루프 스텝에 두지 않는다.
   assert.doesNotMatch(loopStep, /^\s*OWNED_BRAND_ESCALATION_MODEL:/m);

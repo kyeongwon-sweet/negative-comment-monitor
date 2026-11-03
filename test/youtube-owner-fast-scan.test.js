@@ -18,8 +18,9 @@ function thread(id, videoId, text, publishedAt, { author = 'UCx', replies = [] }
   };
 }
 
-function world({ alerted = [], failChannel = '', titleInState = true, approved = [], alreadyClaimed = [] } = {}) {
-  const calls = { cards: [], rows: [], hides: 0, threadReads: 0, videoLookups: 0, classified: [], claims: [], releases: 0 };
+function world({ alerted = [], failChannel = '', titleInState = true, approved = [], alreadyClaimed = [], alreadyEnforced = [] } = {}) {
+  const calls = { cards: [], rows: [], hides: 0, holds: [], threadReads: 0, videoLookups: 0, classified: [], claims: [], releases: 0 };
+  const enforcedKeys = new Set(alreadyEnforced.map((id) => `hold-enforce:${id}`));
   const claimedKeys = new Set(alreadyClaimed);
   const json = (body, ok = true, status = 200) => ({ ok, status, json: async () => body, text: async () => JSON.stringify(body) });
   const threadsByChannel = {
@@ -49,6 +50,11 @@ function world({ alerted = [], failChannel = '', titleInState = true, approved =
     if (u.includes('/channels') && u.includes('mine=true')) throw new Error('fast scan must not verify owner channel (quota)');
     if (u.includes('/channels')) { calls.channelLookups = (calls.channelLookups || 0) + 1; return json({ items: [{ id: CH, snippet: { title: '먹짱언니_mukzzang unnie' } }, { id: CH2, snippet: { title: '먹는김에' } }] }); }
     if (u.includes('comment_classification_cache')) return json(init.method === 'POST' ? null : []);
+    if (u.includes('cost_usage_ledger') && init.method === 'POST' && String(init.body).includes('hold-enforce:')) {
+      const fresh = JSON.parse(init.body).filter((row) => !enforcedKeys.has(row.run_key));
+      fresh.forEach((row) => enforcedKeys.add(row.run_key));
+      return json(fresh);
+    }
     if (u.includes('cost_usage_ledger') && init.method === 'POST' && String(init.body).includes('hold-missing:')) {
       const { run_key: key } = JSON.parse(init.body);
       calls.claims.push(key);
@@ -69,7 +75,12 @@ function world({ alerted = [], failChannel = '', titleInState = true, approved =
     if (u.includes('alert_threads')) return json([{ slack_ts: '111.222' }]);
     if (u.includes('chat.postMessage')) { calls.cards.push(JSON.parse(init.body)); return json({ ok: true, ts: `333.${calls.cards.length}` }); }
     if (u.includes('reactions')) return json({ ok: true });
-    if (u.includes('setModerationStatus')) { calls.hides += 1; return json({}); }
+    if (u.includes('setModerationStatus')) {
+      const params = new URL(u).searchParams;
+      if (params.get('moderationStatus') === 'heldForReview' && calls.holdMode) { calls.holds.push(...params.get('id').split(',')); return json({}); }
+      calls.hides += 1;
+      return json({});
+    }
     throw new Error(`unexpected ${u}`);
   };
   const classifier = async (items) => {
@@ -215,4 +226,30 @@ test('보류 누락: Slack 실패면 선점을 풀어 다음 회차가 다시 �
   assert.equal(base.calls.releases, 1);
   assert.ok(summary.errors.some((e) => e.includes('보류 누락 감시 실패')));
   assert.equal(base.calls.rows.length, 3, '보류 감시 실패가 부정 카드 경로를 막지 않는다(부정 3건 모두 카드)');
+});
+
+// 봇 보류 대행(11-03 재발방지): 보류 누락 영상의 새 공개 댓글을 봇이 보류로 돌린다(한 댓글 한 번).
+test("보류 대행: 누락 영상의 봇 미승인 공개 댓글을 보류로 돌리고 경고에 적는다", async () => {
+  const { fetchImpl, calls, classifier } = world();
+  calls.holdMode = true;
+  const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, classifier);
+  assert.deepEqual(calls.holds, ["bad2"]);
+  assert.equal(summary.holdEnforced, 1);
+  assert.match(holdPosts(calls)[0].text, /1개를 일단 보류로 돌렸습니다/);
+});
+
+test("보류 대행: 이미 한 번 보류를 시도한 댓글은 다시 하지 않는다(quota 보호)", async () => {
+  const { fetchImpl, calls, classifier } = world({ alreadyEnforced: ["bad2"] });
+  calls.holdMode = true;
+  const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, classifier);
+  assert.deepEqual(calls.holds, []);
+  assert.equal(summary.holdEnforced, 0);
+});
+
+test("보류 대행: 설정이 꺼져 있으면 경고만 하고 보류하지 않는다", async () => {
+  const { fetchImpl, calls, classifier } = world();
+  calls.holdMode = true;
+  const summary = await runOwnerFastScan(HOLD, fetchImpl, NOW, classifier);
+  assert.deepEqual(calls.holds, []);
+  assert.equal(summary.holdLeakAlerted, 1);
 });
