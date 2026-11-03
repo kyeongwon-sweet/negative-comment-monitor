@@ -230,19 +230,25 @@ async function publishComments(config, ids, accessToken, fetchImpl) {
     else failed.push(...chunk.map((id) => ({ id, status: response.status })));
   }
   // 공개 확인: comments.list의 moderationStatus(소유자 토큰). published 또는 생략=공개.
+  // ⚠️ comments.list는 id와 maxResults를 함께 받지 않는다(400 unexpectedParameter, 11-03 첫 공개 때 실패).
+  // 확인 단계가 실패해도 공개 호출은 이미 성공했으므로 throw하지 않고 '미확인'으로 돌려준다.
   const verified = new Set();
-  for (let i = 0; i < ok.length; i += 50) {
-    const url = new URL(`${config.youtubeApiBase}/comments`);
-    url.searchParams.set('part', 'snippet');
-    url.searchParams.set('id', ok.slice(i, i + 50).join(','));
-    url.searchParams.set('maxResults', '50');
-    const payload = await googleGet(url, accessToken, fetchImpl);
-    for (const item of payload.items || []) {
-      const status = String(item?.snippet?.moderationStatus || 'published');
-      if (status === 'published') verified.add(String(item.id));
+  let verifyError = '';
+  try {
+    for (let i = 0; i < ok.length; i += 50) {
+      const url = new URL(`${config.youtubeApiBase}/comments`);
+      url.searchParams.set('part', 'snippet');
+      url.searchParams.set('id', ok.slice(i, i + 50).join(','));
+      const payload = await googleGet(url, accessToken, fetchImpl);
+      for (const item of payload.items || []) {
+        const status = String(item?.snippet?.moderationStatus || 'published');
+        if (status === 'published') verified.add(String(item.id));
+      }
     }
+  } catch (error) {
+    verifyError = String(error.message || error).slice(0, 160);
   }
-  return { verified: [...verified], unverified: ok.filter((id) => !verified.has(id)), failed };
+  return { published: ok, verified: [...verified], unverified: ok.filter((id) => !verified.has(id)), failed, verifyError };
 }
 
 async function recordProcessed(config, ids, kstDate, fetchImpl) {
@@ -337,15 +343,23 @@ export async function runHeldReview(config, fetchImpl = fetch, now = Date.now())
         row.kept = kept.length;
         continue;
       }
-      const result = toApprove.length ? await publishComments(config, toApprove.map((c) => c.id), accessToken, fetchImpl) : { verified: [], unverified: [], failed: [] };
+      const result = toApprove.length
+        ? await publishComments(config, toApprove.map((c) => c.id), accessToken, fetchImpl)
+        : { published: [], verified: [], unverified: [], failed: [], verifyError: '' };
       row.approved = result.verified.length;
       row.unverified = result.unverified.length;
       row.publishFailed = result.failed.length;
+      // 원장을 먼저 남긴다: 공개 호출이 성공한 댓글은 더 이상 보류함에 없어 다음 회차가 다시 볼 수 없다.
+      // 원장이 없으면 '봇 승인 없이 공개된 댓글'로 보여 보류 누락 경보가 오탐한다(11-03 -9Yha1bKHsY).
+      // 공개 호출 자체가 실패한 건만 원장에서 빼 다음 회차에 재시도한다.
+      await recordProcessed(config, result.published, kstDate, fetchImpl);
+      // 보류 유지 건은 알림이 나간 뒤에만 원장에 남긴다(알림 실패 시 다음 회차 재판정·재알림).
       if (kept.length) await postDigest(config, kept, now, fetchImpl);
+      await recordProcessed(config, kept.map((c) => c.id), kstDate, fetchImpl);
       row.kept = kept.length;
-      // 공개 실패·미확인 건은 원장에 남기지 않는다 → 다음 회차 재시도.
-      await recordProcessed(config, [...result.verified, ...kept.map((c) => c.id)], kstDate, fetchImpl);
-      if (result.failed.length || result.unverified.length) summary.errors.push(`${channelId}: 공개 실패 ${result.failed.length}·미확인 ${result.unverified.length}`);
+      if (result.failed.length || result.unverified.length) {
+        summary.errors.push(`${channelId}: 공개 실패 ${result.failed.length}·미확인 ${result.unverified.length}${result.verifyError ? ` (${result.verifyError})` : ''}`);
+      }
     } catch (error) {
       row.error = String(error.message || error);
       summary.errors.push(`${channelId}: ${row.error}`);

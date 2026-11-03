@@ -56,7 +56,7 @@ test('공개 프롬프트에 사람 기준(유행 부정·출연자 비하·장�
   for (const phrase of ['나만 모름', '싸가지가 없네', '품절 아니던데', '그게 뭔데', '조금이라도 애매하면 공개하지 마세요']) assert.ok(prompt.includes(phrase), phrase);
 });
 
-function fakeWorld({ llmOk = true } = {}) {
+function fakeWorld({ llmOk = true, verifyFails = false } = {}) {
   const calls = { publish: [], slack: [], ledger: [] };
   const threads = [
     { snippet: { videoId: 'v1', topLevelComment: { id: 'oldHidden', snippet: { moderationStatus: 'heldForReview', textOriginal: '광고 지겹다', publishedAt: '2026-10-20T00:00:00Z' } } } },
@@ -82,7 +82,12 @@ function fakeWorld({ llmOk = true } = {}) {
       return json({ candidates: [{ content: { parts: [{ text: '[{"i":0,"approve":true,"reason":""},{"i":1,"approve":false,"reason":"경쟁품 비교"}]' }] } }] });
     }
     if (u.includes('setModerationStatus')) { calls.publish.push(new URL(u).searchParams.get('id')); return { ok: true, status: 204, json: async () => ({}) }; }
-    if (u.includes('/comments?')) return json({ items: [{ id: 'good', snippet: { moderationStatus: 'published' } }] });
+    if (u.includes('/comments?')) {
+      // 실제 YouTube: comments.list는 id와 maxResults를 함께 받으면 400 unexpectedParameter(11-03 운영 실패 재현).
+      const params = new URL(u).searchParams;
+      if (verifyFails || (params.has('id') && params.has('maxResults'))) return json({ error: { errors: [{ reason: 'unexpectedParameter' }] } }, false, 400);
+      return json({ items: [{ id: 'good', snippet: { moderationStatus: 'published' } }] });
+    }
     if (u.includes('youtube_owner_video_state')) return json([{ video_id: 'v1', video_title: '멜론 쫀득바' }]);
     if (u.includes('alert_threads')) return json([{ slack_ts: '111.222' }]);
     if (u.includes('slack.com/api/chat.postMessage')) { calls.slack.push(JSON.parse(init.body)); return json({ ok: true, ts: '333.444' }); }
@@ -134,4 +139,14 @@ test('링크·메신저 유도가 든 댓글은 모델이 공개라 해도 보�
     [{ approve: true }, { approve: true }, { approve: true }],
   );
   assert.deepEqual(out.map((c) => c.approve), [false, false, true]);
+});
+
+test("공개 확인(comments.list)이 실패해도 공개된 댓글은 원장에 남긴다 — 보류 누락 경보 오탐 방지(11-03)", async () => {
+  const { fetchImpl, calls } = fakeWorld({ verifyFails: true });
+  const summary = await runHeldReview(BASE, fetchImpl, Date.parse("2026-10-29T05:00:00Z"));
+  assert.deepEqual(calls.publish, ["good"]);
+  assert.ok(calls.ledger.includes("held-review:good"), "공개 호출 성공 건은 확인 실패여도 원장 기록");
+  assert.ok(calls.ledger.includes("held-review:meh"), "보류 알림이 나간 건도 원장 기록");
+  assert.equal(summary.channels[0].unverified, 1);
+  assert.ok(summary.errors.some((e) => e.includes("미확인 1")));
 });
