@@ -371,7 +371,12 @@ export async function runHeldReview(config, fetchImpl = fetch, now = Date.now())
       if (kept.length) await postDigest(config, kept, now, fetchImpl);
       await recordProcessed(config, kept.map((c) => c.id), kstDate, fetchImpl);
       row.kept = kept.length;
-      if (result.failed.length || result.unverified.length) {
+      // setModerationStatus가 204를 반환한 건은 YouTube가 공개 요청을 접수한 것이다. 직후
+      // comments.list에는 전파 지연으로 아직 heldForReview가 보일 수 있으므로 unverified는
+      // 관측 지표로만 남긴다. 이를 회차 실패로 세면 실제 장애가 아닌 전파 지연만으로
+      // auxiliary health가 연속 실패해 degraded 경고를 낸다(11-03 운영 재현).
+      // 반면 POST 자체 실패분은 원장도 해제했으므로 실제 실패로 계속 보고한다.
+      if (result.failed.length) {
         summary.errors.push(`${channelId}: 공개 실패 ${result.failed.length}·미확인 ${result.unverified.length}${result.verifyError ? ` (${result.verifyError})` : ''}`);
       }
     } catch (error) {

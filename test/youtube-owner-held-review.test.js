@@ -150,14 +150,14 @@ test('링크·메신저 유도가 든 댓글은 모델이 공개라 해도 보�
   assert.deepEqual(out.map((c) => c.approve), [false, false, true]);
 });
 
-test("공개 확인(comments.list)이 실패해도 공개된 댓글은 원장에 남긴다 — 보류 누락 경보 오탐 방지(11-03)", async () => {
+test("공개 확인(comments.list)이 늦어도 204 접수 건은 원장에 남기고 회차 실패로 세지 않는다 — 전파 지연 오경보 방지(11-03)", async () => {
   const { fetchImpl, calls } = fakeWorld({ verifyFails: true });
   const summary = await runHeldReview(BASE, fetchImpl, Date.parse("2026-10-29T05:00:00Z"));
   assert.deepEqual(calls.publish, ["good"]);
   assert.ok(calls.ledger.includes("held-review:good"), "공개 호출 성공 건은 확인 실패여도 원장 기록");
   assert.ok(calls.ledger.includes("held-review:meh"), "보류 알림이 나간 건도 원장 기록");
   assert.equal(summary.channels[0].unverified, 1);
-  assert.ok(summary.errors.some((e) => e.includes("미확인 1")));
+  assert.deepEqual(summary.errors, [], "204 접수 뒤 검증 지연은 degraded 실패가 아니다");
 });
 
 test("선기록: 공개 전에 원장을 남긴다(봇이 공개한 댓글은 반드시 원장이 있다 — 보류 누락 오탐 방지)", async () => {
