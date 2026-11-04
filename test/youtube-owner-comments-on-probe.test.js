@@ -51,3 +51,14 @@ test('검증용 영상 지정 시 업로드 목록을 읽지 않고 그 영상�
   assert.deepEqual(result.commentsOn, ['x1']);
   assert.ok(!calls.some(([name]) => name === 'playlistItems'));
 });
+
+test('quota 가드가 막으면 영상별 판정(commentThreads)을 시작하지 않는다(11-04 소진 재발방지)', async () => {
+  const { fetchImpl, calls } = world();
+  const seen = [];
+  await assert.rejects(
+    probeChannelCommentsOn({ ...CONFIG, quotaGuard: async (n) => { seen.push(n); throw new Error('YouTube quota 여유 부족'); } }, 'UCx', 'at', fetchImpl),
+    /quota 여유 부족/,
+  );
+  assert.deepEqual(seen, [3], '판정할 영상 수를 예상치로 넘긴다');
+  assert.ok(!calls.some(([name]) => name === 'commentThreads'));
+});

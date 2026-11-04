@@ -1,3 +1,5 @@
+// YouTube API quota 계량(11-04 소진 사고): 이 모듈을 불러오는 모든 프로세스의 YouTube 호출을 센다.
+import './youtube-quota-meter.js';
 import { loadMetaAdsConfig } from './meta-ads.js';
 import { campaignNameMatchesFilter } from './normalize.js';
 import { videoAssigneeFromAdTitle } from './slack.js';

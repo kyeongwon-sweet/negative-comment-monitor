@@ -9,6 +9,7 @@ import path from 'node:path';
 import { loadYouTubeOwnerTokens } from './youtube-owner-moderation.js';
 import { refreshGoogleAccessToken } from './youtube-ads.js';
 import { isYouTubeCommentsDisabled } from './youtube-owner-overload.js';
+import { assertQuotaHeadroom } from './youtube-quota-meter.js';
 
 function required(env, name) {
   const value = String(env[name] || '').trim();
@@ -58,6 +59,8 @@ export async function probeChannelCommentsOn(config, channelId, accessToken, fet
     pages += 1;
     if (pages >= config.maxPages) break;
   }
+  // 영상마다 1 unit. 전 소유채널이면 수천 unit이라(11-03 3회 실행 ~3,700 → 다음날 quota 소진) 실행 전에 남은 양을 확인한다.
+  if (typeof config.quotaGuard === 'function') await config.quotaGuard(ids.length);
   const on = [];
   const off = [];
   const unknown = [];
@@ -86,7 +89,9 @@ export async function runCommentsOnProbe(config, fetchImpl = fetch) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  runCommentsOnProbe(loadCommentsOnProbeConfig())
+  // 같은 실행 안의 앞 채널 사용분은 아직 원장에 없으니(종료 시 기록) 누적 예상치로 확인한다.
+  let planned = 0;
+  runCommentsOnProbe({ ...loadCommentsOnProbeConfig(), quotaGuard: (estimate) => assertQuotaHeadroom((planned += estimate), { maxRatio: 0.6 }) })
     .then(async (result) => {
       for (const c of result.channels) {
         console.log(c.error

@@ -23,6 +23,7 @@ import { computeClassifierHash } from './cache.js';
 import { ensureDailyThread } from './threads.js';
 import { kstDateKey } from './schedule.js';
 import { sendAlert } from './slack.js';
+import { assertQuotaHeadroom } from './youtube-quota-meter.js';
 
 export const PUBLIC_AUDIT_ACTOR = 'owner-public-audit';
 const NO_PRODUCT = '__no_product__';
@@ -363,7 +364,10 @@ export async function runPublicAudit(config, fetchImpl = fetch, now = Date.now()
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  runPublicAudit(loadPublicAuditConfig())
+  // 재감사는 전 소유채널 전체 영상을 읽는다(회당 ~300 unit). 오늘 quota가 85%를 넘었으면 15분 감시·숨김 몫을
+  // 지키려고 건너뛴다(11-04 소진 사고). 내일 회차가 같은 댓글을 다시 본다.
+  assertQuotaHeadroom(400, { maxRatio: 0.85 })
+    .then(() => runPublicAudit(loadPublicAuditConfig()))
     .then((summary) => {
       console.log(JSON.stringify(summary, null, 2));
       if (summary.errors.length) process.exitCode = 2;
