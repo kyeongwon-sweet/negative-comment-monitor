@@ -17,6 +17,7 @@ import { APIFY_LOW_BALANCE_USD, DEFAULT_COST_THRESHOLDS, estimateApifyUsd, fetch
 import { hasAdRunToday } from './ad-common.js';
 import { autoHideOrganicSatelliteYouTube } from './youtube-organic-auto-hide.js';
 import { recordPlatformOutcome } from './platform-health.js';
+import { recordAuxiliaryOutcome } from './record-auxiliary-outcome.js';
 import { monitorLlmHealth } from './llm-health.js';
 
 export async function runMonitor(config = loadConfig()) {
@@ -387,12 +388,35 @@ export async function runMonitor(config = loadConfig()) {
   // 이번 GAS 대상 중 channelCategory=위성채널인 YouTube로 만들기 때문에 협찬 3자·TikTok·
   // 온드 YouTube는 source=null이어도 처리되지 않는다. 사람의 유지 결정은 moderation 모듈이 보존한다.
   if (!config.dryRun && config.youtubeSatelliteAutoHide) {
-    summary.youtubeSatelliteModeration = await autoHideOrganicSatelliteYouTube(
-      config,
-      windowedTargets,
-      fetch,
-      runNow,
-    );
+    // 위성 YouTube 자동숨김은 수집·알림이 끝난 뒤의 보조 단계다. 여기서 던지면 핵심 실행 전체가 실패로
+    // 끝나 플랫폼 헬스·비용 기록이 빠지고 '실행 실패' 알림이 나간다(11-04: YouTube quota 소진 →
+    // 소유자 토큰 검증 11/11 실패 → 핵심 실행 실패). 실패는 보조 헬스로 기록·승격만 한다(quota 소진일엔 승격 억제).
+    let satelliteError = null;
+    try {
+      summary.youtubeSatelliteModeration = await autoHideOrganicSatelliteYouTube(
+        config,
+        windowedTargets,
+        fetch,
+        runNow,
+      );
+    } catch (error) {
+      satelliteError = String(error?.message || error).slice(0, 300);
+      summary.youtubeSatelliteModeration = { error: satelliteError };
+      console.error(`[youtube-satellite-auto-hide:degraded] ${satelliteError}`);
+    }
+    try {
+      await recordAuxiliaryOutcome({
+        ...process.env,
+        AUXILIARY_HEALTH_KEY: 'youtube_satellite_auto_hide',
+        AUXILIARY_OUTCOME: satelliteError ? 'failure' : 'success',
+        AUXILIARY_FAILURE_THRESHOLD: '3',
+        AUXILIARY_ALERT_COOLDOWN_HOURS: '24',
+        AUXILIARY_COMPONENT: '위성 YouTube 자동숨김(핵심 실행 내)',
+        AUXILIARY_REASON: satelliteError || 'ok',
+      }, fetch, runNow);
+    } catch (error) {
+      console.error(`[youtube-satellite-auto-hide:health] ${String(error?.message || error).slice(0, 160)}`);
+    }
   }
   // 플랫폼 실패는 우선 fail-soft: 성공 플랫폼/청크 결과와 last_count를 보존하고 실패 청크만 다음 회차 재시도.
   // 연속 실패 임계치에 도달한 플랫폼만 쿨다운 단위로 핵심 실패 알림에 승격한다.
