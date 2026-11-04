@@ -196,6 +196,10 @@ export async function runMonitorLoop(env = process.env, options = {}) {
   const now = options.now || Date.now;
   let dependenciesInstalled = false;
   let monitorRuns = 0;
+  // 핵심 스캔(npm start) 실패는 실행을 실패로 남기되(실패 알림 유지), 남은 회차 재시도와 다음 실행 체인은 계속한다.
+  // 11-04: 스캔 1회 실패가 루프를 즉시 끝내 체인이 끊겼고, 크론도 드롭돼 핵심 감시가 2시간+ 멈췄다.
+  let scanFailure = null;
+  let scanFailures = 0;
   let verifiedGateOpen = false;
   let lastScannedAt = null;
   let heldReviewRuns = 0;
@@ -364,8 +368,18 @@ export async function runMonitorLoop(env = process.env, options = {}) {
       }
     }
 
+    let scanOk = false;
     if (shouldRun) {
-      await execute('npm', ['start'], env);
+      try {
+        await execute('npm', ['start'], env);
+        scanOk = true;
+      } catch (error) {
+        scanFailure = error;
+        scanFailures += 1;
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} scan=failure error=${error.message}`);
+      }
+    }
+    if (shouldRun && scanOk) {
       monitorRuns += 1;
       try {
         const scannedAt = now();
@@ -384,7 +398,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
         // collection into a failed collection; the watchdog falls back to run starts.
         console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} heartbeat_write_error=${error.message}`);
       }
-    } else {
+    } else if (!shouldRun) {
       console.error(
         `[monitor-loop] iteration=${iteration + 1}/${iterations} gate_supabase_get=1 monitor_external_api_calls=0`,
       );
@@ -419,8 +433,15 @@ export async function runMonitorLoop(env = process.env, options = {}) {
       + `${ownerFastScanEnabled ? ` owner_fast_scan_runs=${ownerFastScanRuns} owner_fast_scan_failures=${ownerFastScanFailures}` : ''}`
       + ` pending_hide_runs=${pendingHideRuns} pending_hide_failures=${pendingHideFailures}`
       + ` fp_restore_runs=${falsePositiveRestoreRuns} fp_restore_failures=${falsePositiveRestoreFailures}`
-      + ` chain=${chainResult.reason}${endedForNewCode ? ' ended_for_new_code=true' : ''}`,
+      + ` chain=${chainResult.reason}${endedForNewCode ? ' ended_for_new_code=true' : ''}`
+      + `${scanFailures ? ` scan_failures=${scanFailures}` : ''}`,
   );
+  // 체인을 이어 둔 뒤에 실패를 던진다 → 워크플로 실패 알림은 그대로, 다음 실행은 예정대로.
+  if (scanFailure) {
+    const error = new Error(`${scanFailure.message} (scan_failures=${scanFailures}/${iterations}, chain=${chainResult.reason})`);
+    error.chain = chainResult;
+    throw error;
+  }
   return {
     iterations,
     monitorRuns,

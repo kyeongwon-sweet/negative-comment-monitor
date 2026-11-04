@@ -554,3 +554,30 @@ test('runCodeIsStale: 최신 커밋과 다를 때만 true, 정보 없음·조회
   assert.equal(await runCodeIsStale(env, async () => { throw new Error('net'); }), false);
   assert.equal(await runCodeIsStale({ ...env, GH_TOKEN: '' }, text('b'.repeat(40))), false);
 });
+
+// 11-04: 핵심 스캔 1회 실패가 루프를 즉시 끝내 다음 실행 체인이 끊겼고(크론도 드롭) 감시가 2시간+ 멈췄다.
+test('핵심 스캔이 실패해도 남은 회차를 재시도하고 체인을 이은 뒤에 실패로 끝낸다', async () => {
+  const commands = [];
+  const heartbeats = [];
+  let chainCalls = 0;
+  let starts = 0;
+  await assert.rejects(runMonitorLoop(BASE_ENV, {
+    gate: async () => true,
+    runCommand: async (command, args) => {
+      commands.push([command, ...args]);
+      if (args[0] === 'start' && (starts += 1) === 1) throw new Error('npm start failed (1)');
+    },
+    recordHeartbeat: async (details) => { heartbeats.push(details); },
+    chain: async () => { chainCalls += 1; return { dispatched: true, reason: 'dispatched' }; },
+    now: () => Date.parse('2026-09-21T07:50:00Z'),
+    sleep: async () => {},
+  }), (error) => {
+    assert.match(error.message, /npm start failed \(1\)/);
+    assert.match(error.message, /scan_failures=1\/4/);
+    assert.match(error.message, /chain=dispatched/);
+    return true;
+  });
+  assert.equal(starts, 4, '실패 뒤에도 남은 회차를 계속 스캔');
+  assert.equal(chainCalls, 1, '실패해도 다음 실행 체인은 이어진다');
+  assert.deepEqual(heartbeats.map((h) => h.iteration), [2, 3, 4], '실패한 회차는 스캔 heartbeat를 남기지 않는다');
+});
