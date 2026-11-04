@@ -91,6 +91,20 @@ export async function assertQuotaHeadroom(estimateUnits, { maxRatio = 0.6, env =
   return usage;
 }
 
+// 오늘(PT) '할당량 소진' 알림이 나갔는가 = 소진 상태. 리셋(PT 자정)이 지나면 날짜 키가 바뀌어 자동 해제.
+export async function isYouTubeQuotaExhaustedToday(env = process.env, fetchImpl = fetch, now = Date.now()) {
+  const db = sb(env);
+  if (!db) return false;
+  const key = `${ALERT_PREFIX}${quotaDayKey(now)}:exhausted`;
+  const response = await fetchImpl(
+    `${db.url}/rest/v1/cost_usage_ledger?select=run_key&run_key=eq.${encodeURIComponent(key)}`,
+    { headers: db.headers },
+  );
+  if (!response.ok) return false;
+  const rows = await response.json().catch(() => []);
+  return Array.isArray(rows) && rows.some((row) => row?.run_key === key);
+}
+
 export function quotaAlertMessage(level, usage, now = Date.now(), assignee = '') {
   const top = usage.byJob.slice(0, 5).map(([job, units]) => `${job} ${units}`).join(', ');
   const head = level === 'exhausted'

@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { recordPlatformOutcome } from './platform-health.js';
 import { notifyAuxiliaryDegraded } from './notify-auxiliary-degraded.js';
+import { isYouTubeQuotaExhaustedToday } from './youtube-quota-meter.js';
 
 export function loadAuxiliaryOutcomeConfig(env = process.env) {
   return {
@@ -19,10 +20,15 @@ export function loadAuxiliaryOutcomeConfig(env = process.env) {
 
 export async function recordAuxiliaryOutcome(env = process.env, fetchImpl = fetch, now = Date.now()) {
   const config = loadAuxiliaryOutcomeConfig(env);
+  // YouTube quota가 소진된 날(PT)엔 YouTube 보조 기능이 전부 실패한다. '할당량 소진' 알림 1건이 이미 원인과
+  // 리셋 시각을 알렸으므로 기능별 degraded 알림은 막는다(11-04: 같은 원인 경고 5건+, 성공·실패 교차로 재발송).
+  const quotaBlocked = !config.ok && config.platform.startsWith('youtube')
+    && await isYouTubeQuotaExhaustedToday(env, fetchImpl, now).catch(() => false);
   const result = await recordPlatformOutcome(config.health, {
     platform: config.platform,
     ok: config.ok,
     error: config.ok ? '' : config.reason,
+    escalationBlocked: quotaBlocked,
   }, fetchImpl, now);
   let notified = false;
   if (result.shouldEscalate) {
@@ -32,7 +38,7 @@ export async function recordAuxiliaryOutcome(env = process.env, fetchImpl = fetc
     }, fetchImpl);
     notified = true;
   }
-  return { ...result, notified };
+  return { ...result, notified, quotaBlocked };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

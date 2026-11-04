@@ -60,7 +60,9 @@ export async function recordPlatformOutcome(config, outcome, fetchImpl = fetch, 
     const consecutiveFailures = previousCount + 1;
     const lastAlertedMs = Date.parse(previous?.last_alerted_at || '');
     const cooldownPassed = !Number.isFinite(lastAlertedMs) || now - lastAlertedMs >= cooldownMs;
-    const shouldEscalate = consecutiveFailures >= threshold && cooldownPassed;
+    // escalationBlocked: 상위 원인 알림이 이미 나가 개별 알림을 막을 때(예: YouTube quota 소진). 실패는 그대로 세되
+    // last_alerted_at을 찍지 않아, 원인이 풀린 뒤 진짜 실패면 쿨다운 없이 바로 알린다.
+    const shouldEscalate = !outcome.escalationBlocked && consecutiveFailures >= threshold && cooldownPassed;
     const saved = await saveHealth(config, {
       platform,
       consecutive_failures: consecutiveFailures,
