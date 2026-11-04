@@ -2,6 +2,7 @@ import { appendFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { extractPostKey } from './delta.js';
+import { kstDateKey } from './schedule.js';
 import { refreshGoogleAccessToken } from './youtube-ads.js';
 import { syncHiddenYouTubeSlackCards } from './youtube-hidden-slack.js';
 
@@ -606,6 +607,46 @@ function encodedList(values) {
   return values.map((value) => `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join(',');
 }
 
+export const HIDE_UNVERIFIED_MAX_ATTEMPTS = 3;
+export const HIDE_UNVERIFIED_DECISION = 'manual_required';
+export const HIDE_UNVERIFIED_ACTOR = 'youtube-owner-hide-unverified';
+
+// 숨김 요청이 접수(204)됐지만 확인이 안 된 댓글의 시도 횟수를 원장(hide-unverified:<id>:<n>)에 남긴다.
+// 상한(3회)에 닿은 댓글 ID를 돌려준다 — 그 댓글은 사람(스튜디오 삭제)에게 넘기고 다시 시도하지 않는다.
+export async function recordUnverifiedHideAttempts(config, commentIds, fetchImpl, now = Date.now()) {
+  const ids = [...new Set(commentIds.map(String).filter(Boolean))];
+  if (!ids.length) return [];
+  const keysFor = (id) => Array.from({ length: HIDE_UNVERIFIED_MAX_ATTEMPTS }, (_, i) => `hide-unverified:${id}:${i + 1}`);
+  const existing = new Set();
+  for (const batch of chunk(ids, 30)) {
+    const list = batch.flatMap(keysFor).map((key) => `"${key.replace(/"/g, '')}"`).join(',');
+    const response = await fetchImpl(
+      `${config.supabaseUrl}/rest/v1/cost_usage_ledger?select=run_key&run_key=${encodeURIComponent(`in.(${list})`)}`,
+      { headers: supabaseHeaders(config) },
+    );
+    if (!response.ok) throw new Error(`hide-unverified ledger read failed (${response.status})`);
+    for (const row of await response.json()) existing.add(String(row.run_key));
+  }
+  const kstDate = kstDateKey(now);
+  const inserts = [];
+  const capped = [];
+  for (const id of ids) {
+    const done = keysFor(id).filter((key) => existing.has(key)).length;
+    const next = Math.min(done + 1, HIDE_UNVERIFIED_MAX_ATTEMPTS);
+    if (done < HIDE_UNVERIFIED_MAX_ATTEMPTS) inserts.push({ run_key: `hide-unverified:${id}:${next}`, kst_date: kstDate, apify_usd: 0, anthropic_usd: 0 });
+    if (next >= HIDE_UNVERIFIED_MAX_ATTEMPTS) capped.push(id);
+  }
+  if (inserts.length) {
+    const response = await fetchImpl(`${config.supabaseUrl}/rest/v1/cost_usage_ledger?on_conflict=run_key`, {
+      method: 'POST',
+      headers: supabaseHeaders(config, { 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' }),
+      body: JSON.stringify(inserts),
+    });
+    if (!response.ok) throw new Error(`hide-unverified ledger write failed (${response.status})`);
+  }
+  return capped;
+}
+
 async function patchRows(config, ids, body, fetchImpl) {
   if (!ids.length) return 0;
   let updated = 0;
@@ -870,6 +911,25 @@ export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModera
       result.moderationFailed += moderation.failed.length;
       result.acceptedUnverified += moderation.acceptedUnverified.length;
       result.verificationRetries += moderation.verificationRetries;
+      // 204를 받고도 계속 공개인 댓글은 매 회차 재시도하면 회당 ~55 unit을 영구히 태운다
+      // (11-04: 댓글 1개 재시도가 하루 quota를 거덜내 소유채널 전 기능이 10시간 멈춤). 상한을 넘으면 사람 몫으로 넘긴다.
+      if (!config.dryRun && !config.singleAlert && moderation.acceptedUnverified.length) {
+        try {
+          const capped = await recordUnverifiedHideAttempts(config, moderation.acceptedUnverified, fetchImpl, now);
+          const cappedRows = capped.flatMap((id) => rowsByComment.get(id) || []);
+          if (cappedRows.length) {
+            await patchRows(config, cappedRows.map((row) => row.id), {
+              review_decision: HIDE_UNVERIFIED_DECISION,
+              reviewed_by: HIDE_UNVERIFIED_ACTOR,
+              reviewed_at: new Date(now).toISOString(),
+            }, fetchImpl);
+            result.manualRequired = (result.manualRequired || 0) + capped.length;
+            result.manualRequiredRows = [...(result.manualRequiredRows || []), ...cappedRows];
+          }
+        } catch (error) {
+          ownerResult.error ||= { stage: 'unverified-cap', ...errorInfo(error) };
+        }
+      }
       if (moderation.channelError) {
         ownerResult.error = { stage: 'moderation', ...moderation.channelError };
         result.channelFailures += 1;

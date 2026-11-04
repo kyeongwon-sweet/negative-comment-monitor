@@ -73,6 +73,7 @@ const SUM_FIELDS = [
   'dbUpdated',
   'slackUpdated',
   'slackUpdateFailed',
+  'manualRequired',
 ];
 
 export function combinePendingModerationResults(results) {
@@ -80,6 +81,7 @@ export function combinePendingModerationResults(results) {
   for (const field of SUM_FIELDS) {
     combined[field] = results.reduce((sum, result) => sum + Number(result?.[field] || 0), 0);
   }
+  combined.manualRequiredRows = results.flatMap((result) => result?.manualRequiredRows || []);
   combined.scopes = results.map((result) => ({
     alertScope: result.alertScope,
     eligibleCandidates: Number(result.eligibleCandidates || 0),
@@ -91,6 +93,33 @@ export function combinePendingModerationResults(results) {
     moderationFailed: Number(result.moderationFailed || 0),
   }));
   return combined;
+}
+
+// 숨김 요청이 3회 접수됐는데도 계속 공개인 댓글 → 봇은 더 시도하지 않고(quota) 사람에게 한 번 알린다.
+export function manualRequiredMessage(rows, assignee = '') {
+  const lines = [
+    `:warning: *봇이 숨기지 못한 댓글 ${rows.length}개* — 숨김 요청을 3번 보냈지만 유튜브에서 계속 공개입니다.`,
+    '봇은 더 시도하지 않습니다(재시도마다 유튜브 할당량 소모). 스튜디오에서 이 댓글만 *삭제*해주세요("사용자 숨기기" 말고).',
+    ...rows.map((row) => {
+      const videoId = String(row.post_url || '').match(/[?&]v=([^&]+)/)?.[1] || '';
+      return `• <https://www.youtube.com/watch?v=${videoId}&lc=${row.comment_id}|${videoId} 댓글>`;
+    }),
+  ];
+  if (assignee) lines.push(`담당자: <@${assignee}>`);
+  return lines.join('\n');
+}
+
+async function notifyManualRequired(config, rows, fetchImpl) {
+  const channel = String(process.env.SLACK_CHANNEL_ID || '').trim();
+  if (!rows.length || !config.slackBotToken || !channel) return false;
+  const response = await fetchImpl('https://slack.com/api/chat.postMessage', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${config.slackBotToken}`, 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({ channel, text: manualRequiredMessage(rows, String(process.env.SLACK_ASSIGNEE_OTHER || '').trim()), unfurl_links: false }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.ok) throw new Error(`manual-required Slack 실패: ${payload.error || response.status}`);
+  return true;
 }
 
 export function assertPendingModerationMadeProgress(result) {
@@ -133,8 +162,18 @@ export async function hidePendingYouTubeOwnerAlerts(
       now,
     ));
   }
+  const combined = combinePendingModerationResults(results);
+  if (combined.manualRequiredRows.length) {
+    // 알림 실패해도 행은 이미 manual_required라 재시도 낭비는 없다. 실패는 결과로 남겨 보조 헬스가 잡게 한다.
+    try {
+      combined.manualRequiredNotified = await notifyManualRequired(config, combined.manualRequiredRows, fetchImpl);
+    } catch (error) {
+      combined.persistenceFailed += 1;
+      combined.manualRequiredNotifyError = String(error.message || error).slice(0, 160);
+    }
+  }
   return assertPendingModerationMadeProgress({
-    ...combinePendingModerationResults(results),
+    ...combined,
     trackedVideos: allowedVideoIds.size,
   });
 }
@@ -157,6 +196,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
         channelFailures: result.channelFailures || 0,
         dbUpdated: result.dbUpdated || 0,
         slackUpdated: result.slackUpdated || 0,
+        manualRequired: result.manualRequired || 0,
         skipped: result.skipped || null,
       }));
       if (result.moderationFailed || result.channelFailures || result.persistenceFailed) {

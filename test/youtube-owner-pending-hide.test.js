@@ -111,3 +111,28 @@ test('이미 숨김·삭제되어 unavailable로 수렴한 대상은 정상 진�
     unavailableOrAlreadyHidden: 4,
   }));
 });
+
+test('숨김 3회 실패로 manual_required가 된 댓글은 한 번 슬랙으로 사람에게 넘긴다', async () => {
+  const posts = [];
+  const prev = { ch: process.env.SLACK_CHANNEL_ID, as: process.env.SLACK_ASSIGNEE_OTHER };
+  process.env.SLACK_CHANNEL_ID = 'C1'; process.env.SLACK_ASSIGNEE_OTHER = 'U1';
+  try {
+    const fetchImpl = async (url, init = {}) => {
+      if (String(url).includes('youtube_owner_video_state')) return { ok: true, status: 200, json: async () => [{ video_id: 'v1' }] };
+      if (String(url).includes('chat.postMessage')) { posts.push(JSON.parse(init.body)); return { ok: true, status: 200, json: async () => ({ ok: true }) }; }
+      throw new Error(`unexpected ${url}`);
+    };
+    const moderate = async (cfg) => (cfg.alertScope === 'organic_satellite'
+      ? { attempted: 1, acceptedUnverified: 1, manualRequired: 1, manualRequiredRows: [{ comment_id: 'Ugx1', post_url: 'https://www.youtube.com/watch?v=v1' }] }
+      : { attempted: 0 });
+    const result = await hidePendingYouTubeOwnerAlerts({ supabaseUrl: 'https://db.test', supabaseKey: 'k', slackBotToken: 'xb' }, fetchImpl, Date.now(), moderate);
+    assert.equal(result.manualRequired, 1);
+    assert.equal(posts.length, 1);
+    assert.match(posts[0].text, /봇이 숨기지 못한 댓글 1개/);
+    assert.match(posts[0].text, /v=v1&lc=Ugx1/);
+  } finally {
+    process.env.SLACK_CHANNEL_ID = prev.ch ?? ''; process.env.SLACK_ASSIGNEE_OTHER = prev.as ?? '';
+    if (prev.ch === undefined) delete process.env.SLACK_CHANNEL_ID;
+    if (prev.as === undefined) delete process.env.SLACK_ASSIGNEE_OTHER;
+  }
+});
