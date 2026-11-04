@@ -222,6 +222,7 @@ test('보류 댓글 공개는 메인 15분 루프에 실운영 설정으로 배�
   assert.match(monitorStep, /HELD_REVIEW_CHANNELS:\s*\$\{\{\s*vars\.HELD_REVIEW_CHANNELS\s*\}\}/);
   assert.match(monitorStep, /HELD_REVIEW_DRY_RUN:\s*'false'/);
   assert.match(monitorStep, /HELD_REVIEW_MODEL:\s*gemini-3\.5-flash-lite/);
+  assert.match(monitorStep, /HELD_REVIEW_LOOP_MAX_PAGES:\s*'1'/);
   assert.match(monitorStep, /YOUTUBE_OWNER_DEFAULT_PRODUCT_NAME:\s*JD/);
   assert.doesNotMatch(heldReviewWorkflow, /\bschedule:\s*\n/);
   assert.match(heldReviewWorkflow, /workflow_dispatch:/);

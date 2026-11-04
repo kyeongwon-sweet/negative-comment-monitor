@@ -190,6 +190,36 @@ test("실제 공개할 때는 공개 직전에 토큰 소유 채널을 검증한
   assert.deepEqual(calls.publish, ["good"]);
 });
 
+test("프로젝트 공통 quota 오류는 첫 채널에서 중단해 뒤 채널을 헛호출하지 않는다", async () => {
+  let threadReads = 0;
+  const response = (body, ok = true, status = 200) => ({ ok, status, json: async () => body });
+  const fetchImpl = async (url) => {
+    const value = String(url);
+    if (value.includes('meta_tokens')) return response([
+      { kind: 'youtube_owner:UCa', token: 'rt-a' },
+      { kind: 'youtube_owner:UCb', token: 'rt-b' },
+    ]);
+    if (value.includes('oauth2.googleapis.com')) return response({ access_token: 'at' });
+    if (value.includes('/commentThreads')) {
+      threadReads += 1;
+      return response({ error: { errors: [{ reason: 'quotaExceeded' }] } }, false, 403);
+    }
+    throw new Error(`unexpected ${value}`);
+  };
+  const summary = await runHeldReview({
+    ...BASE,
+    heldReviewChannels: [
+      { channelId: 'UCa', since: SINCE },
+      { channelId: 'UCb', since: SINCE },
+    ],
+  }, fetchImpl, Date.parse('2026-10-29T05:00:00Z'));
+
+  assert.equal(threadReads, 1);
+  assert.equal(summary.channels.length, 1);
+  assert.equal(summary.quotaExhausted, true);
+  assert.match(summary.errors[0], /quotaExceeded/);
+});
+
 test("pageIsOlderThan: 페이지의 모든 댓글(답글 포함)이 기준보다 오래됐을 때만 중단", () => {
   const t = (top, replies = []) => ({ snippet: { topLevelComment: { snippet: { publishedAt: top } } }, replies: { comments: replies.map((p) => ({ snippet: { publishedAt: p } })) } });
   const stop = Date.parse("2026-11-01T00:00:00Z");

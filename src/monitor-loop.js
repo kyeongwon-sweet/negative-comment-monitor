@@ -261,7 +261,14 @@ export async function runMonitorLoop(env = process.env, options = {}) {
       try {
         // 워크플로가 false로 고정해 전달한다. 방어적으로 여기서도 false를 강제해 15분 루프가
         // 실수로 dry-run만 반복하지 않게 한다. 시작시각·판정실패 fail-closed는 본체가 지킨다.
-        await reviewHeld({ ...env, HELD_REVIEW_DRY_RUN: 'false' });
+        await reviewHeld({
+          ...env,
+          HELD_REVIEW_DRY_RUN: 'false',
+          // 15분 루프는 새 댓글의 공개 지연만 줄이는 얕은 검사다. 채널마다 최대 100개면
+          // 한 회차 유입을 충분히 덮으며, 과거 보류분의 깊은 추적은 단독 시간별 잡이 맡는다.
+          // 기본 20페이지를 그대로 쓰면 채널 확대 시 일일 YouTube quota를 소진한다(11-04).
+          HELD_REVIEW_MAX_PAGES: String(env.HELD_REVIEW_LOOP_MAX_PAGES || '1'),
+        });
         heldReviewRuns += 1;
         console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} held_review=success`);
       } catch (error) {

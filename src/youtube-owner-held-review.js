@@ -23,6 +23,10 @@ import { matchesOwnedHardHostility } from './classify.js';
 
 const LEDGER_PREFIX = 'held-review:';
 
+export function isYouTubeQuotaExhausted(error) {
+  return /quotaExceeded|dailyLimitExceeded/i.test(String(error?.message || error || ''));
+}
+
 // "채널ID@시작시각ISO" 쉼표 목록. 시작시각이 없거나 잘못되면 그 채널은 켜지 않는다(전부 공개 위험 방지).
 export function parseHeldReviewChannels(raw) {
   const out = [];
@@ -400,6 +404,12 @@ export async function runHeldReview(config, fetchImpl = fetch, now = Date.now())
     } catch (error) {
       row.error = String(error.message || error);
       summary.errors.push(`${channelId}: ${row.error}`);
+      // YouTube 일일 quota는 같은 Google 프로젝트의 모든 소유채널에 공통이다. 첫 소진 뒤
+      // 나머지 채널을 계속 호출하지 않고 다음 reset 회차에 재개한다(댓글은 보류 상태라 안전).
+      if (isYouTubeQuotaExhausted(error)) {
+        summary.quotaExhausted = true;
+        break;
+      }
     }
   }
   return summary;

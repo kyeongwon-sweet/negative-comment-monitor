@@ -82,6 +82,7 @@ test('held-review keeps the 15-minute loop alive while the intensive gate is clo
   assert.deepEqual(commands, [['npm', 'install', '--ignore-scripts']]);
   assert.equal(reviews.length, 4);
   assert.ok(reviews.every((reviewEnv) => reviewEnv.HELD_REVIEW_DRY_RUN === 'false'));
+  assert.ok(reviews.every((reviewEnv) => reviewEnv.HELD_REVIEW_MAX_PAGES === '1'));
   assert.deepEqual(outcomes, Array.from({ length: 4 }, () => ['success', '15분 루프 정상']));
   assert.deepEqual(sleeps, [1, 1, 1]);
   assert.deepEqual(chainCalls, [{
@@ -99,6 +100,28 @@ test('held-review keeps the 15-minute loop alive while the intensive gate is clo
     heldReviewFailures: 0,
     chain: { dispatched: true, reason: 'queued' },
   });
+});
+
+test('held-review 15분 루프 페이지 상한은 전용 변수로만 조정한다', async () => {
+  const reviews = [];
+  await runMonitorLoop({
+    ...BASE_ENV,
+    MONITOR_LOOP_ITERATIONS: '1',
+    HELD_REVIEW_CHANNELS: 'UCOWNER@2026-10-29T02:32:00Z',
+    HELD_REVIEW_MAX_PAGES: '20',
+    HELD_REVIEW_LOOP_MAX_PAGES: '2',
+  }, {
+    gate: async () => false,
+    latestScan: async () => Date.now(),
+    runCommand: async () => {},
+    runHeldReview: async (reviewEnv) => { reviews.push(reviewEnv); },
+    recordHeldReviewOutcome: async () => {},
+    recordHeartbeat: async () => {},
+    sleep: async () => {},
+  });
+
+  assert.equal(reviews.length, 1);
+  assert.equal(reviews[0].HELD_REVIEW_MAX_PAGES, '2', '단독 잡의 깊은 검사 기본값과 분리');
 });
 
 // 11-01 00:37→04:30 KST: keepAlive 루프가 게이트 닫힘으로 4회 연속 스캔 없이 이어져 3h53m 무스캔 공백.

@@ -122,6 +122,9 @@ jobs:
           HELD_REVIEW_CHANNELS: ${{ vars.HELD_REVIEW_CHANNELS }}
           HELD_REVIEW_DRY_RUN: 'false'
           HELD_REVIEW_MODEL: gemini-3.5-flash-lite
+          # 15분 루프는 최신 100개(1페이지)만 처리한다. 시간별 단독 잡이 깊은 보완 검사를 담당한다.
+          # 11개 채널에서 기본 20페이지를 반복해 YouTube 일일 quota를 소진한 11-04 사고 방지.
+          HELD_REVIEW_LOOP_MAX_PAGES: '1'
           YOUTUBE_OWNER_DEFAULT_PRODUCT_NAME: JD
           # cron 드롭에 영향받지 않도록 pending-hide와 오탐 공개복원을 같은 15분 self-chain에 편입한다.
           YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true'

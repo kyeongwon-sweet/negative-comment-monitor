@@ -133,11 +133,13 @@ test('빠른 감시: 채널당 1페이지(1 unit)만 읽고, 최근 6시간 새 
   assert.deepEqual(summary.errors, []);
 });
 
-test('한 채널 quota 오류는 다른 채널을 막지 않고 errors에 남긴다', async () => {
+test('프로젝트 공통 quota 오류는 첫 채널에서 중단해 나머지 채널을 헛호출하지 않는다', async () => {
   const { fetchImpl, calls, classifier } = world({ failChannel: CH });
   const summary = await runOwnerFastScan(BASE, fetchImpl, NOW, classifier);
-  assert.equal(summary.channels, 1);
-  assert.deepEqual(calls.rows.map((r) => r.comment_id), ['bad2']);
+  assert.equal(summary.channels, 0);
+  assert.equal(calls.threadReads, 1);
+  assert.deepEqual(calls.rows, []);
+  assert.equal(summary.quotaExhausted, true);
   assert.ok(summary.errors.some((e) => e.includes(CH) && e.includes('quotaExceeded')));
 });
 

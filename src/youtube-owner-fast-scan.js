@@ -31,6 +31,10 @@ const HELD_REVIEW_LEDGER_PREFIX = 'held-review:';
 // 보류 후 YouTube 반영 지연(목록에 잠시 공개로 남음)을 실패로 보지 않는 유예. 15분 회차 4번.
 const HOLD_STUCK_GRACE_MS = 60 * 60 * 1000;
 
+export function isYouTubeQuotaExhausted(error) {
+  return /quotaExceeded|dailyLimitExceeded/i.test(String(error?.message || error || ''));
+}
+
 function sbHeaders(config, extra = {}) {
   return { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, ...extra };
 }
@@ -247,6 +251,12 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
     }
   } catch (error) {
     summary.errors.push(`채널명 조회 실패(설정 이름 사용): ${String(error.message || error).slice(0, 120)}`);
+    // 일일 quota는 프로젝트 공통이라 이후 11개 채널을 호출해도 모두 실패한다. 첫 신호에서
+    // 멈춰 불필요한 요청·로그를 줄이고, 다음 quota reset 뒤 자연 회복하게 한다.
+    if (isYouTubeQuotaExhausted(error)) {
+      summary.quotaExhausted = true;
+      return summary;
+    }
   }
   for (const channel of config.youtubeOwnerChannels) {
     const owner = tokens.get(channel.channelId);
@@ -293,8 +303,13 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
         }
       }
     } catch (error) {
-      // 한 채널 장애(401·quota)는 다른 채널을 막지 않는다. 다음 15분 회차가 다시 읽는다.
+      // 인증·일시 장애는 다른 채널을 계속 읽는다. 일일 quota 소진은 프로젝트 공통이므로
+      // 나머지 채널도 전부 실패한다 — 즉시 끊고 다음 reset 뒤 재시도한다.
       summary.errors.push(`${channel.channelId}: ${String(error.message || error).slice(0, 160)}`);
+      if (isYouTubeQuotaExhausted(error)) {
+        summary.quotaExhausted = true;
+        break;
+      }
     }
   }
 
