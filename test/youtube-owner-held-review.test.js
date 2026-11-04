@@ -229,3 +229,49 @@ test("pageIsOlderThan: 페이지의 모든 댓글(답글 포함)이 기준보다
   assert.equal(pageIsOlderThan([], stop), false);
   assert.equal(pageIsOlderThan([t("2026-10-30T00:00:00Z")], NaN), false, "기준 없으면 중단 안 함");
 });
+
+// 11-04 재발방지: 승인 프롬프트만 보고 공개한 댓글을 빠른 감시 분류기가 뒤늦게 부정으로 잡았고('테무광고가 좋아지는 영상'),
+// 봇이 공개한 댓글은 유튜브에서 다시 숨겨지지 않아 스튜디오 삭제만 남았다 → 공개 직전에 같은 부정 분류기로 2차 확인.
+function gatedWorld() {
+  const base = fakeWorld();
+  const fetchImpl = async (url, init = {}) => {
+    if (String(url).includes('comment_classification_cache')) return { ok: true, status: 200, json: async () => (init.method === 'POST' ? null : []) };
+    return base.fetchImpl(url, init);
+  };
+  return { ...base, fetchImpl };
+}
+const GATED = { ...BASE, heldReviewNegativeGate: true, youtubeOwnerChannels: [{ channelId: 'UCa', name: '먹는김에', channelCategory: '소유 YouTube' }], managedChannelCategories: ['소유 youtube'] };
+const verdict = (alert, category = '') => ({ alert, category, reason: '', priority: alert ? 'high' : 'normal', engine: 'llm' });
+
+test('2차 관문: 승인 프롬프트가 공개라 해도 부정 분류기가 부정이면 공개하지 않고 보류로 둔다', async () => {
+  const { fetchImpl, calls } = gatedWorld();
+  const classifier = async (items) => items.map(() => verdict(true, '브랜드 적대/조롱'));
+  const summary = await runHeldReview(GATED, fetchImpl, Date.parse('2026-10-29T05:00:00Z'), classifier);
+  assert.deepEqual(calls.publish, [], '공개 호출 없음');
+  assert.equal(summary.channels[0].negativeGateBlocked, 1);
+  assert.equal(summary.channels[0].kept, 2, '분류기 차단분도 보류 알림 묶음에 들어간다');
+  assert.match(calls.slack[0].text, /부정 분류기/);
+});
+
+test('2차 관문: 부정 분류기도 괜찮다고 하면 그대로 공개한다', async () => {
+  const { fetchImpl, calls } = gatedWorld();
+  const classifier = async (items) => items.map(() => verdict(false, '정상'));
+  const summary = await runHeldReview(GATED, fetchImpl, Date.parse('2026-10-29T05:00:00Z'), classifier);
+  assert.deepEqual(calls.publish, ['good']);
+  assert.equal(summary.channels[0].negativeGateBlocked, 0);
+});
+
+test('2차 관문: 분류기가 실패하면 공개하지 않는다(fail-closed)', async () => {
+  const { fetchImpl, calls } = gatedWorld();
+  const classifier = async () => { throw new Error('LLM down'); };
+  const summary = await runHeldReview(GATED, fetchImpl, Date.parse('2026-10-29T05:00:00Z'), classifier);
+  assert.deepEqual(calls.publish, []);
+  assert.equal(summary.channels[0].negativeGateBlocked, 1);
+});
+
+test('2차 관문은 운영 설정에서 기본으로 켜져 있다(HELD_REVIEW_NEGATIVE_GATE=false로만 끔)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../src/youtube-owner-held-review.js', import.meta.url), 'utf8');
+  assert.match(src, /heldReviewNegativeGate: String\(env\.HELD_REVIEW_NEGATIVE_GATE \|\| 'true'\)/);
+  assert.match(src, /config\.heldReviewNegativeGate === true\s*\n?\s*\? await gateApprovalsWithClassifier/);
+});

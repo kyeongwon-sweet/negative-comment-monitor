@@ -12,7 +12,8 @@
 // 공개 레포라 로그에는 개수·채널ID만 남긴다. 댓글 본문은 슬랙(비공개)에만 쓴다.
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { loadYouTubeOwnerChannelConfig, inferOwnerVideoProduct } from './youtube-owner-channel.js';
+import { loadYouTubeOwnerChannelConfig, inferOwnerVideoProduct, ownerChannelTarget } from './youtube-owner-channel.js';
+import { classifyTargetsBatched, isLlmDeferred } from './hybrid-classify.js';
 import { loadYouTubeOwnerTokens, refreshAndVerifyOwner } from './youtube-owner-moderation.js';
 import { refreshGoogleAccessToken } from './youtube-ads.js';
 import { ownerThreadRoute } from './youtube-owner-channel-run.js';
@@ -50,6 +51,8 @@ export function loadHeldReviewConfig(env = process.env, now = Date.now()) {
     // 보류함은 최근 이 시간치만 읽는다(페이지 전체가 이보다 오래되면 중단). 15분마다 전체를 읽으면 채널을 늘릴 때
     // 일일 quota 10,000을 넘는다(11-03 먹짱언니 확대 전 계산). 72h = 승인 봇이 사흘 연속 멈춰도 따라잡는 여유.
     heldReviewLookbackHours: Math.max(1, Math.min(24 * 30, Number(env.HELD_REVIEW_LOOKBACK_HOURS || 72))),
+    // 공개 직전 2차 관문: 빠른 감시·소유채널 모니터와 같은 부정 분류기에도 걸리지 않아야 공개한다(기본 켬).
+    heldReviewNegativeGate: String(env.HELD_REVIEW_NEGATIVE_GATE || 'true').toLowerCase() !== 'false',
   };
 }
 
@@ -226,6 +229,44 @@ export async function judgeApprovals(config, comments, fetchImpl = fetch, now = 
 // 링크·연락처가 든 댓글은 스팸 가능성이 있어 자동 공개하지 않는다(YouTube '기본' 검토가 보류한 건 포함).
 const LINK_PATTERN = /(https?:\/\/|www\.|\.com\b|\.kr\b|\.net\b|\.ly\b|t\.me\/|open\.kakao|카톡\s*아이디|텔레그램)/i;
 
+// 공개 직전 2차 관문(11-04 재발방지). 승인 프롬프트만으로 공개한 댓글을 빠른 감시의 부정 분류기가 뒤늦게
+// 부정으로 잡는 일이 반복됐고('저거 편의점에 많던데', '테무광고가 좋아지는 영상'), 봇이 한 번 공개한 댓글은
+// 다시 숨김(rejected)이 유튜브에서 먹지 않아 스튜디오 삭제만 남았다. 그래서 공개 후보를 같은 분류기에 한 번 더
+// 돌려, 부정(alert)이거나 판정이 미뤄지면(LLM 실패·예산) 공개하지 않고 보류로 둔다. 분류 자체가 실패해도 보류.
+export async function gateApprovalsWithClassifier(config, channelId, decided, fetchImpl = fetch, classifier = undefined) {
+  const candidates = decided.filter((c) => c.approve);
+  if (!candidates.length) return decided;
+  const channel = (config.youtubeOwnerChannels || []).find((c) => c.channelId === channelId)
+    || { channelId, name: channelId, channelCategory: '소유 YouTube' };
+  const titles = await loadVideoTitles(config, candidates.map((c) => c.videoId), fetchImpl);
+  const byVideo = new Map();
+  for (const c of candidates) {
+    if (!byVideo.has(c.videoId)) byVideo.set(c.videoId, []);
+    byVideo.get(c.videoId).push(c);
+  }
+  const groups = [...byVideo.entries()];
+  const entries = groups.map(([videoId, comments]) => ({
+    target: ownerChannelTarget(config, channel, channel.name || channelId, { snippet: { title: titles.get(videoId) || '' } }, videoId, {}),
+    comments: comments.map((c) => ({
+      id: c.id, platform: 'youtube', text: c.text, timestamp: c.publishedAt, username: c.author, authorChannelId: c.authorChannelId,
+    })),
+  }));
+  let risks = null;
+  try {
+    risks = await classifyTargetsBatched(entries, config, classifier, {}, fetchImpl);
+  } catch {
+    risks = null;
+  }
+  const blocked = new Map();
+  groups.forEach(([, comments], g) => comments.forEach((c, i) => {
+    const risk = risks?.[g]?.[i];
+    if (!risk) blocked.set(c.id, '부정 분류 실패(공개 보류)');
+    else if (isLlmDeferred(risk)) blocked.set(c.id, '부정 분류 판정 보류(공개 보류)');
+    else if (risk.alert === true) blocked.set(c.id, `부정 분류기: ${risk.category || '부정'}`);
+  }));
+  return decided.map((c) => (blocked.has(c.id) ? { ...c, approve: false, reason: blocked.get(c.id) } : c));
+}
+
 // 하드넷(확정 부정 표현)·링크가 걸리면 모델이 공개라 해도 보류.
 export function decideApprovals(comments, verdicts) {
   return comments.map((comment, index) => {
@@ -340,7 +381,7 @@ async function postDigest(config, kept, now, fetchImpl) {
   return posted;
 }
 
-export async function runHeldReview(config, fetchImpl = fetch, now = Date.now()) {
+export async function runHeldReview(config, fetchImpl = fetch, now = Date.now(), classifier = undefined) {
   const summary = { dryRun: config.heldReviewDryRun, model: config.heldReviewModel, channels: [], errors: [] };
   if (!config.heldReviewChannels.length) return { ...summary, note: 'HELD_REVIEW_CHANNELS 비어 있음(기능 꺼짐)' };
   const owners = new Map((await loadYouTubeOwnerTokens(config, fetchImpl)).map((o) => [o.channelId, o]));
@@ -368,7 +409,10 @@ export async function runHeldReview(config, fetchImpl = fetch, now = Date.now())
       if (!candidates.length) continue;
       const verdicts = await judgeApprovals(config, candidates, fetchImpl, now);
       if (!verdicts) throw new Error('공개 판정 실패(LLM 오류·예산) — 아무것도 공개하지 않음');
-      const decided = decideApprovals(candidates, verdicts);
+      const decided = config.heldReviewNegativeGate === true
+        ? await gateApprovalsWithClassifier(config, channelId, decideApprovals(candidates, verdicts), fetchImpl, classifier)
+        : decideApprovals(candidates, verdicts);
+      row.negativeGateBlocked = decided.filter((c) => /^부정 분류/.test(c.reason || '')).length;
       const toApprove = decided.filter((c) => c.approve);
       const kept = decided.filter((c) => !c.approve);
       if (config.heldReviewDryRun) {
