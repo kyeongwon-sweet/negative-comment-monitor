@@ -17,6 +17,25 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export async function fetchWithTransientNetworkRetry(
+  fetchImpl,
+  input,
+  init,
+  { maxAttempts = 3, baseDelayMs = 250, sleep = wait } = {},
+) {
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await fetchImpl(input, init);
+    } catch (error) {
+      lastError = error;
+      if (attempt === maxAttempts) throw error;
+      await sleep(baseDelayMs * (2 ** (attempt - 1)));
+    }
+  }
+  throw lastError;
+}
+
 export async function loadActionableAwarenessAlerts(
   config,
   source,
@@ -205,11 +224,17 @@ export async function autoHideMetaAwareness(
   now = Date.now(),
   options = {},
 ) {
-  const rows = await loadActionableAwarenessAlerts(config, 'meta_ads', fetchImpl, options);
-  const token = rows.length ? await loadMetaToken(config, config.metaTokenKind || 'ig_ads', fetchImpl) : null;
+  // Meta Graph·Slack·Supabase 중 하나의 TCP 연결이 순간적으로 끊겨도 이미 끝낸
+  // 분류·알림 전체를 실패시키지 않는다. 각 요청은 멱등이므로 짧은 재시도가 안전하다.
+  const retryFetch = (input, init) => fetchWithTransientNetworkRetry(fetchImpl, input, init, {
+    baseDelayMs: Number(options.fetchRetryBaseMs ?? 250),
+    sleep: options.sleep || wait,
+  });
+  const rows = await loadActionableAwarenessAlerts(config, 'meta_ads', retryFetch, options);
+  const token = rows.length ? await loadMetaToken(config, config.metaTokenKind || 'ig_ads', retryFetch) : null;
   if (rows.length && !token?.token) throw new Error('Meta awareness token not found');
   const ownerPartition = rows.length
-    ? await partitionMetaAutoHideRows(config, rows, token.token, fetchImpl)
+    ? await partitionMetaAutoHideRows(config, rows, token.token, retryFetch)
     : { eligible: [], excluded: [], ownerLookupDeferred: [] };
   const rowsByComment = new Map();
   for (const row of ownerPartition.eligible) {
@@ -219,7 +244,7 @@ export async function autoHideMetaAwareness(
   }
   const succeeded = [], unavailable = [], failed = [];
   for (const [commentId, commentRows] of rowsByComment) {
-    const response = await fetchImpl(
+    const response = await retryFetch(
       `${config.metaGraphBase}/${encodeURIComponent(commentId)}?hide=true`,
       { method: 'POST', headers: { Authorization: `Bearer ${token.token}` } },
     );
@@ -241,14 +266,14 @@ export async function autoHideMetaAwareness(
   const slackRows = [...succeeded, ...unavailable]
     .filter((row) => !row.review_decision && !row.reviewed_by && !row.reviewed_at);
   const slack = slackRows.length
-    ? await syncMetaSlack(config, slackRows, fetchImpl, now)
+    ? await syncMetaSlack(config, slackRows, retryFetch, now)
     : { updated: 0, unavailable: 0, failed: 0 };
   // Slack 일시 장애면 DB를 완료 처리하지 않아 다음 회차가 API(멱등)+Slack을 함께 재시도한다.
   // hidden과 unavailable은 서로 다른 감사 상태로 기록한다. Slack 일시 장애가 있으면 둘 다 다음 회차로 미룬다.
-  const dbUpdated = slack.failed ? 0 : await persistAutoHidden(config, 'meta_ads', succeeded, fetchImpl, now);
+  const dbUpdated = slack.failed ? 0 : await persistAutoHidden(config, 'meta_ads', succeeded, retryFetch, now);
   const unavailableDbUpdated = slack.failed
     ? 0
-    : await persistModerationUnavailable(config, 'meta_ads', unavailable, fetchImpl, now);
+    : await persistModerationUnavailable(config, 'meta_ads', unavailable, retryFetch, now);
   return {
     actionable: rows.length,
     eligible: ownerPartition.eligible.length,

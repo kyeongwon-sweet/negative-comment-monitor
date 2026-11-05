@@ -87,6 +87,33 @@ test('Meta 자동 숨김은 중복 comment_id를 한 번만 호출하고 Slack �
   assert.equal(JSON.parse(calls[patchIndex].init.body).review_decision, 'hidden');
 });
 
+test('Meta 자동 숨김은 일시적인 fetch 네트워크 오류를 재시도해 같은 회차에서 복구한다', async () => {
+  let hideAttempts = 0;
+  const fetchImpl = async (input) => {
+    const url = String(input);
+    if (url.includes('negative_comment_alerts?select=')) return response(200, [
+      { id: 1, comment_id: 'retry-me', review_decision: null },
+    ]);
+    if (url.includes('/meta_tokens?')) return response(200, [{ token: 'META' }]);
+    if (url.includes('/retry-me?hide=true')) {
+      hideAttempts += 1;
+      if (hideAttempts === 1) throw new TypeError('fetch failed');
+      return response(200, { success: true });
+    }
+    if (url.includes('negative_comment_alerts?id=in.')) return response(200, [{ id: 1 }]);
+    throw new Error(`unexpected ${url}`);
+  };
+
+  const result = await autoHideMetaAwareness(CFG, fetchImpl, Date.now(), {
+    fetchRetryBaseMs: 0,
+  });
+
+  assert.equal(hideAttempts, 2);
+  assert.equal(result.hidden, 1);
+  assert.equal(result.failed, 0);
+  assert.equal(result.dbUpdated, 1);
+});
+
 test('Meta 파트너 Instagram 사용자는 자동숨김만 제외하고 다른 계정은 계속 숨긴다', async () => {
   const calls = [];
   const config = {
