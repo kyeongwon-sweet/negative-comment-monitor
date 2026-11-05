@@ -105,6 +105,22 @@ export async function isYouTubeQuotaExhaustedToday(env = process.env, fetchImpl 
   return Array.isArray(rows) && rows.some((row) => row?.run_key === key);
 }
 
+// quota 브레이크(11-05): 오늘 사용률이 기준(기본 60%)을 넘거나 소진이면 '부정 댓글 찾기·숨기기'가 아닌 비싼 쓰기
+// (봇 보류 대행·보류 댓글 공개)를 멈춰 남은 quota를 숨김에 남긴다. 11-04~05 하루 사용 ~1만 중 절반 이상이
+// '모두 보류' 안 걸린 새 광고 19개의 댓글을 봇이 보류(50)→재공개(50)한 비용이었다. 조회 실패 시엔 멈추지 않는다(fail-open).
+export async function quotaBrakeEngaged({ supabaseUrl, supabaseKey, ratio } = {}, fetchImpl = fetch, now = Date.now()) {
+  const env = { SUPABASE_URL: supabaseUrl, SUPABASE_SERVICE_ROLE_KEY: supabaseKey };
+  const limitRatio = Number.isFinite(Number(ratio)) && Number(ratio) > 0 ? Number(ratio) : 0.6;
+  try {
+    if (await isYouTubeQuotaExhaustedToday(env, fetchImpl, now)) return { engaged: true, reason: 'exhausted' };
+    const usage = await youtubeQuotaUsage(env, fetchImpl, now);
+    if (usage && usage.ratio >= limitRatio) return { engaged: true, reason: `${Math.round(usage.ratio * 100)}%`, usage };
+    return { engaged: false, usage };
+  } catch {
+    return { engaged: false };
+  }
+}
+
 export function quotaAlertMessage(level, usage, now = Date.now(), assignee = '') {
   const top = usage.byJob.slice(0, 5).map(([job, units]) => `${job} ${units}`).join(', ');
   const head = level === 'exhausted'

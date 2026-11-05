@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { loadYouTubeOwnerChannelConfig, inferOwnerVideoProduct, ownerChannelTarget } from './youtube-owner-channel.js';
 import { classifyTargetsBatched, isLlmDeferred } from './hybrid-classify.js';
+import { quotaBrakeEngaged } from './youtube-quota-meter.js';
 import { loadYouTubeOwnerTokens, refreshAndVerifyOwner } from './youtube-owner-moderation.js';
 import { refreshGoogleAccessToken } from './youtube-ads.js';
 import { ownerThreadRoute } from './youtube-owner-channel-run.js';
@@ -384,6 +385,12 @@ async function postDigest(config, kept, now, fetchImpl) {
 export async function runHeldReview(config, fetchImpl = fetch, now = Date.now(), classifier = undefined) {
   const summary = { dryRun: config.heldReviewDryRun, model: config.heldReviewModel, channels: [], errors: [] };
   if (!config.heldReviewChannels.length) return { ...summary, note: 'HELD_REVIEW_CHANNELS 비어 있음(기능 꺼짐)' };
+  // quota 브레이크: 사용률이 높으면 이 회차는 건너뛴다(보류함 읽기 + 공개 50 unit/요청). 보류 댓글은 비공개로
+  // 안전하게 기다렸다가 리셋 뒤 회차가 공개한다. 남은 quota는 부정 댓글 찾기·숨기기 몫.
+  if (!config.heldReviewDryRun) {
+    const brake = await quotaBrakeEngaged({ supabaseUrl: config.supabaseUrl, supabaseKey: config.supabaseKey, ratio: config.quotaBrakeRatio }, fetchImpl, now);
+    if (brake.engaged) return { ...summary, skipped: `quota-brake(${brake.reason})` };
+  }
   const owners = new Map((await loadYouTubeOwnerTokens(config, fetchImpl)).map((o) => [o.channelId, o]));
   const kstDate = kstDateKey(now);
   for (const { channelId, since } of config.heldReviewChannels) {

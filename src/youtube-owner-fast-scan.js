@@ -25,6 +25,7 @@ import { kstDateKey } from './schedule.js';
 import { sendAlert } from './slack.js';
 import { retrySlackRateLimit } from './youtube-ads-run.js';
 import { parseHeldReviewChannels } from './youtube-owner-held-review.js';
+import { quotaBrakeEngaged } from './youtube-quota-meter.js';
 
 const HOUR = 60 * 60 * 1000;
 const HELD_REVIEW_LEDGER_PREFIX = 'held-review:';
@@ -221,7 +222,7 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
   const summary = {
     channels: 0, threadsRead: 0, recentComments: 0, alreadyAlerted: 0, classified: 0,
     flagged: 0, sentAlerts: 0, capped: 0, deferred: 0, quotaUnits: 0,
-    ownerGateSuppressed: 0, ownerGateUnreviewed: 0, holdLeakVideos: 0, holdLeakAlerted: 0, holdLeakSilenced: 0, holdEnforced: 0,
+    ownerGateSuppressed: 0, ownerGateUnreviewed: 0, holdLeakVideos: 0, holdLeakAlerted: 0, holdLeakSilenced: 0, holdEnforced: 0, holdEnforceBraked: '',
     newVideosTracked: 0, errors: [],
   };
   const holdSince = new Map((config.holdWatchChannels || []).map((c) => [
@@ -329,7 +330,12 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
     // 봇 승인 없이 공개된 새 댓글을 즉시 보류로 돌린다 → 다음 회차 승인 봇이 판정해 괜찮은 건 다시 공개.
     // 결과적으로 '모두 보류'와 같고 노출은 최대 한 회차(15분). 그래서 누락 자체는 알리지 않고(11-03 사용자 지시),
     // 봇 보류가 실패했거나 보류 후에도 공개로 남은 댓글만 알린다(hold-stuck, 영상당 하루 1회).
-    if (leaks.length && !config.dryRun && config.holdEnforce) {
+    // quota 브레이크: 사용률이 높으면 보류 대행(채널당 50 unit)을 멈춘다. 공개 댓글 중 부정은 아래 판정·숨김이 그대로 잡는다.
+    const brake = leaks.length && !config.dryRun && config.holdEnforce
+      ? await quotaBrakeEngaged({ supabaseUrl: config.supabaseUrl, supabaseKey: config.supabaseKey, ratio: config.quotaBrakeRatio }, fetchImpl, now)
+      : { engaged: false };
+    if (brake.engaged) summary.holdEnforceBraked = brake.reason;
+    if (leaks.length && !config.dryRun && config.holdEnforce && !brake.engaged) {
       // 채널 단위로 묶어 한 요청(50개까지 50 unit)에 보류한다 — 영상마다 따로 부르면 소유채널 확대 시 quota가 샌다.
       const byChannel = new Map();
       for (const leak of leaks) {
@@ -363,7 +369,9 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
       }
     }
     // 봇 보류 대행이 켜져 있으면 보류 누락 자체는 알리지 않는다(봇이 처리). 보류가 안 먹은 댓글만 알린다.
+    // 브레이크로 보류를 안 했으면 '보류 실패' 알림도 내지 않는다(의도된 중단, 리셋 뒤 자동 재개).
     const enforcing = config.holdEnforce && !config.dryRun;
+    if (brake.engaged) for (const leak of leaks) leak.problem = [];
     const toAlert = enforcing ? leaks.filter((leak) => leak.problem?.length) : leaks;
     summary.holdLeakSilenced = leaks.length - toAlert.length;
     if (toAlert.length && !config.dryRun) {

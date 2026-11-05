@@ -322,3 +322,19 @@ test("보류 대행은 채널 단위로 한 요청에 묶는다(영상별 호출
   assert.deepEqual(base.calls.holds.sort(), ['a1', 'a2', 'a3']);
   assert.equal(summary.holdEnforced, 3);
 });
+
+test("quota 브레이크: 사용률이 높으면 보류 대행(50 unit)을 하지 않고 알림도 내지 않는다(부정 판정·숨김 경로는 그대로)", async () => {
+  const base = world({ alreadyEnforced: ["bad2"], enforcedAt: NOW - 2 * 3600 * 1000 });
+  base.calls.holdMode = true;
+  const fetchImpl = async (url, init = {}) => {
+    const u = decodeURIComponent(String(url));
+    if (u.includes('cost_usage_ledger') && u.includes('yt-units:')) return { ok: true, status: 200, json: async () => [{ run_key: 'yt-units:2026-11-02:x:1.1.1.1:7000' }] };
+    return base.fetchImpl(url, init);
+  };
+  const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, base.classifier);
+  assert.deepEqual(base.calls.holds, []);
+  assert.equal(summary.holdEnforced, 0);
+  assert.match(summary.holdEnforceBraked, /70%/);
+  assert.equal(holdPosts(base.calls).length, 0, '의도된 중단이라 "보류 실패" 알림 없음');
+  assert.ok(base.calls.rows.length > 0, '부정 댓글 카드·알림행(→자동숨김)은 그대로');
+});

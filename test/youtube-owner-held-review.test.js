@@ -275,3 +275,18 @@ test('2차 관문은 운영 설정에서 기본으로 켜져 있다(HELD_REVIEW_
   assert.match(src, /heldReviewNegativeGate: String\(env\.HELD_REVIEW_NEGATIVE_GATE \|\| 'true'\)/);
   assert.match(src, /config\.heldReviewNegativeGate === true\s*\n?\s*\? await gateApprovalsWithClassifier/);
 });
+
+test('quota 브레이크: 사용률이 높으면 승인 봇 회차를 건너뛴다(보류함 읽기·공개 없음, 댓글은 비공개로 대기)', async () => {
+  const { fetchImpl: baseFetch, calls } = fakeWorld();
+  let threadReads = 0;
+  const fetchImpl = async (url, init = {}) => {
+    const u = decodeURIComponent(String(url));
+    if (u.includes('/commentThreads')) threadReads += 1;
+    if (u.includes('cost_usage_ledger') && u.includes('yt-units:')) return { ok: true, status: 200, json: async () => [{ run_key: 'yt-units:2026-10-28:x:1.1.1.1:6500' }] };
+    return baseFetch(url, init);
+  };
+  const summary = await runHeldReview(BASE, fetchImpl, Date.parse('2026-10-29T05:00:00Z'));
+  assert.match(summary.skipped, /quota-brake/);
+  assert.equal(threadReads, 0);
+  assert.deepEqual(calls.publish, []);
+});

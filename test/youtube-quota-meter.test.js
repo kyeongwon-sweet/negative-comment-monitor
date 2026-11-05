@@ -83,3 +83,17 @@ test('알림 문구: 사용률·리셋 시각·상위 소비 잡', () => {
   assert.match(text, /youtube-owner-held-review 3000/);
   assert.match(quotaAlertMessage('exhausted', usage, NOW), /소진/);
 });
+
+test('quota 브레이크: 60% 이상이거나 소진이면 걸리고, 조회 실패면 걸지 않는다(fail-open)', async () => {
+  const { quotaBrakeEngaged } = await import('../src/youtube-quota-meter.js');
+  const DB = { supabaseUrl: 'https://db.test', supabaseKey: 'k' };
+  const ledger = (keys) => async (url) => {
+    const u = decodeURIComponent(String(url));
+    if (u.includes('run_key=eq.')) return { ok: true, status: 200, json: async () => keys.filter((k) => u.includes(k)).map((run_key) => ({ run_key })) };
+    return { ok: true, status: 200, json: async () => keys.filter((k) => k.startsWith('yt-units:')).map((run_key) => ({ run_key })) };
+  };
+  assert.equal((await quotaBrakeEngaged(DB, ledger(['yt-units:2026-11-03:x:1.1.1.1:6100']), NOW)).engaged, true);
+  assert.equal((await quotaBrakeEngaged(DB, ledger(['yt-units:2026-11-03:x:1.1.1.1:5900']), NOW)).engaged, false);
+  assert.equal((await quotaBrakeEngaged(DB, ledger(['yt-quota-alert:2026-11-03:exhausted']), NOW)).reason, 'exhausted');
+  assert.equal((await quotaBrakeEngaged(DB, async () => { throw new Error('db down'); }, NOW)).engaged, false);
+});
