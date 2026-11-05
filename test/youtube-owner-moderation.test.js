@@ -564,7 +564,7 @@ test('숨김 확정 기록: 재감사 카드는 사람 결정이 아니므로 hi
 
 // 11-04 사고: 204 뒤에도 공개인 댓글 1개를 15분마다 재시도(회당 ~55 unit)해 하루 quota가 바닥 →
 // 소유채널 빠른 감시·승인·자동숨김이 10시간 멈췄다. 3회 시도 뒤엔 사람(스튜디오 삭제) 몫으로 넘긴다.
-function stuckWorld({ priorAttempts = 0 } = {}) {
+function stuckWorld({ priorAttempts = 0, heldReviewed = false } = {}) {
   const calls = { moderation: 0, ledgerInserts: [], patches: [] };
   const alert = { id: 7, comment_id: 'stuckA', post_url: 'https://youtube.com/watch?v=videoA1' };
   const fetchImpl = async (input, init = {}) => {
@@ -578,7 +578,9 @@ function stuckWorld({ priorAttempts = 0 } = {}) {
     if (url.includes('/comments/setModerationStatus')) { calls.moderation += 1; return response(204); }
     if (url.includes('/rest/v1/cost_usage_ledger') && init.method === 'POST') { calls.ledgerInserts.push(...JSON.parse(init.body).map((r) => r.run_key)); return response(201, null); }
     if (url.includes('/rest/v1/cost_usage_ledger')) {
-      return response(200, Array.from({ length: priorAttempts }, (_, i) => ({ run_key: `hide-unverified:stuckA:${i + 1}` })));
+      const rows = Array.from({ length: priorAttempts }, (_, i) => ({ run_key: `hide-unverified:stuckA:${i + 1}` }));
+      if (heldReviewed && decodeURIComponent(url).includes('held-review:stuckA')) rows.push({ run_key: 'held-review:stuckA' });
+      return response(200, rows);
     }
     if (url.includes('/rest/v1/negative_comment_alerts') && init.method === 'PATCH') { calls.patches.push(JSON.parse(init.body)); return response(200, [{ id: 7 }]); }
     throw new Error(`unexpected ${url}`);
@@ -603,6 +605,15 @@ test('숨김 미확인 3번째면 manual_required로 넘겨 다음 회차부터 
   assert.equal(calls.patches[0].review_decision, 'manual_required');
   assert.equal(result.manualRequired, 1);
   assert.equal(result.manualRequiredRows[0].comment_id, 'stuckA');
+});
+
+test('승인 봇이 공개했던 댓글(held-review 원장 있음)은 첫 미확인에서 바로 manual_required(3회 기다리지 않음)', async () => {
+  const { calls, fetchImpl } = stuckWorld({ priorAttempts: 0, heldReviewed: true });
+  const result = await moderateYouTubeOwnerAlerts(config(), fetchImpl);
+  assert.deepEqual(calls.ledgerInserts, ['hide-unverified:stuckA:1']);
+  assert.equal(calls.patches.length, 1);
+  assert.equal(calls.patches[0].review_decision, 'manual_required');
+  assert.equal(result.manualRequired, 1);
 });
 
 test('manual_required 행은 자동 숨김 대상이 아니다(사람 결정과 같은 fail-closed)', async () => {

@@ -613,13 +613,16 @@ export const HIDE_UNVERIFIED_ACTOR = 'youtube-owner-hide-unverified';
 
 // 숨김 요청이 접수(204)됐지만 확인이 안 된 댓글의 시도 횟수를 원장(hide-unverified:<id>:<n>)에 남긴다.
 // 상한(3회)에 닿은 댓글 ID를 돌려준다 — 그 댓글은 사람(스튜디오 삭제)에게 넘기고 다시 시도하지 않는다.
+// 승인 봇이 처리한 적 있는(held-review:<id>) 댓글이 지금 공개라면 봇이 공개한 것이고, 그런 댓글은 API로 다시
+// 숨겨지지 않는다(11-04~05 3/3 재현). 첫 미확인에서 바로 사람 몫으로 넘긴다 — 3회를 채우다 quota 소진에 걸리면
+// 삭제 요청 카드가 반나절 늦게 나간다(11-05 -9Yha1bKHsY: 08:26 첫 시도 → 17:08 카드).
 export async function recordUnverifiedHideAttempts(config, commentIds, fetchImpl, now = Date.now()) {
   const ids = [...new Set(commentIds.map(String).filter(Boolean))];
   if (!ids.length) return [];
   const keysFor = (id) => Array.from({ length: HIDE_UNVERIFIED_MAX_ATTEMPTS }, (_, i) => `hide-unverified:${id}:${i + 1}`);
   const existing = new Set();
   for (const batch of chunk(ids, 30)) {
-    const list = batch.flatMap(keysFor).map((key) => `"${key.replace(/"/g, '')}"`).join(',');
+    const list = batch.flatMap((id) => [...keysFor(id), `held-review:${id}`]).map((key) => `"${key.replace(/"/g, '')}"`).join(',');
     const response = await fetchImpl(
       `${config.supabaseUrl}/rest/v1/cost_usage_ledger?select=run_key&run_key=${encodeURIComponent(`in.(${list})`)}`,
       { headers: supabaseHeaders(config) },
@@ -634,7 +637,7 @@ export async function recordUnverifiedHideAttempts(config, commentIds, fetchImpl
     const done = keysFor(id).filter((key) => existing.has(key)).length;
     const next = Math.min(done + 1, HIDE_UNVERIFIED_MAX_ATTEMPTS);
     if (done < HIDE_UNVERIFIED_MAX_ATTEMPTS) inserts.push({ run_key: `hide-unverified:${id}:${next}`, kst_date: kstDate, apify_usd: 0, anthropic_usd: 0 });
-    if (next >= HIDE_UNVERIFIED_MAX_ATTEMPTS) capped.push(id);
+    if (next >= HIDE_UNVERIFIED_MAX_ATTEMPTS || existing.has(`held-review:${id}`)) capped.push(id);
   }
   if (inserts.length) {
     const response = await fetchImpl(`${config.supabaseUrl}/rest/v1/cost_usage_ledger?on_conflict=run_key`, {
