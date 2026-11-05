@@ -130,10 +130,11 @@ jobs:
           YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true'
           # 매일 재감사 카드(hold)를 24시간 동안 아무도 처리하지 않으면 자동숨김이 숨긴다(11-03 사용자 결정).
           YOUTUBE_OWNER_AUDIT_AUTO_HIDE_HOURS: '24'
-          # 소유채널 빠른 감시: 채널당 최신 스레드 1페이지(1 unit)만 읽어 최근 6시간 새 댓글을 판정(11-03).
+          # 소유채널 빠른 감시: 채널당 최신 스레드 1페이지(1 unit)만 읽어 최근 N시간(아래 값) 새 댓글을 판정(11-03).
           # 3시간 크론이 실제 5~7시간으로 밀려 부정이 오래 공개되던 공백을 15분으로 줄인다. 숨김은 pending-hide.
           YOUTUBE_OWNER_FAST_SCAN_LOOP: 'true'
-          YOUTUBE_OWNER_FAST_LOOKBACK_HOURS: '6'
+          # 12h(11-05): 할당량 소진으로 오전 내내 멈췄다가 17:00 리셋 뒤 다시 돌 때 그 사이 공개된 댓글까지 보게 한다.
+          YOUTUBE_OWNER_FAST_LOOKBACK_HOURS: '12'
           YOUTUBE_OWNER_FAST_MAX_ALERTS: '40'
           # '모두 보류' 누락 감시 시작 시각: 먹는김에 99개 보류 설정·실측 확인 완료(11-03) 이후.
           # 이 시각 이후 봇 승인 없이 공개된 새 댓글이 있는 HELD_REVIEW 채널 영상 = 보류 빠짐 → 하루 1회 경고.

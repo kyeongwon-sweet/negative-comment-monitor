@@ -315,3 +315,10 @@ test('15분 루프는 소유채널 빠른 감시를 켜고, 강한 모델은 빠
   // 같은 스텝의 핵심 수집(npm start) 판정을 바꾸지 않도록 일반 변수명은 루프 스텝에 두지 않는다.
   assert.doesNotMatch(loopStep, /^\s*OWNED_BRAND_ESCALATION_MODEL:/m);
 });
+
+// 11-05: quota 소진으로 08:42~17:00 정지 → 리셋 뒤 빠른 감시가 6시간만 봐서 10:21 부정 댓글을 놓칠 뻔했다.
+test('소유채널 빠른 감시는 최근 12시간 이상을 본다(할당량 정지 뒤 따라잡기)', () => {
+  const yml = readFileSync(new URL('../.github/workflows/monitor.yml', import.meta.url), 'utf8');
+  const hours = Number(yml.match(/YOUTUBE_OWNER_FAST_LOOKBACK_HOURS: '(\d+)'/)?.[1]);
+  assert.ok(hours >= 12, `lookback=${hours}`);
+});
