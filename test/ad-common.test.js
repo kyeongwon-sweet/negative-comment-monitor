@@ -23,6 +23,10 @@ test('인지 광고 캠페인명·소재명 블트하/제과는 JG로 분류하�
   assert.equal(awarenessProductName('JD', '[제과] 블트하 인지', '소재'), 'JG');
   assert.equal(awarenessProductName('JD', '', '[26.09] 블트하 소재'), 'JG');
   assert.equal(awarenessProductName('JD복', '[제과] 블트하 인지', 'JD복 소재'), 'JD복');
+  // JD그사(그릭사과 쫀득바)도 같은 보호 — 파인트·제과 단어가 섞인 캠페인이어도 쫀득바로 남는다.
+  assert.equal(awarenessProductName('JD', '[빙과] 파인트·쫀득바 인지', '[26.11]F_V_JD그사_소재'), 'JD');
+  assert.equal(awarenessProductName('JD', '[제과] 블트하 인지', '[26.11]F_V_JD그사_소재'), 'JD');
+  assert.equal(awarenessProductName('JD그사', '[빙과] 파인트 인지', '소재'), 'JD그사');
   // 대표님 지정: 맛피아·감자스틱도 제과(JG)다.
   assert.equal(awarenessProductName('JD', '[제과] 맛피아 인지', '소재'), 'JG');
   assert.equal(awarenessProductName('JD', '', '감자스틱 소재'), 'JG');

@@ -59,6 +59,7 @@ test('hasProductName: 상품명 없으면 false(빈값·공백·미지정), 있�
 
 test('productGroup: JD 포함=jd, P로 시작=p, 그 외=other', () => {
   assert.equal(productGroup('JD멜'), 'jd');
+  assert.equal(productGroup('JD그사'), 'jd'); // 그릭사과 쫀득바(2026-11)
   assert.equal(productGroup('JD망'), 'jd');
   assert.equal(productGroup('P혼'), 'p');
   assert.equal(productGroup('P망'), 'p');

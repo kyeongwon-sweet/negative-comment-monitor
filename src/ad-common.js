@@ -5,11 +5,12 @@ import { kstDateKey } from './schedule.js';
 
 // 인지 광고는 어댑터 config의 고정 상품(JD)보다 실제 캠페인 정체성이 우선한다.
 // Meta는 campaign_name이 없을 수 있어 소재명(adTitle)을 보조 신호로 사용한다.
-// JD복(쫀득바 상품)은 캠페인명에 파인트·제과 단어가 섞여도 다른 상품군으로 오분류하지 않는다(상품 분류 보호. 담당자 최우선 규칙은 2026-10-22 제거).
+// JD복·JD그사(쫀득바 상품)는 캠페인명에 파인트·제과 단어가 섞여도 다른 상품군으로 오분류하지 않는다(상품 분류 보호. 담당자 최우선 규칙은 2026-10-22 제거).
+// JD그사 = 리얼 그릭사과 쫀득바(2026-11 출시, 사용자 지시 "JD그사도 쫀득바로 분류").
 export function awarenessProductName(defaultProductName, campaignName = '', adTitle = '') {
   const fallback = String(defaultProductName || '').trim();
   const identity = `${String(campaignName || '')} ${String(adTitle || '')}`;
-  if (/JD복/i.test(`${fallback} ${identity}`)) return fallback;
+  if (/JD(?:복|그사)/i.test(`${fallback} ${identity}`)) return fallback;
   if (/블트하|제과|맛피아|감자스틱/i.test(identity)) return 'JG';
   // 파인트 캠페인은 '파인트' 대신 상품 코드 'P팝'만 적히기도 한다(10-30 사용자 확인). 'P바치'(바치케)는 별개.
   return /파인트|(?:^|[^A-Za-z0-9가-힣])P팝/i.test(identity) ? 'P' : fallback;
