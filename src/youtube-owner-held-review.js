@@ -25,6 +25,10 @@ import { matchesOwnedHardHostility } from './classify.js';
 
 const LEDGER_PREFIX = 'held-review:';
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function isYouTubeQuotaExhausted(error) {
   return /quotaExceeded|dailyLimitExceeded/i.test(String(error?.message || error || ''));
 }
@@ -48,6 +52,9 @@ export function loadHeldReviewConfig(env = process.env, now = Date.now()) {
     heldReviewChannels: parseHeldReviewChannels(env.HELD_REVIEW_CHANNELS),
     heldReviewDryRun: String(env.HELD_REVIEW_DRY_RUN || 'true').toLowerCase() !== 'false',
     heldReviewModel: String(env.HELD_REVIEW_MODEL || base.ownedBrandEscalationModel || 'gemini-3.5-flash-lite').trim(),
+    // 강한 승인 모델이 일시 제한·장애일 때도 공개 지연이 무한 누적되지 않게 운영 기본 모델로 재판정한다.
+    // 두 모델 모두 실패하면 기존처럼 fail-closed(아무것도 공개하지 않음)다.
+    heldReviewFallbackModel: String(env.HELD_REVIEW_FALLBACK_MODEL || base.geminiModel || 'gemini-3.1-flash-lite').trim(),
     heldReviewMaxPages: Math.max(1, Math.min(50, Number(env.HELD_REVIEW_MAX_PAGES || 20))),
     // 보류함은 최근 이 시간치만 읽는다(페이지 전체가 이보다 오래되면 중단). 15분마다 전체를 읽으면 채널을 늘릴 때
     // 일일 quota 10,000을 넘는다(11-03 먹짱언니 확대 전 계산). 72h = 승인 봇이 사흘 연속 멈춰도 따라잡는 여유.
@@ -191,16 +198,23 @@ export function buildApprovePrompt(comments) {
     + '\n\nJSON 배열로만 답하세요: [{"i":번호,"approve":true|false,"reason":"공개 안 하면 한줄 이유(공개면 빈 문자열)"}]';
 }
 
-// 반환: [{approve, reason}] 또는 null(실패 → 아무것도 공개하지 않음).
-export async function judgeApprovals(config, comments, fetchImpl = fetch, now = Date.now()) {
-  if (!comments.length) return [];
-  if (!config.geminiKey) return null;
-  const out = [];
-  for (let start = 0; start < comments.length; start += 25) {
-    const chunk = comments.slice(start, start + 25);
+function approvalModels(config) {
+  return [...new Set([
+    String(config.heldReviewModel || '').trim(),
+    String(config.heldReviewFallbackModel || config.geminiModel || '').trim(),
+  ].filter(Boolean))];
+}
+
+async function requestApprovalChunk(config, chunk, model, fetchImpl, now, sleep) {
+  const maxAttempts = Math.max(1, Math.min(5, Number(config.geminiMaxAttempts || 1)));
+  const baseDelayMs = Math.max(0, Number(config.geminiRetryBaseMs || 0));
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const budget = await claimGeminiRequestBudget({ ...config, geminiQuotaClass: 'escalation' }, fetchImpl, now);
-    if (!budget?.allowed) return null;
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.heldReviewModel)}:generateContent`;
+    if (!budget?.allowed) {
+      console.error(`[held-review:llm] model=${model} budget=${budget?.reason || 'denied'} — 공개 중단`);
+      return { rows: null, stop: true };
+    }
     let response;
     try {
       response = await fetchImpl(endpoint, {
@@ -208,17 +222,51 @@ export async function judgeApprovals(config, comments, fetchImpl = fetch, now = 
         headers: { 'x-goog-api-key': config.geminiKey, 'content-type': 'application/json' },
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: buildApprovePrompt(chunk) }] }],
-          generationConfig: { responseMimeType: 'application/json', responseJsonSchema: APPROVE_SCHEMA, maxOutputTokens: 2000, temperature: 0 },
+          generationConfig: { responseMimeType: 'application/json', responseJsonSchema: APPROVE_SCHEMA, maxOutputTokens: 4000, temperature: 0 },
         }),
       });
-    } catch {
-      return null;
+    } catch (error) {
+      console.error(`[held-review:llm] model=${model} attempt=${attempt}/${maxAttempts} network=${String(error?.name || 'error')}`);
+      if (attempt < maxAttempts) await sleep(baseDelayMs * (2 ** (attempt - 1)));
+      continue;
     }
-    if (!response?.ok) return null;
     const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      const code = String(data?.error?.status || data?.error?.code || 'unknown').slice(0, 80);
+      console.error(`[held-review:llm] model=${model} attempt=${attempt}/${maxAttempts} http=${response.status} code=${code}`);
+      if ((response.status === 429 || response.status >= 500) && attempt < maxAttempts) {
+        await sleep(baseDelayMs * (2 ** (attempt - 1)));
+        continue;
+      }
+      break;
+    }
     const text = (data?.candidates || []).flatMap((c) => c?.content?.parts || []).map((p) => p?.text || '').join('');
     let rows;
     try { rows = JSON.parse(String(text).match(/\[[\s\S]*\]/)?.[0] || 'null'); } catch { rows = null; }
+    if (Array.isArray(rows)) return { rows, stop: false };
+    const finish = String(data?.candidates?.[0]?.finishReason || 'invalid-json').slice(0, 80);
+    console.error(`[held-review:llm] model=${model} attempt=${attempt}/${maxAttempts} response=${finish}`);
+    if (attempt < maxAttempts) await sleep(baseDelayMs * (2 ** (attempt - 1)));
+  }
+  return { rows: null, stop: false };
+}
+
+// 반환: [{approve, reason}] 또는 null(실패 → 아무것도 공개하지 않음).
+export async function judgeApprovals(config, comments, fetchImpl = fetch, now = Date.now(), { sleep = wait } = {}) {
+  if (!comments.length) return [];
+  if (!config.geminiKey) return null;
+  const out = [];
+  for (let start = 0; start < comments.length; start += 25) {
+    const chunk = comments.slice(start, start + 25);
+    let rows = null;
+    for (const model of approvalModels(config)) {
+      const result = await requestApprovalChunk(config, chunk, model, fetchImpl, now, sleep);
+      if (result.stop) return null;
+      if (result.rows) {
+        rows = result.rows;
+        break;
+      }
+    }
     if (!Array.isArray(rows)) return null;
     const byIndex = new Map(rows.filter((r) => Number.isInteger(r?.i)).map((r) => [r.i, r]));
     for (let i = 0; i < chunk.length; i += 1) {

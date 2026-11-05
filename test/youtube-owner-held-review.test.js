@@ -50,6 +50,22 @@ test('공개 판정: 응답 누락은 보류, 호출 실패는 null(아무것도
   assert.equal(await judgeApprovals({ geminiKey: '', heldReviewModel: 'm' }, [{ text: 'a' }], ok), null);
 });
 
+test('공개 판정: 강한 모델의 일시 오류를 재시도한 뒤 운영 모델로 안전하게 폴백한다', async () => {
+  const models = [];
+  const fetchImpl = async (input) => {
+    const model = decodeURIComponent(String(input).match(/models\/([^:]+):/)?.[1] || '');
+    models.push(model);
+    if (model === 'strong') return { ok: false, status: 503, json: async () => ({ error: { status: 'UNAVAILABLE' } }) };
+    return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: '[{"i":0,"approve":true,"reason":""}]' }] } }] }) };
+  };
+  const verdicts = await judgeApprovals({
+    geminiKey: 'k', heldReviewModel: 'strong', heldReviewFallbackModel: 'stable',
+    geminiMaxAttempts: 2, geminiRetryBaseMs: 0,
+  }, [{ text: '맛있겠다' }], fetchImpl);
+  assert.deepEqual(models, ['strong', 'strong', 'stable']);
+  assert.equal(verdicts[0].approve, true);
+});
+
 test('공개 프롬프트에 사람 기준(유행 부정·출연자 비하·장면 반박)이 들어간다', () => {
   const prompt = buildApprovePrompt([{ text: 'x' }]);
   for (const phrase of ['나만 모름', '싸가지가 없네', '품절 아니던데', '그게 뭔데', '조금이라도 애매하면 공개하지 마세요']) assert.ok(prompt.includes(phrase), phrase);
