@@ -36,6 +36,9 @@ export function loadPublicAuditConfig(env = process.env, now = Date.now()) {
     // 카드에 [숨김] 버튼이 붙도록 소유 YouTube·위성채널을 관리 카테고리로 취급한다(owner OAuth 숨김 경로).
     managedChannelCategories: [...managed],
     publicAuditDryRun: String(env.PUBLIC_AUDIT_DRY_RUN || 'true').toLowerCase() !== 'false',
+    // 강한 모델 escalation 예산(24h 200회)은 15분 실시간 정밀판정과 공유한다. 하루 1~2회 대량 재감사가 구글 장애 때
+    // 재시도로 이를 다 쓰면(11-05 136→190) 실시간 판정이 막힌다. 재감사는 이 비율까지만 쓰고 넘는 몫은 판정 보류(다음 회차).
+    publicAuditEscalationBudgetPercent: Math.max(1, Math.min(100, Number(env.PUBLIC_AUDIT_ESCALATION_BUDGET_PERCENT || 60))),
     publicAuditMaxCards: Math.max(1, Math.min(200, Number(env.PUBLIC_AUDIT_MAX_CARDS || 30))),
     publicAuditMaxPages: Math.max(1, Math.min(100, Number(env.PUBLIC_AUDIT_MAX_PAGES || 30))),
     publicAuditMaxReplyPages: Math.max(1, Math.min(20, Number(env.PUBLIC_AUDIT_MAX_REPLY_PAGES || 5))),
@@ -237,6 +240,12 @@ async function loadOpenAuditCardIds(config, fetchImpl) {
   return ids;
 }
 
+export function publicAuditClassifyConfig(config) {
+  const shared = Math.max(1, Math.floor(Number(config.geminiEscalationRollingRequestBudget || 200)));
+  const percent = Math.max(1, Math.min(100, Number(config.publicAuditEscalationBudgetPercent || 60)));
+  return { ...config, classificationCacheReadOnly: true, geminiEscalationRollingRequestBudget: Math.max(1, Math.floor(shared * percent / 100)) };
+}
+
 export async function runPublicAudit(config, fetchImpl = fetch, now = Date.now(), classifier = undefined, options = {}) {
   const summary = {
     dryRun: config.publicAuditDryRun, channels: [], videos: 0, publicComments: 0, alreadyJudged: 0,
@@ -316,7 +325,7 @@ export async function runPublicAudit(config, fetchImpl = fetch, now = Date.now()
 
   const llmStats = {};
   const risksPerEntry = await classifyTargetsBatched(
-    fresh, { ...config, classificationCacheReadOnly: true }, classifier, llmStats, fetchImpl,
+    fresh, publicAuditClassifyConfig(config), classifier, llmStats, fetchImpl,
   );
   let classifierHash = null;
   try { classifierHash = computeClassifierHash(config); } catch { classifierHash = null; }

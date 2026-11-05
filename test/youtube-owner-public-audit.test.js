@@ -153,3 +153,13 @@ test('재감사 미처리(hold) 카드 중 아직 공개 중인 댓글 수를 �
   assert.equal(summary.openAuditCards, 2);
   assert.equal(summary.openAuditCardsStillPublic, 1, '공개 목록에 있는 decided만');
 });
+
+test('재감사는 escalation 공유 예산(200)의 60%까지만 쓴다 — 실시간 정밀판정 몫 보존(11-05 136→190)', async () => {
+  const { publicAuditClassifyConfig, loadPublicAuditConfig } = await import('../src/youtube-owner-public-audit.js');
+  const base = loadPublicAuditConfig({ SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'db', SLACK_BOT_TOKEN: 'slack', GOOGLE_ADS_CLIENT_ID: 'client', GOOGLE_ADS_CLIENT_SECRET: 'secret' });
+  assert.equal(base.publicAuditEscalationBudgetPercent, 60);
+  const cfg = publicAuditClassifyConfig(base);
+  assert.equal(cfg.geminiEscalationRollingRequestBudget, 120);
+  assert.equal(cfg.classificationCacheReadOnly, true);
+  assert.equal(publicAuditClassifyConfig({ ...base, publicAuditEscalationBudgetPercent: 50, geminiEscalationRollingRequestBudget: 300 }).geminiEscalationRollingRequestBudget, 150);
+});
