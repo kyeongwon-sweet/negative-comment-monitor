@@ -337,6 +337,8 @@ export async function runPublicAudit(config, fetchImpl = fetch, now = Date.now()
     summary.flaggedByProduct[key] = (summary.flaggedByProduct[key] || 0) + 1;
   }
   if (summary.deferred > 0) summary.errors.push(`판정 보류 ${summary.deferred}건(LLM 실패·예산) — 다음 회차 재판정`);
+  // 보류 원인(1차 LLM 실패 vs 강한 모델 승격 실패 vs 예산)을 로그에서 구분할 수 있게 숫자·사유 코드만 남긴다(공개 레포: 본문 없음).
+  summary.llm = Object.fromEntries(Object.entries(llmStats).filter(([, v]) => typeof v === 'number' || typeof v === 'boolean' || (typeof v === 'string' && v.length <= 60)));
 
   const threads = new Map();
   const nowIso = new Date(now).toISOString();
