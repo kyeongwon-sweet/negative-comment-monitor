@@ -170,16 +170,23 @@ function chunks(values, size) {
   return out;
 }
 
+// PostgREST는 limit을 크게 줘도 서버 상한(1,000행)에서 조용히 자른다. 11-05 상태표 1,758행 중 1,000행만 읽혀
+// 나머지 758개 영상이 매 회차 '처음 보는 영상'(first-scan)으로 전체 재스캔돼 quota를 태웠다 → 고유 정렬키로 페이지를 넘긴다.
 export async function loadOwnerVideoStates(config, fetchImpl = fetch) {
-  const response = await fetchImpl(
-    `${config.supabaseUrl}/rest/v1/youtube_owner_video_state?select=channel_id,video_id,comment_count,last_scanned_count,last_scanned_at&limit=10000`,
-    { headers: headers(config) },
-  );
-  if (!response.ok) {
-    throw new Error(`YouTube owner state GET failed (${response.status}); run supabase/008_youtube_owner_video_state.sql`);
+  const states = new Map();
+  for (let offset = 0; ; offset += 1000) {
+    const response = await fetchImpl(
+      `${config.supabaseUrl}/rest/v1/youtube_owner_video_state?select=channel_id,video_id,comment_count,last_scanned_count,last_scanned_at&order=channel_id.asc,video_id.asc&offset=${offset}&limit=1000`,
+      { headers: headers(config) },
+    );
+    if (!response.ok) {
+      throw new Error(`YouTube owner state GET failed (${response.status}); run supabase/008_youtube_owner_video_state.sql`);
+    }
+    const rows = await response.json();
+    for (const row of rows || []) states.set(String(row.video_id), row);
+    if (!Array.isArray(rows) || rows.length < 1000) break;
   }
-  const rows = await response.json();
-  return new Map(rows.map((row) => [String(row.video_id), row]));
+  return states;
 }
 
 // 같은 (channel_id, video_id)가 한 배열에 두 번 들어가면 Postgres가 ON CONFLICT DO UPDATE 전체를

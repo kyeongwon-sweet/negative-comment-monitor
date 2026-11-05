@@ -123,12 +123,18 @@ async function loadYouTubeAlertRows(config, fetchImpl) {
 
 async function loadOwnerYouTubeAlertRows(config, ownerVideoIds, fetchImpl) {
   if (!ownerVideoIds.size) return [];
-  const url = `${config.supabaseUrl}/rest/v1/negative_comment_alerts`
-    + `?select=post_url,slack_ts,review_decision&source=is.null`
-    + `&slack_channel_id=eq.${encodeURIComponent(config.slackChannelId)}&limit=2000`;
-  const response = await fetchImpl(url, { headers: headers(config) });
-  if (!response.ok) throw new Error(`Owner alert lookup failed (${response.status})`);
-  return (await response.json()).filter((row) => {
+  const rows = [];
+  for (let offset = 0; ; offset += 1000) {
+    const url = `${config.supabaseUrl}/rest/v1/negative_comment_alerts`
+      + `?select=id,post_url,slack_ts,review_decision&source=is.null`
+      + `&slack_channel_id=eq.${encodeURIComponent(config.slackChannelId)}&order=id.asc&offset=${offset}&limit=1000`;
+    const response = await fetchImpl(url, { headers: headers(config) });
+    if (!response.ok) throw new Error(`Owner alert lookup failed (${response.status})`);
+    const page = await response.json();
+    rows.push(...(page || []));
+    if (!Array.isArray(page) || page.length < 1000) break;
+  }
+  return rows.filter((row) => {
     const key = extractPostKey(row.post_url);
     return key.startsWith('yt:') && ownerVideoIds.has(key.slice(3));
   });
@@ -139,11 +145,18 @@ async function loadOwnerVideoIds(config, fetchImpl) {
     .filter((channel) => channel.channelCategory === '소유 YouTube')
     .map((channel) => channel.channelId);
   const filter = encodeURIComponent(`(${channelIds.join(',')})`);
-  const url = `${config.supabaseUrl}/rest/v1/youtube_owner_video_state`
-    + `?select=video_id,channel_id&channel_id=in.${filter}&limit=10000`;
-  const response = await fetchImpl(url, { headers: headers(config) });
-  if (!response.ok) throw new Error(`Owner video state lookup failed (${response.status})`);
-  return new Set((await response.json()).map((row) => String(row.video_id || '')).filter(Boolean));
+  // 서버 상한 1,000행에서 조용히 잘리지 않게 고유 정렬키로 페이지를 넘긴다(11-05 상태표 1,758행).
+  const ids = new Set();
+  for (let offset = 0; ; offset += 1000) {
+    const url = `${config.supabaseUrl}/rest/v1/youtube_owner_video_state`
+      + `?select=video_id,channel_id&channel_id=in.${filter}&order=channel_id.asc,video_id.asc&offset=${offset}&limit=1000`;
+    const response = await fetchImpl(url, { headers: headers(config) });
+    if (!response.ok) throw new Error(`Owner video state lookup failed (${response.status})`);
+    const rows = await response.json();
+    for (const row of rows || []) if (row?.video_id) ids.add(String(row.video_id));
+    if (!Array.isArray(rows) || rows.length < 1000) break;
+  }
+  return ids;
 }
 
 async function loadGoogleAdsVideoCreativeMap(config, fetchImpl) {

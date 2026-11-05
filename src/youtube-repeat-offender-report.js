@@ -500,12 +500,19 @@ export function excludeKeptCandidates(candidates, decisions = new Map()) {
 async function loadKeepDecisions(config, fetchImpl) {
   if (!config.supabaseUrl || !config.supabaseKey) return { decisions: new Map(), error: 'supabase not configured' };
   try {
-    const response = await fetchImpl(
-      `${config.supabaseUrl}/rest/v1/cost_usage_ledger?select=run_key&run_key=like.${REPEAT_OFFENDER_KEEP_PREFIX}:*&limit=10000`,
-      { headers: headers(config) },
-    );
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return { decisions: parseKeepDecisions((await response.json()).map((row) => row.run_key)), error: '' };
+    // 서버 상한 1,000행에서 조용히 잘리지 않게 페이지를 넘긴다(잘리면 '두기' 결정이 빠져 다시 카드·차단 대상이 된다).
+    const keys = [];
+    for (let offset = 0; ; offset += 1000) {
+      const response = await fetchImpl(
+        `${config.supabaseUrl}/rest/v1/cost_usage_ledger?select=run_key&run_key=like.${REPEAT_OFFENDER_KEEP_PREFIX}:*&order=run_key.asc&offset=${offset}&limit=1000`,
+        { headers: headers(config) },
+      );
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const rows = await response.json();
+      keys.push(...(rows || []).map((row) => row.run_key));
+      if (!Array.isArray(rows) || rows.length < 1000) break;
+    }
+    return { decisions: parseKeepDecisions(keys), error: '' };
   } catch (error) {
     // 리포트는 카드가 더 올라갈 뿐이라 계속 진행하지만, 대량 차단은 이 오류가 있으면 멈춘다.
     console.error(`[repeat-offender] 두기 결정 조회 실패: ${error.message}`);
