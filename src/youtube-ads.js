@@ -4,6 +4,7 @@ import { loadMetaAdsConfig } from './meta-ads.js';
 import { campaignNameMatchesFilter } from './normalize.js';
 import { videoAssigneeFromAdTitle } from './slack.js';
 import { awarenessProductName } from './ad-common.js';
+import { kstDateKey } from './schedule.js';
 
 export const YOUTUBE_AD_SOURCE = 'youtube_ads';
 export const DEFAULT_GOOGLE_ADS_API_BASE = 'https://googleads.googleapis.com';
@@ -451,6 +452,55 @@ function commentAfter(comment, cutoffMs) {
   return !Number.isFinite(parsed) || parsed >= cutoffMs;
 }
 
+// 댓글 수 변화 감지(11-05 quota 절감): 인지광고 영상 996개를 매일 전부 읽어(영상당 1+ unit, 하루 ~1,100)
+// 14일 안 댓글이 있던 건 75개뿐이었다. videos.list 통계의 commentCount를 원장 키(yt-ad-count:<영상>:<개수>)로
+// 기억해, 0개이거나 지난번과 같은 영상은 댓글을 다시 읽지 않는다. 원장 조회·기록 실패는 기존처럼 전부 읽는다(fail-open).
+const AD_COUNT_PREFIX = 'yt-ad-count:';
+const adCountKey = (videoId, count) => `${AD_COUNT_PREFIX}${videoId}:${count}`;
+
+function adCountLedgerEnabled(config) {
+  return Boolean(config.supabaseUrl && config.supabaseKey) && config.youtubeAdsCountDelta !== false;
+}
+
+async function loadSeenAdCountKeys(config, keys, fetchImpl) {
+  const seen = new Set();
+  if (!keys.length || !adCountLedgerEnabled(config)) return seen;
+  try {
+    for (let i = 0; i < keys.length; i += 100) {
+      const list = keys.slice(i, i + 100).map((key) => `"${key.replace(/"/g, '')}"`).join(',');
+      const response = await fetchImpl(
+        `${config.supabaseUrl}/rest/v1/cost_usage_ledger?select=run_key&run_key=${encodeURIComponent(`in.(${list})`)}`,
+        { headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}` } },
+      );
+      if (!response.ok) return new Set();
+      for (const row of await response.json()) seen.add(String(row.run_key));
+    }
+  } catch {
+    return new Set();
+  }
+  return seen;
+}
+
+// 판정까지 끝난 영상만 기록한다(LLM 판정 보류 댓글이 있으면 기록하지 않아 다음 실행이 다시 읽고 재판정).
+export async function recordAdCountKeys(config, keys, now, fetchImpl = fetch) {
+  const unique = [...new Set(keys)];
+  if (!unique.length || !adCountLedgerEnabled(config)) return;
+  try {
+    for (let i = 0; i < unique.length; i += 500) {
+      await fetchImpl(`${config.supabaseUrl}/rest/v1/cost_usage_ledger?on_conflict=run_key`, {
+        method: 'POST',
+        headers: {
+          apikey: config.supabaseKey,
+          Authorization: `Bearer ${config.supabaseKey}`,
+          'Content-Type': 'application/json',
+          Prefer: 'resolution=ignore-duplicates,return=minimal',
+        },
+        body: JSON.stringify(unique.slice(i, i + 500).map((run_key) => ({ run_key, kst_date: kstDateKey(now), apify_usd: 0, anthropic_usd: 0 }))),
+      });
+    }
+  } catch { /* 기록 실패 = 다음 실행에서 그 영상을 다시 읽을 뿐(안전) */ }
+}
+
 export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Date.now()) {
   const adsToken = await refreshGoogleAccessToken(config, config.googleAdsRefreshToken, fetchImpl);
   const youtubeToken = await refreshGoogleAccessToken(config, config.youtubeRefreshToken, fetchImpl);
@@ -487,7 +537,23 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
   const safeCutoff = Number.isFinite(cutoffMs) ? cutoffMs : 0;
   const entries = [];
   let commentCount = 0;
+  let skippedNoComments = 0;
+  let skippedUnchanged = 0;
+  const countOf = (video) => {
+    const raw = video.statistics?.commentCount;
+    const n = raw === undefined || raw === null || raw === '' ? Number.NaN : Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  const seenCountKeys = await loadSeenAdCountKeys(
+    config,
+    videos.filter((video) => countOf(video) > 0).map((video) => adCountKey(video.id, countOf(video))),
+    fetchImpl,
+  );
+  const scannedCountKeys = [];
   for (const video of videos) {
+    const knownCount = countOf(video);
+    if (knownCount === 0) { skippedNoComments += 1; continue; }
+    if (knownCount !== null && seenCountKeys.has(adCountKey(video.id, knownCount))) { skippedUnchanged += 1; continue; }
     const totalComments = Number(video.statistics?.commentCount);
     const highComment = Number.isFinite(totalComments)
       && totalComments >= config.youtubeAdsHighCommentThreshold;
@@ -497,6 +563,7 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
     const comments = (await fetchYouTubeVideoComments(scanConfig, video.id, youtubeToken, fetchImpl))
       .filter((comment) => comment.text.trim() && commentAfter(comment, safeCutoff));
     commentCount += comments.length;
+    if (knownCount !== null) scannedCountKeys.push({ videoId: video.id, key: adCountKey(video.id, knownCount) });
     if (!comments.length) continue;
     const campaignNames = video.adAsset?.campaignNames || [];
     const adNames = video.adAsset?.adNames || [];
@@ -539,6 +606,9 @@ export async function buildYouTubeAdEntries(config, fetchImpl = fetch, now = Dat
     });
   }
   return {
+    countKeys: scannedCountKeys,
+    skippedNoComments,
+    skippedUnchanged,
     customers: customerIds.length,
     campaigns: campaigns.length,
     assets: assets.length,

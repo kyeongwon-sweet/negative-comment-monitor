@@ -8,7 +8,8 @@ import { kstDateKey } from './schedule.js';
 import { computeClassifierHash } from './cache.js';
 import { estimateUsd } from './pricing.js';
 import { maybeAlertCosts, postCostWarning, recordRunCost, sumDailyCost } from './cost.js';
-import { buildYouTubeAdEntries, loadYouTubeAdsConfig } from './youtube-ads.js';
+import { buildYouTubeAdEntries, loadYouTubeAdsConfig, recordAdCountKeys } from './youtube-ads.js';
+import { isLlmDeferred } from './hybrid-classify.js';
 import { adClassificationLedgerKey, inAdMorningWindow, dailyAdRunKey, hasAdRunToday } from './ad-common.js';
 import { moderateYouTubeOwnerAlerts } from './youtube-owner-moderation.js';
 import { monitorLlmHealth } from './llm-health.js';
@@ -97,8 +98,9 @@ export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl =
   }
 
   const collected = await buildYouTubeAdEntries(config, fetchImpl, now);
+  const { countKeys = [], ...collectedSummary } = collected;
   const summary = {
-    ...collected,
+    ...collectedSummary,
     entries: collected.entries.length,
     sentAlerts: 0,
     managedAlerts: 0,
@@ -106,6 +108,7 @@ export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl =
   };
   if (!collected.entries.length) {
     if (!config.dryRun) {
+      await recordAdCountKeys(config, countKeys.map((k) => k.key), now, fetchImpl);
       await autoHideYouTubeAlerts(config, summary, fetchImpl, now);
       await recordRunCost(config, {
         runKey: youtubeDailyRunKey(config, now), kstDate: kstDateKey(now), apifyUsd: 0, anthropicUsd: 0,
@@ -160,6 +163,14 @@ export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl =
       if (target.isManagedAccount) summary.managedAlerts += 1;
       else summary.externalAlerts += 1;
     }
+  }
+
+  // 댓글 수 원장: 알림까지 끝난 뒤, 판정 보류(LLM 실패·예산) 댓글이 없는 영상만 기록한다.
+  if (!config.dryRun) {
+    const deferredVideos = new Set(collected.entries
+      .filter((entry, i) => (risksPerEntry[i] || []).some((risk) => isLlmDeferred(risk)))
+      .map((entry) => String(entry.target.youtubeVideoId || '')));
+    await recordAdCountKeys(config, countKeys.filter((k) => !deferredVideos.has(String(k.videoId))).map((k) => k.key), now, fetchImpl);
   }
 
   const estimatedUsd = estimateUsd(llmStats, config.anthropicModel);

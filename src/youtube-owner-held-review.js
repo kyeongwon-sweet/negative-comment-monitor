@@ -54,6 +54,9 @@ export function loadHeldReviewConfig(env = process.env, now = Date.now()) {
     heldReviewLookbackHours: Math.max(1, Math.min(24 * 30, Number(env.HELD_REVIEW_LOOKBACK_HOURS || 72))),
     // 공개 직전 2차 관문: 빠른 감시·소유채널 모니터와 같은 부정 분류기에도 걸리지 않아야 공개한다(기본 켬).
     heldReviewNegativeGate: String(env.HELD_REVIEW_NEGATIVE_GATE || 'true').toLowerCase() !== 'false',
+    // 공개 주기(분). 15분 루프·시간별 단독 잡이 같은 칸(slot)을 원장으로 선점해 이 주기에 한 번만 돈다(11-05 quota 절감:
+    // 공개 요청 50 unit/채널·보류함 읽기를 4분의 1로). 좋은 댓글이 보이기까지 최대 이 시간 걸린다. 0=매 회차.
+    heldReviewEveryMinutes: Math.max(0, Math.min(24 * 60, Number(env.HELD_REVIEW_EVERY_MINUTES ?? 60) || 0)),
   };
 }
 
@@ -382,11 +385,34 @@ async function postDigest(config, kept, now, fetchImpl) {
   return posted;
 }
 
+// 주기 칸 선점: floor(now / 주기) 칸을 원장 키로 한 번만 잡는다(시각 문자열 없이 숫자 칸 — 시간대 무관).
+// 선점 조회가 실패하면 그 회차는 돈다(fail-open: 승인이 늦어지는 것보다 기존 동작 유지).
+export async function claimHeldReviewSlot(config, now = Date.now(), fetchImpl = fetch) {
+  const minutes = Math.max(1, Number(config.heldReviewEveryMinutes) || 60);
+  const runKey = `held-review-slot:${minutes}:${Math.floor(now / (minutes * 60 * 1000))}`;
+  try {
+    const response = await fetchImpl(`${config.supabaseUrl}/rest/v1/cost_usage_ledger?on_conflict=run_key`, {
+      method: 'POST',
+      headers: sbHeaders(config, { 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=representation' }),
+      body: JSON.stringify({ run_key: runKey, kst_date: kstDateKey(now), apify_usd: 0, anthropic_usd: 0 }),
+    });
+    if (!response.ok) return { claimed: true, runKey, failOpen: true };
+    const rows = await response.json().catch(() => null);
+    return { claimed: !Array.isArray(rows) || rows.length > 0, runKey };
+  } catch {
+    return { claimed: true, runKey, failOpen: true };
+  }
+}
+
 export async function runHeldReview(config, fetchImpl = fetch, now = Date.now(), classifier = undefined) {
   const summary = { dryRun: config.heldReviewDryRun, model: config.heldReviewModel, channels: [], errors: [] };
   if (!config.heldReviewChannels.length) return { ...summary, note: 'HELD_REVIEW_CHANNELS 비어 있음(기능 꺼짐)' };
   // quota 브레이크: 사용률이 높으면 이 회차는 건너뛴다(보류함 읽기 + 공개 50 unit/요청). 보류 댓글은 비공개로
   // 안전하게 기다렸다가 리셋 뒤 회차가 공개한다. 남은 quota는 부정 댓글 찾기·숨기기 몫.
+  if (!config.heldReviewDryRun && config.heldReviewEveryMinutes > 0) {
+    const slot = await claimHeldReviewSlot(config, now, fetchImpl);
+    if (!slot.claimed) return { ...summary, skipped: `slot-taken(${config.heldReviewEveryMinutes}m)` };
+  }
   if (!config.heldReviewDryRun) {
     const brake = await quotaBrakeEngaged({ supabaseUrl: config.supabaseUrl, supabaseKey: config.supabaseKey, ratio: config.quotaBrakeRatio }, fetchImpl, now);
     if (brake.engaged) return { ...summary, skipped: `quota-brake(${brake.reason})` };

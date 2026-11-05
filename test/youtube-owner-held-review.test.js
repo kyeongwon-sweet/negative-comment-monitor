@@ -290,3 +290,36 @@ test('quota 브레이크: 사용률이 높으면 승인 봇 회차를 건너뛴�
   assert.equal(threadReads, 0);
   assert.deepEqual(calls.publish, []);
 });
+
+// 11-05 quota 절감: 승인 봇은 주기(기본 60분) 칸을 원장으로 선점해 그 칸에 한 번만 돈다(15분 루프·시간별 잡 공용).
+function slotWorld(taken) {
+  const base = fakeWorld();
+  let threadReads = 0;
+  const slots = [];
+  const fetchImpl = async (url, init = {}) => {
+    const u = decodeURIComponent(String(url));
+    if (u.includes('/commentThreads')) threadReads += 1;
+    if (u.includes('cost_usage_ledger') && init.method === 'POST' && String(init.body).includes('held-review-slot:')) {
+      slots.push(JSON.parse(init.body).run_key);
+      return { ok: true, status: 201, json: async () => (taken ? [] : [JSON.parse(init.body)]) };
+    }
+    return base.fetchImpl(url, init);
+  };
+  return { ...base, fetchImpl, reads: () => threadReads, slots };
+}
+
+test('승인 봇 주기: 이번 칸을 이미 다른 회차가 잡았으면 보류함을 읽지 않고 건너뛴다', async () => {
+  const w = slotWorld(true);
+  const summary = await runHeldReview({ ...BASE, heldReviewEveryMinutes: 60 }, w.fetchImpl, Date.parse('2026-10-29T05:10:00Z'));
+  assert.match(summary.skipped, /slot-taken\(60m\)/);
+  assert.equal(w.reads(), 0);
+  assert.deepEqual(w.calls.publish, []);
+});
+
+test('승인 봇 주기: 새 칸이면 평소대로 돌고, 칸 키는 시각 문자열이 아닌 숫자 칸이다', async () => {
+  const w = slotWorld(false);
+  const now = Date.parse('2026-10-29T05:10:00Z');
+  await runHeldReview({ ...BASE, heldReviewEveryMinutes: 60 }, w.fetchImpl, now);
+  assert.deepEqual(w.calls.publish, ['good']);
+  assert.deepEqual(w.slots, [`held-review-slot:60:${Math.floor(now / 3600000)}`]);
+});

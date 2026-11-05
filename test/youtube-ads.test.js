@@ -306,3 +306,70 @@ test('hasYouTubeAdsRunToday skips only when the daily success row exists and fai
   assert.equal(found, true);
   assert.equal(await hasYouTubeAdsRunToday(config, now, async () => jsonResponse({}, 500)), false);
 });
+
+// 11-05 quota 절감: 인지광고 영상 996개를 매일 전부 읽었고(하루 ~1,100 unit) 14일 안 댓글은 75개 영상뿐이었다.
+// 댓글 0개이거나 지난번과 댓글 수가 같은 영상은 댓글을 다시 읽지 않는다.
+test('인지광고: 댓글 0개·댓글 수 변화 없는 영상은 commentThreads를 부르지 않고, 바뀐 영상만 읽어 원장 키를 돌려준다', async () => {
+  const threadReads = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    if (url.hostname === 'oauth2.googleapis.com') return jsonResponse({ access_token: 'tok' });
+    if (url.hostname === 'googleads.test') {
+      const query = JSON.parse(init.body).query;
+      if (query.includes('FROM customer_client')) return jsonResponse([{ results: [{ customerClient: { id: '815', clientCustomer: 'customers/815', manager: false, level: '1', status: 'ENABLED' } }] }]);
+      if (query.includes('FROM campaign ')) return jsonResponse([{ results: [{ campaign: { id: 'cp1', name: '[빙과] 인지', status: 'ENABLED', advertisingChannelType: 'VIDEO' } }] }]);
+      if (query.includes('FROM ad_group_ad_asset_view')) {
+        return jsonResponse([{ results: ['v0', 'v1', 'v2'].map((id) => ({
+          campaign: { id: 'cp1', name: '[빙과] 인지' }, adGroupAd: { ad: { name: `[26.11]F_V_JD_인지_${id}` } },
+          asset: { resourceName: `customers/815/assets/${id}`, youtubeVideoAsset: { youtubeVideoId: id, youtubeVideoTitle: id } },
+        })) }]);
+      }
+      return jsonResponse([{ results: [] }]);
+    }
+    if (url.hostname === 'db.test') {
+      // 원장: v1은 지난번에도 댓글 5개였다.
+      if (!init.method) return jsonResponse([{ run_key: 'yt-ad-count:v1:5' }]);
+      return jsonResponse(null, 201);
+    }
+    if (url.pathname.endsWith('/channels')) return jsonResponse({ items: [{ id: 'channel-1', snippet: { title: '라라스윗' } }] });
+    if (url.pathname.endsWith('/videos')) {
+      return jsonResponse({ items: [
+        { id: 'v0', snippet: { channelId: 'channel-1', title: 'v0' }, statistics: { commentCount: '0' } },
+        { id: 'v1', snippet: { channelId: 'channel-1', title: 'v1' }, statistics: { commentCount: '5' } },
+        { id: 'v2', snippet: { channelId: 'channel-1', title: 'v2' }, statistics: { commentCount: '3' } },
+      ] });
+    }
+    if (url.pathname.endsWith('/commentThreads')) {
+      threadReads.push(url.searchParams.get('videoId'));
+      return jsonResponse({ items: [{ id: 't', snippet: { totalReplyCount: 0, topLevelComment: { id: 'c1', snippet: { textOriginal: '별로', publishedAt: '2026-11-05T00:00:00Z' } } } }] });
+    }
+    throw new Error(`unexpected URL ${url}`);
+  };
+  const result = await buildYouTubeAdEntries({ ...CFG, supabaseUrl: 'https://db.test', supabaseKey: 'k' }, fetchImpl, Date.parse('2026-11-05T01:00:00Z'));
+  assert.deepEqual(threadReads, ['v2'], '바뀐 영상만 읽는다');
+  assert.equal(result.skippedNoComments, 1);
+  assert.equal(result.skippedUnchanged, 1);
+  assert.deepEqual(result.countKeys, [{ videoId: 'v2', key: 'yt-ad-count:v2:3' }]);
+});
+
+test('인지광고: 원장 조회가 실패하면 예전처럼 댓글 있는 영상을 전부 읽는다(fail-open)', async () => {
+  const threadReads = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    if (url.hostname === 'db.test') throw new Error('db down');
+    if (url.hostname === 'oauth2.googleapis.com') return jsonResponse({ access_token: 'tok' });
+    if (url.hostname === 'googleads.test') {
+      const query = JSON.parse(init.body).query;
+      if (query.includes('FROM customer_client')) return jsonResponse([{ results: [{ customerClient: { id: '815', clientCustomer: 'customers/815', manager: false, level: '1', status: 'ENABLED' } }] }]);
+      if (query.includes('FROM campaign ')) return jsonResponse([{ results: [{ campaign: { id: 'cp1', name: '[빙과] 인지', status: 'ENABLED', advertisingChannelType: 'VIDEO' } }] }]);
+      if (query.includes('FROM ad_group_ad_asset_view')) return jsonResponse([{ results: [{ campaign: { id: 'cp1', name: '[빙과] 인지' }, adGroupAd: { ad: { name: 'a' } }, asset: { resourceName: 'r', youtubeVideoAsset: { youtubeVideoId: 'v1', youtubeVideoTitle: 'v1' } } }] }]);
+      return jsonResponse([{ results: [] }]);
+    }
+    if (url.pathname.endsWith('/channels')) return jsonResponse({ items: [{ id: 'channel-1', snippet: { title: '라라스윗' } }] });
+    if (url.pathname.endsWith('/videos')) return jsonResponse({ items: [{ id: 'v1', snippet: { channelId: 'channel-1', title: 'v1' }, statistics: { commentCount: '5' } }] });
+    if (url.pathname.endsWith('/commentThreads')) { threadReads.push(url.searchParams.get('videoId')); return jsonResponse({ items: [] }); }
+    throw new Error(`unexpected URL ${url}`);
+  };
+  await buildYouTubeAdEntries({ ...CFG, supabaseUrl: 'https://db.test', supabaseKey: 'k' }, fetchImpl, Date.parse('2026-11-05T01:00:00Z'));
+  assert.deepEqual(threadReads, ['v1']);
+});
