@@ -522,6 +522,61 @@ test('소유채널 빠른 감시 실패는 자동숨김·핵심 수집을 막지
   assert.equal(result.ownerFastScanFailures, 1);
 });
 
+test('quota 99%에서는 YouTube 보조 작업을 멈추되 핵심 루프와 체인은 유지한다', async () => {
+  const calls = [];
+  const result = await runMonitorLoop({
+    ...BASE_ENV,
+    MONITOR_LOOP_ITERATIONS: '1',
+    HELD_REVIEW_CHANNELS: 'UCOWNER@2026-10-29T02:32:00Z',
+    YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true',
+    YOUTUBE_OWNER_FAST_SCAN_LOOP: 'true',
+  }, {
+    gate: async () => true,
+    quotaUsage: async () => ({ total: 9900, limit: 10000, ratio: 0.99, byJob: [] }),
+    runCommand: async (_command, args) => { if (args?.[0] === 'start') calls.push('core'); },
+    runHeldReview: async () => calls.push('held'),
+    runOwnerFastScan: async () => calls.push('fast'),
+    runPendingHide: async () => calls.push('hide'),
+    runFalsePositiveRestore: async () => calls.push('restore'),
+    recordHeartbeat: async () => {},
+    sleep: async () => {},
+    chain: async () => disabledChain,
+  });
+  assert.deepEqual(calls, ['core']);
+  assert.equal(result.quotaPausedRuns, 4);
+  assert.equal(result.monitorRuns, 1);
+});
+
+test('quota 90%에서는 빠른 감시를 읽기 전용으로 유지하고 pending-hide는 우선 실행한다', async () => {
+  const scanEnvs = [];
+  const calls = [];
+  const result = await runMonitorLoop({
+    ...BASE_ENV,
+    MONITOR_LOOP_ITERATIONS: '1',
+    HELD_REVIEW_CHANNELS: 'UCOWNER@2026-10-29T02:32:00Z',
+    YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true',
+    YOUTUBE_OWNER_FAST_SCAN_LOOP: 'true',
+    YOUTUBE_OWNER_HOLD_ENFORCE: 'true',
+  }, {
+    gate: async () => false,
+    latestScan: async () => Date.now(),
+    quotaUsage: async () => ({ total: 9000, limit: 10000, ratio: 0.9, byJob: [] }),
+    runCommand: async () => {},
+    runHeldReview: async () => calls.push('held'),
+    runOwnerFastScan: async (scanEnv) => { calls.push('fast'); scanEnvs.push(scanEnv); },
+    runPendingHide: async () => calls.push('hide'),
+    runFalsePositiveRestore: async () => calls.push('restore'),
+    recordOwnerFastScanOutcome: async () => {},
+    recordPendingHideOutcome: async () => {},
+    recordHeartbeat: async () => {},
+    sleep: async () => {},
+    chain: async () => disabledChain,
+  });
+  assert.deepEqual(calls, ['fast', 'hide']);
+  assert.equal(scanEnvs[0].YOUTUBE_OWNER_HOLD_ENFORCE, 'false');
+  assert.equal(result.quotaPausedRuns, 2);
+});
+
 // 11-03: 수정 배포 후에도 이미 돌던 run이 옛 코드로 끝까지 돌아 같은 오탐을 두 번 더 냈다.
 test('master에 새 코드가 배포되면 다음 회차부터 돌지 않고 끝내 체인이 새 코드 run을 잇는다', async () => {
   const iterationsRun = [];

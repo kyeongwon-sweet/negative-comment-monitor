@@ -4,6 +4,7 @@ import {
   ownerRunFailure,
   ownerThreadRoute,
   recordOwnerLlmSoftDegraded,
+  runYouTubeOwnerChannels,
   threadRouteForOwnerTarget,
 } from '../src/youtube-owner-channel-run.js';
 import { actionDefinitions, assigneeForTarget, productGroup, productLabel } from '../src/slack.js';
@@ -69,4 +70,14 @@ test('LLM 헬스 기록 자체 실패도 soft-degraded이며 수집 장애만 ha
   const failure = ownerRunFailure(summary);
   assert.match(failure.message, /collection/);
   assert.equal(failure.summary, summary);
+});
+
+test('소유채널 3시간 딥스캔도 quota 98% 이후 수집 전에 연기된다', async () => {
+  const result = await runYouTubeOwnerChannels({}, async () => {
+    throw new Error('YouTube API를 호출하면 안 됨');
+  }, Date.parse('2026-11-05T00:00:00Z'), {
+    quotaUsage: async () => ({ total: 9800, limit: 10000, ratio: 0.98, byJob: [] }),
+  });
+  assert.equal(result.skipped, 'quota-conservation');
+  assert.deepEqual(result.channelFailures, []);
 });

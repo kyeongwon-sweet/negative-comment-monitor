@@ -8,6 +8,7 @@ import {
   quotaAlertMessage,
   quotaDayKey,
   unitsForRequest,
+  youtubeQuotaConservationPlan,
   youtubeQuotaUsage,
 } from '../src/youtube-quota-meter.js';
 
@@ -73,6 +74,22 @@ test('대량 작업 가드: 예상치를 더해 상한(기본 60%)을 넘으면 
   await assert.rejects(assertQuotaHeadroom(3000, { env: ENV, fetchImpl, now: NOW }), /quota 여유 부족/);
   await assertQuotaHeadroom(1000, { env: ENV, fetchImpl, now: NOW });
   assert.equal(await assertQuotaHeadroom(9999, { env: { ...ENV, YOUTUBE_QUOTA_GUARD_FORCE: 'true' }, fetchImpl, now: NOW }), null);
+});
+
+test('상시 감시 절약 모드는 60%부터 비숨김 작업을 멈추고 부정 숨김을 98%까지 보존한다', () => {
+  const at = (ratio) => youtubeQuotaConservationPlan({ ratio, total: ratio * 10000, limit: 10000, byJob: [] }, {});
+  assert.equal(at(0.59).heldReview, true);
+  assert.equal(at(0.60).heldReview, false);
+  assert.equal(at(0.59).fastScanHoldEnforce, true);
+  assert.equal(at(0.60).fastScanHoldEnforce, false);
+  assert.equal(at(0.97).fastScan, true);
+  assert.equal(at(0.97).pendingHide, true);
+  assert.equal(at(0.98).fastScan, false);
+  assert.equal(at(0.98).pendingHide, false);
+  assert.equal(at(0.98).ownerChannel, false);
+  assert.equal(at(0.60).youtubeAds, false);
+  assert.equal(youtubeQuotaConservationPlan(null, {}).failOpen, true);
+  assert.equal(youtubeQuotaConservationPlan({ ratio: 0.99 }, { YOUTUBE_QUOTA_GUARD_FORCE: 'true' }).ownerChannel, true);
 });
 
 test('알림 문구: 사용률·리셋 시각·상위 소비 잡', () => {

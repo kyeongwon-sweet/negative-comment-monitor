@@ -12,6 +12,7 @@ import { buildYouTubeAdEntries, loadYouTubeAdsConfig } from './youtube-ads.js';
 import { adClassificationLedgerKey, inAdMorningWindow, dailyAdRunKey, hasAdRunToday } from './ad-common.js';
 import { moderateYouTubeOwnerAlerts } from './youtube-owner-moderation.js';
 import { monitorLlmHealth } from './llm-health.js';
+import { youtubeQuotaConservationPlan, youtubeQuotaUsage } from './youtube-quota-meter.js';
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -75,9 +76,20 @@ async function autoHideYouTubeAlerts(config, summary, fetchImpl, now) {
   );
 }
 
-export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl = fetch, now = Date.now()) {
+export async function runYouTubeAds(config = loadYouTubeAdsConfig(), fetchImpl = fetch, now = Date.now(), options = {}) {
   if (!inYouTubeAdsWindow(now)) {
     return { customers: 0, campaigns: 0, assets: 0, videos: 0, comments: 0, entries: 0, sentAlerts: 0, skipped: 'outside-morning-window' };
+  }
+  // 인지광고 전수조회는 한 회차가 1천 unit 이상 들 수 있다. 기본 60% 이후에는 다음 날 lookback으로
+  // 소급 수집하고, 당일 부정댓글 탐지·숨김에 남은 quota를 양보한다. 원장 장애는 fail-open.
+  try {
+    const usage = await (options.quotaUsage || (() => youtubeQuotaUsage(process.env, fetchImpl, now)))();
+    if (!youtubeQuotaConservationPlan(usage, process.env).youtubeAds) {
+      console.error(`[youtube-ads] quota-paused ${usage.total}/${usage.limit}; deferred to next lookback run`);
+      return { customers: 0, campaigns: 0, assets: 0, videos: 0, comments: 0, entries: 0, sentAlerts: 0, skipped: 'quota-conservation' };
+    }
+  } catch (error) {
+    console.error(`[youtube-ads] quota check failed; fail-open: ${String(error.message || error).slice(0, 160)}`);
   }
   const forced = String(process.env.YOUTUBE_ADS_FORCE || '').toLowerCase() === 'true';
   if (!forced && await hasYouTubeAdsRunToday(config, now, fetchImpl)) {

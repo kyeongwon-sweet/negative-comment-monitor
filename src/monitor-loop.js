@@ -11,6 +11,11 @@ import {
   isMonitorChainRun,
   MONITOR_WATCHDOG_MAX_GAP_MINUTES,
 } from './monitor-chain.js';
+import {
+  nextQuotaResetKst,
+  youtubeQuotaConservationPlan,
+  youtubeQuotaUsage,
+} from './youtube-quota-meter.js';
 
 const MINUTE = 60 * 1000;
 const GATE_ONLY_SCHEDULES = new Set([
@@ -192,6 +197,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
   ) * MINUTE;
   const chain = options.chain || ((details) => chainNextMonitor(env, details));
   const codeIsStale = options.codeIsStale || (() => runCodeIsStale(env));
+  const readQuotaUsage = options.quotaUsage || (() => youtubeQuotaUsage(env));
   let endedForNewCode = false;
   const now = options.now || Date.now;
   let dependenciesInstalled = false;
@@ -210,6 +216,22 @@ export async function runMonitorLoop(env = process.env, options = {}) {
   let pendingHideFailures = 0;
   let falsePositiveRestoreRuns = 0;
   let falsePositiveRestoreFailures = 0;
+  let quotaPausedRuns = 0;
+
+  async function quotaPlan(iteration, component) {
+    try {
+      const usage = await readQuotaUsage();
+      const plan = youtubeQuotaConservationPlan(usage, env);
+      if (usage) {
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} quota_component=${component} youtube_quota=${usage.total}/${usage.limit} ratio=${usage.ratio.toFixed(4)}`);
+      }
+      return plan;
+    } catch (error) {
+      // 원장 조회 장애가 실제 감시를 막으면 안 된다. 기존 계량·소진 응답이 백스톱이다.
+      console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} quota_check=${component} failure=${String(error.message || error).slice(0, 160)} fail_open=true`);
+      return youtubeQuotaConservationPlan(null, env);
+    }
+  }
 
   for (let iteration = 0; iteration < iterations; iteration += 1) {
     // 진행 중인 run은 시작 시점 코드로 끝까지(최대 ~1시간) 돈다. master에 수정이 배포됐으면 남은 회차를
@@ -260,6 +282,11 @@ export async function runMonitorLoop(env = process.env, options = {}) {
     }
 
     if (heldReviewEnabled) {
+      const plan = await quotaPlan(iteration, 'held-review');
+      if (!plan.heldReview) {
+        quotaPausedRuns += 1;
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} held_review=quota-paused priority=low reset=${nextQuotaResetKst(now())}`);
+      } else {
       let heldOutcome = 'success';
       let heldReason = '15분 루프 정상';
       try {
@@ -288,14 +315,23 @@ export async function runMonitorLoop(env = process.env, options = {}) {
       } catch (error) {
         console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} held_review_health_write=failure error=${error.message}`);
       }
+      }
     }
 
     if (ownerFastScanEnabled) {
+      const plan = await quotaPlan(iteration, 'owner-fast-scan');
+      if (!plan.fastScan) {
+        quotaPausedRuns += 1;
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} owner_fast_scan=quota-paused priority=critical`);
+      } else {
       let scanOutcome = 'success';
       let scanReason = '15분 루프 정상';
       try {
         await fastScanOwners({
           ...env,
+          // 기본 60%부터는 분류·알림·pending-hide 경로는 유지하되, 정상 댓글까지 보류했다가 다시
+          // 공개하는 50-unit 왕복은 멈춘다. 부정댓글 숨김용 quota를 남기는 우선순위다.
+          YOUTUBE_OWNER_HOLD_ENFORCE: plan.fastScanHoldEnforce ? String(env.YOUTUBE_OWNER_HOLD_ENFORCE || 'true') : 'false',
           OWNED_BRAND_ESCALATION_MODEL: String(env.YOUTUBE_OWNER_FAST_ESCALATION_MODEL || env.OWNED_BRAND_ESCALATION_MODEL || '').trim(),
         });
         ownerFastScanRuns += 1;
@@ -312,9 +348,15 @@ export async function runMonitorLoop(env = process.env, options = {}) {
       } catch (error) {
         console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} owner_fast_scan_health_write=failure error=${error.message}`);
       }
+      }
     }
 
     if (pendingHideEnabled) {
+      const hidePlan = await quotaPlan(iteration, 'pending-hide');
+      if (!hidePlan.pendingHide) {
+        quotaPausedRuns += 1;
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} pending_hide=quota-paused priority=critical`);
+      } else {
       let hideOutcome = 'success';
       let hideReason = '15분 루프 정상';
       try {
@@ -341,7 +383,13 @@ export async function runMonitorLoop(env = process.env, options = {}) {
       } catch (error) {
         console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} pending_hide_health_write=failure error=${error.message}`);
       }
+      }
 
+      const restorePlan = await quotaPlan(iteration, 'fp-restore');
+      if (!restorePlan.falsePositiveRestore) {
+        quotaPausedRuns += 1;
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} fp_restore=quota-paused priority=low`);
+      } else {
       let restoreOutcome = 'success';
       let restoreReason = '15분 루프 정상';
       try {
@@ -365,6 +413,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
         await recordRestoreOutcome(restoreOutcome, restoreReason);
       } catch (error) {
         console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} fp_restore_health_write=failure error=${error.message}`);
+      }
       }
     }
 
@@ -433,6 +482,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
       + `${ownerFastScanEnabled ? ` owner_fast_scan_runs=${ownerFastScanRuns} owner_fast_scan_failures=${ownerFastScanFailures}` : ''}`
       + ` pending_hide_runs=${pendingHideRuns} pending_hide_failures=${pendingHideFailures}`
       + ` fp_restore_runs=${falsePositiveRestoreRuns} fp_restore_failures=${falsePositiveRestoreFailures}`
+      + ` quota_paused_runs=${quotaPausedRuns}`
       + ` chain=${chainResult.reason}${endedForNewCode ? ' ended_for_new_code=true' : ''}`
       + `${scanFailures ? ` scan_failures=${scanFailures}` : ''}`,
   );
@@ -454,6 +504,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
       falsePositiveRestoreRuns,
       falsePositiveRestoreFailures,
     } : {}),
+    ...(quotaPausedRuns ? { quotaPausedRuns } : {}),
     chain: chainResult,
     ...(endedForNewCode ? { endedForNewCode: true } : {}),
   };

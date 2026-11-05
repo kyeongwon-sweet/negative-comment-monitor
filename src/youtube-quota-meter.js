@@ -15,6 +15,61 @@ export const YOUTUBE_DAILY_QUOTA_DEFAULT = 10_000;
 const PREFIX = 'yt-units:';
 const ALERT_PREFIX = 'yt-quota-alert:';
 
+function ratioSetting(env, key, fallback) {
+  const value = Number(env?.[key]);
+  return Number.isFinite(value) && value > 0 && value <= 1 ? value : fallback;
+}
+
+// 상시 감시용 quota 우선순위. 정상 댓글 공개·오탐 복원은 다음 리셋까지 기다려도 안전하지만,
+// 부정댓글 탐지·숨김은 가능한 오래 남겨 둔다. 11-05에는 보류→공개와 공개→보류 쓰기(건당 50 unit)가
+// 겹쳐 오전에 99%를 써 버렸고, 단순 경고만으로는 나머지 감시까지 quotaExceeded가 났다.
+export function youtubeQuotaConservationPlan(usage, env = process.env) {
+  if (String(env?.YOUTUBE_QUOTA_GUARD_FORCE || '').toLowerCase() === 'true') {
+    return {
+      heldReview: true,
+      fastScan: true,
+      fastScanHoldEnforce: true,
+      pendingHide: true,
+      falsePositiveRestore: true,
+      youtubeAds: true,
+      ownerChannel: true,
+      ratio: Number.isFinite(Number(usage?.ratio)) ? Number(usage.ratio) : null,
+      forced: true,
+    };
+  }
+  if (!usage || !Number.isFinite(Number(usage.ratio))) {
+    return {
+      heldReview: true,
+      fastScan: true,
+      fastScanHoldEnforce: true,
+      pendingHide: true,
+      falsePositiveRestore: true,
+      youtubeAds: true,
+      ownerChannel: true,
+      ratio: null,
+      failOpen: true,
+    };
+  }
+  const ratio = Number(usage.ratio);
+  const nonHidingMax = ratioSetting(env, 'YOUTUBE_QUOTA_BRAKE_RATIO', 0.60);
+  const heldMax = ratioSetting(env, 'YOUTUBE_QUOTA_HELD_REVIEW_MAX_RATIO', nonHidingMax);
+  const restoreMax = ratioSetting(env, 'YOUTUBE_QUOTA_FP_RESTORE_MAX_RATIO', nonHidingMax);
+  const adsMax = ratioSetting(env, 'YOUTUBE_QUOTA_ADS_MAX_RATIO', nonHidingMax);
+  const holdEnforceMax = ratioSetting(env, 'YOUTUBE_QUOTA_HOLD_ENFORCE_MAX_RATIO', nonHidingMax);
+  const criticalMax = ratioSetting(env, 'YOUTUBE_QUOTA_CRITICAL_MAX_RATIO', 0.98);
+  return {
+    heldReview: ratio < heldMax,
+    fastScan: ratio < criticalMax,
+    fastScanHoldEnforce: ratio < holdEnforceMax,
+    pendingHide: ratio < criticalMax,
+    falsePositiveRestore: ratio < restoreMax,
+    youtubeAds: ratio < adsMax,
+    ownerChannel: ratio < criticalMax,
+    ratio,
+    failOpen: false,
+  };
+}
+
 // quota 날짜는 자정 PT 기준으로 리셋된다(업무 날짜가 아니라 Google 리셋 경계라 KST 규칙 예외).
 export function quotaDayKey(now = Date.now()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
@@ -127,7 +182,10 @@ export function quotaAlertMessage(level, usage, now = Date.now(), assignee = '')
     ? `:rotating_light: *YouTube API 일일 할당량 소진* — 소유채널 빠른 감시·승인·자동숨김이 ${nextQuotaResetKst(now)} KST(리셋)까지 멈춥니다.`
     : `:warning: *YouTube API 할당량 ${Math.round(usage.ratio * 100)}% 사용* (${usage.total}/${usage.limit}) — 리셋 ${nextQuotaResetKst(now)} KST.`;
   const lines = [head, `오늘 많이 쓴 작업: ${top || '기록 없음'}`];
-  if (level !== 'exhausted') lines.push('전체 영상 프로브·재감사 같은 대량 수동 작업은 리셋 뒤에 돌려주세요.');
+  if (level !== 'exhausted') {
+    lines.push('자동 절약 모드: 정상댓글 공개·오탐 복원·인지광고 전수조회부터 멈추고, 부정 탐지·숨김용 quota를 우선 보존합니다.');
+    lines.push('전체 영상 프로브·재감사 같은 대량 수동 작업은 리셋 뒤에 돌려주세요.');
+  }
   if (assignee) lines.push(`담당자: <@${assignee}>`);
   return lines.join('\n');
 }

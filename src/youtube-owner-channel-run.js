@@ -23,6 +23,7 @@ import {
 import { suppressLowConfidenceOwnerRisks } from './youtube-owner-risk.js';
 import { monitorLlmHealth } from './llm-health.js';
 import { monitorOwnerOAuthCoverage, summarizeOwnerOAuthCoverage } from './youtube-owner-coverage.js';
+import { youtubeQuotaConservationPlan, youtubeQuotaUsage } from './youtube-quota-meter.js';
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -101,7 +102,16 @@ export function recordOwnerLlmSoftDegraded(summary, health = null, error = null)
   });
 }
 
-export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelConfig(), fetchImpl = fetch, now = Date.now()) {
+export async function runYouTubeOwnerChannels(config = loadYouTubeOwnerChannelConfig(), fetchImpl = fetch, now = Date.now(), options = {}) {
+  try {
+    const usage = await (options.quotaUsage || (() => youtubeQuotaUsage(process.env, fetchImpl, now)))();
+    if (!youtubeQuotaConservationPlan(usage, process.env).ownerChannel) {
+      console.error(`[youtube-owner-channel] quota-paused ${usage.total}/${usage.limit}; next scheduled run will backfill`);
+      return { skipped: 'quota-conservation', channels: 0, videos: 0, comments: 0, sentAlerts: 0, channelFailures: [], degraded: [], softDegraded: [] };
+    }
+  } catch (error) {
+    console.error(`[youtube-owner-channel] quota check failed; fail-open: ${String(error.message || error).slice(0, 160)}`);
+  }
   const collected = await collectYouTubeOwnerChannels(config, fetchImpl, now);
   const summary = {
     ownerTokens: collected.ownerTokens,

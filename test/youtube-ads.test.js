@@ -6,7 +6,7 @@ import {
   fetchYouTubeVideoCommentsWithMeta,
   loadYouTubeAdsConfig,
 } from '../src/youtube-ads.js';
-import { hasYouTubeAdsRunToday, inYouTubeAdsWindow, ownerModerationConfigFromAds, retrySlackRateLimit, youtubeDailyRunKey } from '../src/youtube-ads-run.js';
+import { hasYouTubeAdsRunToday, inYouTubeAdsWindow, ownerModerationConfigFromAds, retrySlackRateLimit, runYouTubeAds, youtubeDailyRunKey } from '../src/youtube-ads-run.js';
 
 const CFG = {
   googleAdsApiBase: 'https://googleads.test',
@@ -153,6 +153,15 @@ test('retrySlackRateLimit retries only Slack rate-limit failures', async () => {
     retrySlackRateLimit(async () => { throw new Error('Slack API: invalid_auth'); }),
     /invalid_auth/,
   );
+});
+
+test('YouTube 인지광고 전수조회는 quota 60% 이후 API 수집 전에 연기된다', async () => {
+  const summary = await runYouTubeAds({ ...CFG, dryRun: false }, async () => {
+    throw new Error('광고 API를 호출하면 안 됨');
+  }, Date.parse('2026-09-05T00:00:00Z'), {
+    quotaUsage: async () => ({ total: 6000, limit: 10000, ratio: 0.6, byJob: [] }),
+  });
+  assert.equal(summary.skipped, 'quota-conservation');
 });
 
 test('fetchMatchingGoogleAdsCampaigns enforces the exact 빙과 substring locally', async () => {
