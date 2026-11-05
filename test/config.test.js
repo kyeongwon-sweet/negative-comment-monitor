@@ -110,18 +110,25 @@ test('기한부 담당자 override: 지정일(KST, 당일 포함)까지만 임�
   assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: '인지 광고' }, loadSlackAssignees(env, at('2026-10-14T09:00:00+09:00'))), 'U_LEEJW');
 });
 
-test('바치케 협찬 (파워채널/먹스타)만 PBACHI_MUKSTAR(김보나), 나머지 바치케는 전담(이재원) — 일반·광고 로더 공통', async () => {
+test('바치케: 협찬 먹스타·인플루언서=PBACHI_MUKSTAR(김보나), 바이럴=PBACHI_VIRAL(박채현), 나머지=전담(이재원) — 일반·광고 로더 공통', async () => {
   const { loadSlackAssignees } = await import('../src/config.js');
   const { loadMetaAdsConfig } = await import('../src/meta-ads.js');
   const { assigneeForTarget } = await import('../src/slack.js');
-  const env = { SLACK_ASSIGNEE_PBACHI: 'U_LEEJW', SLACK_ASSIGNEE_PBACHI_MUKSTAR: 'U_KIMBN', SLACK_ASSIGNEE_OTHER: 'U_OTHER' };
+  const env = { SLACK_ASSIGNEE_PBACHI: 'U_LEEJW', SLACK_ASSIGNEE_PBACHI_MUKSTAR: 'U_KIMBN', SLACK_ASSIGNEE_PBACHI_VIRAL: 'U_PARKCH', SLACK_ASSIGNEE_OTHER: 'U_OTHER' };
   const adEnv = { ...env, SUPABASE_URL: 'https://db.test/', SUPABASE_SERVICE_ROLE_KEY: 'svc', SLACK_BOT_TOKEN: 'x' };
-  const now = Date.parse('2026-10-15T09:00:00+09:00');
+  const now = Date.parse('2026-11-05T09:00:00+09:00');
   for (const assignees of [loadSlackAssignees(env, now), loadMetaAdsConfig(adEnv, now).slackAssignees]) {
-    assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: '협찬 (파워채널/먹스타)' }, assignees), 'U_KIMBN');
-    for (const c of ['협찬 (파워채널/매거진)', '협찬 (인플루언서)', '인지 광고', '바이럴 (배너)', '위성채널']) {
+    for (const c of ['협찬 (파워채널/먹스타)', '협찬 (인플루언서)']) {
+      assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: c }, assignees), 'U_KIMBN', c);
+    }
+    for (const c of ['바이럴 (배너)', '바이럴 (영상)']) {
+      assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: c }, assignees), 'U_PARKCH', c);
+    }
+    for (const c of ['협찬 (파워채널/매거진)', '인지 광고', '위성채널', '소유 YouTube']) {
       assert.equal(assigneeForTarget({ productName: 'P바치', channelCategory: c }, assignees), 'U_LEEJW', c);
     }
+    // 다른 상품군 바이럴은 영향 없음
+    assert.notEqual(assigneeForTarget({ productName: '파인트', channelCategory: '바이럴 (배너)' }, assignees), 'U_PARKCH');
     // 다른 상품군 먹스타는 영향 없음
     assert.notEqual(assigneeForTarget({ productName: 'JD멜', channelCategory: '협찬 (파워채널/먹스타)' }, assignees), 'U_KIMBN');
   }
@@ -150,12 +157,12 @@ test('떵개×바치케 협찬 카드만 김유진, 부모 스레드·다른 크
       for (const channelCategory of ['협찬 (인플루언서)', '협찬 (파워채널/먹스타)']) {
         const target = { productName: 'P바치', channelName, channelCategory, url: 'u' };
         assert.deepEqual(cardIds(target, assignees), ['U_KIMYJ'], `${channelName}/${channelCategory} 카드`);
-        // 부모 스레드 담당은 상품×카테고리 기준 그대로(인플루언서=이재원, 먹스타=김보나)
-        assert.equal(assigneeForTarget(target, assignees), channelCategory.includes('먹스타') ? 'U_KIMBN' : 'U_LEEJW');
+        // 부모 스레드 담당은 상품×카테고리 기준(11-05: 인플루언서·먹스타 둘 다 김보나)
+        assert.equal(assigneeForTarget(target, assignees), 'U_KIMBN');
       }
     }
     // 바치케의 다른 크리에이터 협찬 카드는 기존 담당
-    assert.deepEqual(cardIds({ productName: 'P바치', channelName: '와뜨기', channelCategory: '협찬 (인플루언서)', url: 'u' }, assignees), ['U_LEEJW']);
+    assert.deepEqual(cardIds({ productName: 'P바치', channelName: '와뜨기', channelCategory: '협찬 (인플루언서)', url: 'u' }, assignees), ['U_KIMBN']);
     assert.deepEqual(cardIds({ productName: 'P바치', channelName: '돼지만두', channelCategory: '협찬 (파워채널/먹스타)', url: 'u' }, assignees), ['U_KIMBN']);
     // 떵개의 다른 상품 협찬 카드는 그 상품 담당
     assert.deepEqual(cardIds({ productName: 'JD멜', channelName: '떵개떵', channelCategory: '협찬 (인플루언서)', url: 'u' }, assignees), ['U_KIMBD']);
@@ -166,6 +173,6 @@ test('떵개×바치케 협찬 카드만 김유진, 부모 스레드·다른 크
   for (const raw of ['{떵개', '{"떵개":"U_KIMYJ"}', '[{"creator":"떵개"}]']) {
     const broken = loadSlackAssignees({ ...env, SLACK_ASSIGNEE_SPONSORSHIP_CREATORS: raw }, now);
     assert.deepEqual(broken.sponsorshipCreators, [], raw);
-    assert.deepEqual(cardIds({ productName: 'P바치', channelName: '떵개떵', channelCategory: '협찬 (인플루언서)', url: 'u' }, broken), ['U_LEEJW'], raw);
+    assert.deepEqual(cardIds({ productName: 'P바치', channelName: '떵개떵', channelCategory: '협찬 (인플루언서)', url: 'u' }, broken), ['U_KIMBN'], raw); // 규칙 없으면 카테고리 담당(인플루언서=김보나)
   }
 });

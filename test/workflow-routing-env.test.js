@@ -289,7 +289,7 @@ test('바치케 협찬(파워채널/먹스타) 담당자(PBACHI_MUKSTAR)는 PBAC
   for (const name of readdirSync(dir).filter((file) => file.endsWith('.yml'))) {
     const workflow = readFileSync(new URL(name, dir), 'utf8');
     // 크리에이터×상품 협찬 카드 규칙(떵개 바치케 → 김유진)도 같은 스텝에 동반돼야 카드가 새지 않는다.
-    for (const key of ['SLACK_ASSIGNEE_PBACHI_MUKSTAR', 'SLACK_ASSIGNEE_SPONSORSHIP_CREATORS']) {
+    for (const key of ['SLACK_ASSIGNEE_PBACHI_MUKSTAR', 'SLACK_ASSIGNEE_PBACHI_VIRAL', 'SLACK_ASSIGNEE_SPONSORSHIP_CREATORS']) {
       assert.equal(
         assigneeEnvCount(workflow, key),
         assigneeEnvCount(workflow, 'SLACK_ASSIGNEE_PBACHI'),

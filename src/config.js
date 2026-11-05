@@ -64,8 +64,11 @@ export function loadSlackAssignees(env = process.env, now = Date.now()) {
     other: String(env.SLACK_ASSIGNEE_OTHER || '').trim(),
     owned: String(env.SLACK_ASSIGNEE_OWNED || '').trim(),
     pbachi: overrideAssignee(env, 'SLACK_ASSIGNEE_PBACHI', now), // 바치케(P바치) 전담(이재원). _OVERRIDE로 기한부 대체
-    // 바치케 협찬 (파워채널/먹스타)만 별도 담당(2026-10-15 대표 지정: 김보나). 비면 바치케 전담으로.
+    // 바치케 협찬 (파워채널/먹스타)·(인플루언서=먹방러) 담당(2026-10-15 먹스타, 2026-11-05 인플루언서 추가: 김보나).
+    // 떵개 카드는 sponsorshipCreators가 따로(김유진). 비면 바치케 전담으로.
     pbachiMukstar: String(env.SLACK_ASSIGNEE_PBACHI_MUKSTAR || '').trim(),
+    // 바치케 바이럴(배너·영상) 담당(2026-11-05 사용자 지정: 박채현). 비면 바치케 전담으로.
+    pbachiViral: String(env.SLACK_ASSIGNEE_PBACHI_VIRAL || '').trim(),
     // 특정 크리에이터 × 상품의 협찬 '카드'만 다른 담당자로 태그(부모 스레드 담당은 그대로).
     // 형식: [{"creator":"떵개","product":"P바치","assignee":"U…"}] — 2026-11-03: 떵개의 바치케 협찬만 김유진.
     // creator는 채널명 포함 매칭(공백 무시), product는 상품군 일치(생략하면 전 상품). 파싱 실패=규칙 없음.

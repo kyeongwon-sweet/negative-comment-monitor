@@ -154,10 +154,12 @@ export function assigneeForTarget(target, assignees = {}) {
   const isOwnedYoutube = category.includes('소유'); // 소유 YouTube(자사 유튜브 채널)
   const isAwareness = category.includes('인지'); // 인지(메타) 광고 부정댓글 전용 담당자
   if (group === 'pbachi') {
-    // 바치케: 협찬 (파워채널/먹스타)만 별도 담당(김보나), 그 외 전 카테고리는 바치케 전담(이재원).
-    // '먹스타'로 한정 — 협찬 (파워채널/매거진)·(인플루언서)는 바치케 전담 유지.
-    // (떵개 바치케 협찬 '카드'의 김유진 태그는 buildAlertBlocks의 크리에이터 규칙이 처리한다.)
-    if (isSponsorship && category.includes('먹스타') && assignees.pbachiMukstar) return assignees.pbachiMukstar;
+    // 바치케(2026-11-05 사용자 지정): 협찬 (파워채널/먹스타)·(인플루언서=먹방러)=김보나, 바이럴(배너·영상)=박채현,
+    // 그 외(인지광고·협찬 매거진·온드·소유 YouTube·위성 등)는 바치케 전담(이재원).
+    // (떵개 바치케 협찬 '카드'의 김유진 태그는 buildAlertBlocks의 크리에이터 규칙이 처리한다 — 부모 스레드는 여기 규칙.)
+    const isMukstarOrInfluencer = category.includes('먹스타') || category.includes('인플루언서');
+    if (isSponsorship && isMukstarOrInfluencer && assignees.pbachiMukstar) return assignees.pbachiMukstar;
+    if ((isBanner || isVideo) && assignees.pbachiViral) return assignees.pbachiViral;
     if (assignees.pbachi) return assignees.pbachi;
   } else if (group === 'jd') {
     // 쫀득바: 위성채널·바이럴(배너/영상)=김어진, 그 외 전 카테고리(인지광고·협찬·온드·소유YouTube 등)는
