@@ -55,6 +55,9 @@ export function loadHeldReviewConfig(env = process.env, now = Date.now()) {
     // 강한 승인 모델이 일시 제한·장애일 때도 공개 지연이 무한 누적되지 않게 운영 기본 모델로 재판정한다.
     // 두 모델 모두 실패하면 기존처럼 fail-closed(아무것도 공개하지 않음)다.
     heldReviewFallbackModel: String(env.HELD_REVIEW_FALLBACK_MODEL || base.geminiModel || 'gemini-3.1-flash-lite').trim(),
+    // 승인봇은 부정댓글 정밀판정과 escalation 원장(기본 200회)을 공유한다. 장애 재시도가
+    // 정밀판정 몫까지 소진하지 않도록 이 비율까지만 쓰고 나머지는 다음 승인 칸으로 미룬다.
+    heldReviewEscalationBudgetPercent: Math.max(1, Math.min(100, Number(env.HELD_REVIEW_ESCALATION_BUDGET_PERCENT || 70))),
     heldReviewMaxPages: Math.max(1, Math.min(50, Number(env.HELD_REVIEW_MAX_PAGES || 20))),
     // 보류함은 최근 이 시간치만 읽는다(페이지 전체가 이보다 오래되면 중단). 15분마다 전체를 읽으면 채널을 늘릴 때
     // 일일 quota 10,000을 넘는다(11-03 먹짱언니 확대 전 계산). 72h = 승인 봇이 사흘 연속 멈춰도 따라잡는 여유.
@@ -205,15 +208,27 @@ function approvalModels(config) {
   ].filter(Boolean))];
 }
 
+function heldReviewEscalationLimit(config) {
+  const sharedLimit = Math.max(1, Math.floor(Number(config.geminiEscalationRollingRequestBudget || 200)));
+  const percent = Math.max(1, Math.min(100, Number(config.heldReviewEscalationBudgetPercent || 70)));
+  return Math.max(1, Math.floor(sharedLimit * percent / 100));
+}
+
 async function requestApprovalChunk(config, chunk, model, fetchImpl, now, sleep) {
   const maxAttempts = Math.max(1, Math.min(5, Number(config.geminiMaxAttempts || 1)));
   const baseDelayMs = Math.max(0, Number(config.geminiRetryBaseMs || 0));
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const budget = await claimGeminiRequestBudget({ ...config, geminiQuotaClass: 'escalation' }, fetchImpl, now);
+    const approvalLimit = heldReviewEscalationLimit(config);
+    const budget = await claimGeminiRequestBudget({
+      ...config,
+      geminiQuotaClass: 'escalation',
+      // 승인봇에만 70% soft cap. hybrid-classify는 원래 200회 한도를 그대로 쓴다.
+      geminiEscalationRollingRequestBudget: approvalLimit,
+    }, fetchImpl, now);
     if (!budget?.allowed) {
-      console.error(`[held-review:llm] model=${model} budget=${budget?.reason || 'denied'} — 공개 중단`);
-      return { rows: null, stop: true };
+      console.error(`[held-review:llm] model=${model} budget=${budget?.escalationUsed ?? '?'}/${approvalLimit} — 다음 승인 칸까지 공개 보류`);
+      return { rows: null, stop: true, deferred: true, reason: 'escalation-budget' };
     }
     let response;
     try {
@@ -261,6 +276,7 @@ export async function judgeApprovals(config, comments, fetchImpl = fetch, now = 
     let rows = null;
     for (const model of approvalModels(config)) {
       const result = await requestApprovalChunk(config, chunk, model, fetchImpl, now, sleep);
+      if (result.deferred) return { deferred: true, reason: result.reason || 'escalation-budget' };
       if (result.stop) return null;
       if (result.rows) {
         rows = result.rows;
@@ -489,6 +505,11 @@ export async function runHeldReview(config, fetchImpl = fetch, now = Date.now(),
       row.candidates = candidates.length;
       if (!candidates.length) continue;
       const verdicts = await judgeApprovals(config, candidates, fetchImpl, now);
+      if (verdicts?.deferred) {
+        row.deferred = verdicts.reason;
+        summary.deferred = verdicts.reason;
+        break;
+      }
       if (!verdicts) throw new Error('공개 판정 실패(LLM 오류·예산) — 아무것도 공개하지 않음');
       const decided = config.heldReviewNegativeGate === true
         ? await gateApprovalsWithClassifier(config, channelId, decideApprovals(candidates, verdicts), fetchImpl, classifier)

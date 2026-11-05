@@ -66,6 +66,33 @@ test('공개 판정: 강한 모델의 일시 오류를 재시도한 뒤 운영 �
   assert.equal(verdicts[0].approve, true);
 });
 
+test('승인봇 전용 escalation 70% 상한: 정밀판정 몫을 남기고 다음 칸으로 미룬다', async () => {
+  let geminiCalls = 0;
+  let claims = 0;
+  const fetchImpl = async (input, init = {}) => {
+    if (init.method === 'HEAD') {
+      return { ok: true, status: 200, headers: { get: () => '0-0/140' } };
+    }
+    if (String(input).includes('cost_usage_ledger') && init.method === 'POST') {
+      claims += 1;
+      return { ok: true, status: 201, json: async () => null };
+    }
+    if (String(input).includes('generativelanguage')) {
+      geminiCalls += 1;
+      return { ok: true, status: 200, json: async () => ({}) };
+    }
+    throw new Error(`unexpected ${input}`);
+  };
+  const verdicts = await judgeApprovals({
+    geminiKey: 'k', heldReviewModel: 'strong', heldReviewFallbackModel: 'stable',
+    supabaseUrl: 'https://db.test', supabaseKey: 'svc',
+    geminiEscalationRollingRequestBudget: 200, heldReviewEscalationBudgetPercent: 70,
+  }, [{ text: '맛있겠다' }], fetchImpl);
+  assert.deepEqual(verdicts, { deferred: true, reason: 'escalation-budget' });
+  assert.equal(geminiCalls, 0, '상한 이후 승인 모델·대체 모델을 호출하지 않음');
+  assert.equal(claims, 0, '공용 escalation 원장도 더 소비하지 않음');
+});
+
 test('공개 프롬프트에 사람 기준(유행 부정·출연자 비하·장면 반박)이 들어간다', () => {
   const prompt = buildApprovePrompt([{ text: 'x' }]);
   for (const phrase of ['나만 모름', '싸가지가 없네', '품절 아니던데', '그게 뭔데', '조금이라도 애매하면 공개하지 마세요']) assert.ok(prompt.includes(phrase), phrase);
@@ -147,6 +174,30 @@ test('판정 실패면 아무것도 공개하지 않고 원장도 남기지 않�
   assert.deepEqual(calls.ledger, []);
   assert.equal(calls.slack.length, 0);
   assert.equal(summary.errors.length, 1);
+});
+
+test('승인봇 상한 도달은 degraded 실패가 아니라 안전 보류로 끝나고 다음 칸에 재시도한다', async () => {
+  const base = fakeWorld();
+  let geminiCalls = 0;
+  const fetchImpl = async (url, init = {}) => {
+    const value = String(url);
+    if (value.includes('cost_usage_ledger') && init.method === 'HEAD') {
+      return { ok: true, status: 200, headers: { get: () => '0-0/140' } };
+    }
+    if (value.includes('generativelanguage')) geminiCalls += 1;
+    return base.fetchImpl(url, init);
+  };
+  const summary = await runHeldReview({
+    ...BASE,
+    heldReviewDryRun: true,
+    heldReviewEscalationBudgetPercent: 70,
+  }, fetchImpl, Date.parse('2026-10-29T05:00:00Z'));
+  assert.equal(summary.deferred, 'escalation-budget');
+  assert.equal(summary.channels[0].deferred, 'escalation-budget');
+  assert.deepEqual(summary.errors, []);
+  assert.equal(geminiCalls, 0);
+  assert.deepEqual(base.calls.publish, []);
+  assert.deepEqual(base.calls.ledger, []);
 });
 
 test('dry-run은 공개·알림·원장 쓰기를 하지 않는다', async () => {
