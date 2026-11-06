@@ -331,7 +331,10 @@ export async function runMonitorLoop(env = process.env, options = {}) {
           ...env,
           // 기본 60%부터는 분류·알림·pending-hide 경로는 유지하되, 정상 댓글까지 보류했다가 다시
           // 공개하는 50-unit 왕복은 멈춘다. 부정댓글 숨김용 quota를 남기는 우선순위다.
-          YOUTUBE_OWNER_HOLD_ENFORCE: plan.fastScanHoldEnforce ? String(env.YOUTUBE_OWNER_HOLD_ENFORCE || 'true') : 'false',
+          // 11-06: 'false'로 끄면 빠른 감시가 '보류 대행 없음' 모드로 바뀌어 옛 '모두 보류 빠진 영상' 알림을
+          // 사람에게 보냈다(사용자가 11-03 끈 알림). 끄지 말고 '일시 정지'로 넘겨 브레이크와 같이 조용히 멈춘다.
+          YOUTUBE_OWNER_HOLD_ENFORCE: String(env.YOUTUBE_OWNER_HOLD_ENFORCE || 'true'),
+          YOUTUBE_OWNER_HOLD_ENFORCE_PAUSED: plan.fastScanHoldEnforce ? '' : 'quota-plan',
           OWNED_BRAND_ESCALATION_MODEL: String(env.YOUTUBE_OWNER_FAST_ESCALATION_MODEL || env.OWNED_BRAND_ESCALATION_MODEL || '').trim(),
         });
         ownerFastScanRuns += 1;

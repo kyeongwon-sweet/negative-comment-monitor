@@ -338,3 +338,13 @@ test("quota 브레이크: 사용률이 높으면 보류 대행(50 unit)을 하�
   assert.equal(holdPosts(base.calls).length, 0, '의도된 중단이라 "보류 실패" 알림 없음');
   assert.ok(base.calls.rows.length > 0, '부정 댓글 카드·알림행(→자동숨김)은 그대로');
 });
+
+test("11-06 회귀: 절약 모드가 보류 대행을 일시정지하면 옛 '모두 보류 빠진 영상' 알림을 내지 않는다", async () => {
+  const base = world({ alreadyEnforced: ["bad2"], enforcedAt: NOW - 2 * 3600 * 1000 });
+  base.calls.holdMode = true;
+  const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true, holdEnforcePaused: 'quota-plan' }, base.fetchImpl, NOW, base.classifier);
+  assert.deepEqual(base.calls.holds, [], '보류 요청(50 unit) 없음');
+  assert.equal(summary.holdEnforceBraked, 'quota-plan');
+  assert.equal(holdPosts(base.calls).length, 0, '보류 누락·보류 실패 알림 모두 없음');
+  assert.ok(base.calls.rows.length > 0, '부정 댓글 카드·알림행(→자동숨김)은 그대로');
+});

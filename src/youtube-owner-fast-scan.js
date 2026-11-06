@@ -62,6 +62,8 @@ export function loadFastScanConfig(env = process.env, now = Date.now()) {
       ? Date.parse(env.YOUTUBE_OWNER_HOLD_WATCH_SINCE) : null,
     // 보류 누락 영상의 새 공개 댓글을 봇이 보류로 돌릴지(11-03 사용자 '재발방지'). 명시적으로 켤 때만.
     holdEnforce: String(env.YOUTUBE_OWNER_HOLD_ENFORCE || '').toLowerCase() === 'true',
+    // quota 절약 모드(monitor-loop)가 보류 대행을 잠시 멈춘 사유. 대행은 켜진 채 브레이크처럼 조용히 건너뛴다.
+    holdEnforcePaused: String(env.YOUTUBE_OWNER_HOLD_ENFORCE_PAUSED || '').trim(),
   };
 }
 
@@ -331,7 +333,9 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
     // 결과적으로 '모두 보류'와 같고 노출은 최대 한 회차(15분). 그래서 누락 자체는 알리지 않고(11-03 사용자 지시),
     // 봇 보류가 실패했거나 보류 후에도 공개로 남은 댓글만 알린다(hold-stuck, 영상당 하루 1회).
     // quota 브레이크: 사용률이 높으면 보류 대행(채널당 50 unit)을 멈춘다. 공개 댓글 중 부정은 아래 판정·숨김이 그대로 잡는다.
-    const brake = leaks.length && !config.dryRun && config.holdEnforce
+    const brake = leaks.length && !config.dryRun && config.holdEnforce && config.holdEnforcePaused
+      ? { engaged: true, reason: config.holdEnforcePaused }
+      : leaks.length && !config.dryRun && config.holdEnforce
       ? await quotaBrakeEngaged({ supabaseUrl: config.supabaseUrl, supabaseKey: config.supabaseKey, ratio: config.quotaBrakeRatio }, fetchImpl, now)
       : { engaged: false };
     if (brake.engaged) summary.holdEnforceBraked = brake.reason;

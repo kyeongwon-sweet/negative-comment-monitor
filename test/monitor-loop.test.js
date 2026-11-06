@@ -573,7 +573,9 @@ test('quota 90%에서는 빠른 감시를 읽기 전용으로 유지하고 pendi
     chain: async () => disabledChain,
   });
   assert.deepEqual(calls, ['fast', 'hide']);
-  assert.equal(scanEnvs[0].YOUTUBE_OWNER_HOLD_ENFORCE, 'false');
+  // 11-06: 'false'로 끄면 빠른 감시가 옛 '모두 보류 빠진 영상' 알림을 냈다 → 켠 채 일시정지 신호만 준다.
+  assert.equal(scanEnvs[0].YOUTUBE_OWNER_HOLD_ENFORCE, 'true');
+  assert.equal(scanEnvs[0].YOUTUBE_OWNER_HOLD_ENFORCE_PAUSED, 'quota-plan');
   assert.equal(result.quotaPausedRuns, 2);
 });
 
