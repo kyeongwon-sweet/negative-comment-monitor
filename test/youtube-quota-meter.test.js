@@ -114,3 +114,32 @@ test('quota 브레이크: 60% 이상이거나 소진이면 걸리고, 조회 실
   assert.equal((await quotaBrakeEngaged(DB, ledger(['yt-quota-alert:2026-11-03:exhausted']), NOW)).reason, 'exhausted');
   assert.equal((await quotaBrakeEngaged(DB, async () => { throw new Error('db down'); }, NOW)).engaged, false);
 });
+
+test('11-06 예측 브레이크: 리셋 전 바닥 궤도면 60% 전이라도 보류 대행·오탐 복원을 멈추고 숨김을 30분 칸으로', async () => {
+  const { hoursSinceQuotaReset, projectQuotaRatio } = await import('../src/youtube-quota-meter.js');
+  // 11-06 09:15 KST = 11-05 16:15 PT → 리셋 후 16.25시간, 72.5% → 하루 끝 ~107% 예측
+  const at0915 = Date.parse('2026-11-06T00:15:00Z');
+  assert.equal(Math.round(hoursSinceQuotaReset(at0915) * 100) / 100, 16.25);
+  assert.ok(projectQuotaRatio(0.725, at0915) > 1.0);
+  assert.equal(projectQuotaRatio(0.3, Date.parse('2026-11-05T09:00:00Z')), null, '리셋 후 3시간 안은 예측 안 함');
+  const plan = (ratio, projectedRatio) => youtubeQuotaConservationPlan({ ratio, total: ratio * 10000, limit: 10000, byJob: [], projectedRatio }, {});
+  const onTrack = plan(0.45, 1.05);
+  assert.equal(onTrack.onTrackToRunOut, true);
+  assert.equal(onTrack.fastScanHoldEnforce, false);
+  assert.equal(onTrack.falsePositiveRestore, false);
+  assert.equal(onTrack.pendingHideEveryMinutes, 30);
+  assert.equal(onTrack.heldReview, true, '이미 보류된 댓글은 60%까지 계속 풀어준다');
+  assert.equal(onTrack.youtubeAds, true, '인지광고 수집은 부정 탐지라 유지');
+  assert.equal(onTrack.pendingHide, true);
+  const fine = plan(0.45, 0.8);
+  assert.equal(fine.onTrackToRunOut, false);
+  assert.equal(fine.fastScanHoldEnforce, true);
+  assert.equal(fine.pendingHideEveryMinutes, 15);
+  assert.equal(plan(0.45, null).onTrackToRunOut, false, '예측 없으면 기존 기준만');
+});
+
+test('사용량 조회에 예측치가 붙는다', async () => {
+  const usage = await youtubeQuotaUsage(ENV, ledgerFetch(['yt-units:2026-11-05:x:1.1.1.1:7250']), Date.parse('2026-11-06T00:15:00Z'));
+  assert.equal(usage.day, '2026-11-05');
+  assert.ok(usage.projectedRatio > 1.0);
+});

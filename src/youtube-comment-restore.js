@@ -1,14 +1,47 @@
 import { appendFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { fetchYouTubeVideoComments } from './youtube-ads.js';
+import { fetchYouTubeVideoComments, refreshGoogleAccessToken } from './youtube-ads.js';
 import {
   listYouTubeCommentStatesIsolated,
   loadYouTubeOwnerTokens,
   mapVideosToOwners,
   refreshAndVerifyOwner,
+  verifyOwnerAccessToken,
   videoIdFromAlert,
 } from './youtube-owner-moderation.js';
+import { kstDateKey } from './schedule.js';
+
+// 이미 공개로 확인된 오탐 댓글(원장 fp-visible:<id>)은 48시간 창 동안 매 15분 다시 조회하지 않는다(11-06 quota).
+// 사람 오탐 판정 댓글은 자동숨김이 건드리지 않으므로 한 번 공개 확인되면 계속 공개다.
+const FP_VISIBLE_PREFIX = 'fp-visible:';
+
+async function loadConfirmedVisible(config, ids, fetchImpl) {
+  const found = new Set();
+  for (let i = 0; i < ids.length; i += 50) {
+    const keys = ids.slice(i, i + 50).map((id) => `"${FP_VISIBLE_PREFIX}${String(id).replace(/"/g, '')}"`).join(',');
+    try {
+      const response = await fetchImpl(
+        `${config.supabaseUrl}/rest/v1/cost_usage_ledger?select=run_key&run_key=${encodeURIComponent(`in.(${keys})`)}`,
+        { headers: supabaseHeaders(config) },
+      );
+      if (!response.ok) continue; // 조회 실패면 그냥 다시 확인한다(fail-open).
+      for (const row of await response.json()) found.add(String(row.run_key).slice(FP_VISIBLE_PREFIX.length));
+    } catch { /* fail-open */ }
+  }
+  return found;
+}
+
+async function recordConfirmedVisible(config, ids, fetchImpl, now) {
+  if (!ids.length) return;
+  try {
+    await fetchImpl(`${config.supabaseUrl}/rest/v1/cost_usage_ledger?on_conflict=run_key`, {
+      method: 'POST',
+      headers: supabaseHeaders(config, { 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' }),
+      body: JSON.stringify([...new Set(ids)].map((id) => ({ run_key: `${FP_VISIBLE_PREFIX}${id}`, kst_date: kstDateKey(now), apify_usd: 0, anthropic_usd: 0 }))),
+    });
+  } catch { /* 기록 실패면 다음 회차에 다시 확인할 뿐 */ }
+}
 
 export const YOUTUBE_RESTORE_CONFIRMATION = 'RESTORE_YOUTUBE_COMMENTS';
 export const YOUTUBE_AUTO_RESTORE_CONFIRMATION = 'AUTO_RESTORE_YOUTUBE_FALSE_POSITIVES';
@@ -276,8 +309,13 @@ async function verifyPublishedRows(config, rows, accessToken, fetchImpl) {
 export async function autoRestoreYouTubeFalsePositives(
   config = loadYouTubeAutoRestoreConfig(), fetchImpl = fetch, now = Date.now(),
 ) {
-  const rows = await loadRecentYouTubeFalsePositiveAlerts(config, fetchImpl, now);
+  const loaded = await loadRecentYouTubeFalsePositiveAlerts(config, fetchImpl, now);
+  const confirmedVisible = loaded.length
+    ? await loadConfirmedVisible(config, [...new Set(loaded.map((row) => String(row.comment_id)))], fetchImpl)
+    : new Set();
+  const rows = loaded.filter((row) => !confirmedVisible.has(String(row.comment_id)));
   const result = {
+    skippedConfirmedVisible: loaded.length - rows.length,
     candidates: rows.length,
     ownerTokens: 0,
     validOwnerTokens: 0,
@@ -300,22 +338,22 @@ export async function autoRestoreYouTubeFalsePositives(
   const owners = await loadYouTubeOwnerTokens(config, fetchImpl);
   result.ownerTokens = owners.length;
   const accessTokens = new Map();
-  const validOwners = [];
+  const refreshedOwners = [];
+  // 토큰 재발급은 quota 0. 소유 확인(channels mine, 1 unit)은 복원할 댓글이 있는 채널만(11-06: 매 회차 11채널 확인 낭비).
   for (const owner of owners) {
     try {
-      accessTokens.set(owner.channelId, await refreshAndVerifyOwner(config, owner, fetchImpl));
-      validOwners.push(owner);
+      accessTokens.set(owner.channelId, await refreshGoogleAccessToken(config, owner.refreshToken, fetchImpl));
+      refreshedOwners.push(owner);
     } catch {
       result.tokenFailures += 1;
     }
   }
-  result.validOwnerTokens = validOwners.length;
-  if (!validOwners.length) {
+  if (!refreshedOwners.length) {
     result.failed = rows.length;
     return result;
   }
 
-  const mapped = await mapVideosToOwners(config, rows, validOwners, accessTokens, fetchImpl);
+  const mapped = await mapVideosToOwners(config, rows, refreshedOwners, accessTokens, fetchImpl);
   const rowsByOwner = new Map();
   for (const row of rows) {
     const ownerId = mapped.ownerByVideo.get(videoIdFromAlert(row));
@@ -326,9 +364,21 @@ export async function autoRestoreYouTubeFalsePositives(
     if (!rowsByOwner.has(ownerId)) rowsByOwner.set(ownerId, []);
     rowsByOwner.get(ownerId).push(row);
   }
+  for (const owner of refreshedOwners) {
+    if (!rowsByOwner.has(owner.channelId)) continue;
+    try {
+      accessTokens.set(owner.channelId, await verifyOwnerAccessToken(config, owner, accessTokens.get(owner.channelId), fetchImpl));
+      result.validOwnerTokens += 1;
+    } catch {
+      result.tokenFailures += 1;
+      result.failed += rowsByOwner.get(owner.channelId).length;
+      rowsByOwner.delete(owner.channelId);
+    }
+  }
 
   const restoredRows = [];
   const unverifiedRows = [];
+  const confirmedNow = [];
   for (const [ownerId, ownerRows] of rowsByOwner) {
     const token = accessTokens.get(ownerId);
     const rowsByComment = new Map();
@@ -347,6 +397,7 @@ export async function autoRestoreYouTubeFalsePositives(
     const visibleBefore = new Set([...before.visible, ...publishedBefore.published]);
     result.failed += before.failed.length;
     result.alreadyVisible += ids.filter((id) => visibleBefore.has(id)).length;
+    confirmedNow.push(...ids.filter((id) => visibleBefore.has(id)));
     const candidates = ids.filter((id) => !visibleBefore.has(id) && (
       before.rejected.has(id)
       || before.heldForReview.has(id)
@@ -398,6 +449,8 @@ export async function autoRestoreYouTubeFalsePositives(
     result.slackUpdated = slack.updated;
     result.slackFailed = slack.failed;
   }
+  // 이번에 '이미 공개'로 확인된 것만 기록(방금 복원한 건 다음 회차에 공개 확인되면 기록).
+  await recordConfirmedVisible(config, confirmedNow, fetchImpl, now);
   return result;
 }
 

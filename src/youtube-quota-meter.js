@@ -62,16 +62,26 @@ export function youtubeQuotaConservationPlan(usage, env = process.env) {
   // 리셋까지 버틴다 — 노출이 최대 30·60분으로 늘지만 몇 시간 정지보다 낫다.
   const paceHalfAt = ratioSetting(env, 'YOUTUBE_QUOTA_HIDE_PACE_30_RATIO', 0.75);
   const paceHourAt = ratioSetting(env, 'YOUTUBE_QUOTA_HIDE_PACE_60_RATIO', 0.90);
+  // 예측 브레이크(11-06 재발방지): 고정 기준(60·75%)은 '지금' 사용률만 본다. 밤새 새 광고 보류 대행으로 빨리 쓰면
+  // 60%에 닿기 전부터 이미 '리셋 전 바닥' 궤도다. 리셋 이후 평균 속도로 리셋 시점 사용량을 예측해 98%를 넘으면
+  // 가장 비싼 비숨김 작업(봇 보류 대행 50/회·오탐 복원)을 먼저 멈추고 숨김은 30분 칸으로 모은다. 승인 봇은 이미 보류된
+  // 댓글을 풀어줘야 하므로 기존 60% 기준을 유지, 인지광고 수집은 부정 탐지라 유지. 리셋 직후 몇 시간은 표본이 적어 쓰지 않는다
+  // (youtubeQuotaUsage가 3시간 이후에만 projectedRatio를 붙인다).
+  const projected = usage.projectedRatio == null ? NaN : Number(usage.projectedRatio);
+  const onTrackToRunOut = Number.isFinite(projected) && projected >= criticalMax;
+  const paceMinutes = ratio >= paceHourAt ? 60 : ratio >= paceHalfAt || onTrackToRunOut ? 30 : 15;
   return {
-    pendingHideEveryMinutes: ratio >= paceHourAt ? 60 : ratio >= paceHalfAt ? 30 : 15,
+    pendingHideEveryMinutes: paceMinutes,
     heldReview: ratio < heldMax,
     fastScan: ratio < criticalMax,
-    fastScanHoldEnforce: ratio < holdEnforceMax,
+    fastScanHoldEnforce: ratio < holdEnforceMax && !onTrackToRunOut,
     pendingHide: ratio < criticalMax,
-    falsePositiveRestore: ratio < restoreMax,
+    falsePositiveRestore: ratio < restoreMax && !onTrackToRunOut,
     youtubeAds: ratio < adsMax,
     ownerChannel: ratio < criticalMax,
     ratio,
+    projectedRatio: Number.isFinite(projected) ? projected : null,
+    onTrackToRunOut,
     failOpen: false,
   };
 }
@@ -137,7 +147,27 @@ export async function youtubeQuotaUsage(env = process.env, fetchImpl = fetch, no
     if (rows.length < 1000) break;
   }
   const limit = Math.max(1, Number(env.YOUTUBE_DAILY_QUOTA || YOUTUBE_DAILY_QUOTA_DEFAULT) || YOUTUBE_DAILY_QUOTA_DEFAULT);
-  return { day, total, limit, ratio: total / limit, byJob: [...byJob.entries()].sort((a, b) => b[1] - a[1]) };
+  const ratio = total / limit;
+  return {
+    day, total, limit, ratio,
+    projectedRatio: projectQuotaRatio(ratio, now),
+    byJob: [...byJob.entries()].sort((a, b) => b[1] - a[1]),
+  };
+}
+
+// 리셋(자정 PT) 이후 경과 시간. DST 전환일엔 1시간 오차가 있지만 예측용이라 무시한다.
+export function hoursSinceQuotaReset(now = Date.now()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date(now)).map((p) => [p.type, p.value]));
+  return Number(parts.hour) + Number(parts.minute) / 60;
+}
+
+// 리셋 이후 평균 속도가 그대로면 리셋 직전 사용률이 얼마일지. 표본이 적은 리셋 후 3시간 안은 null.
+export function projectQuotaRatio(ratio, now = Date.now(), minHours = 3) {
+  const elapsed = hoursSinceQuotaReset(now);
+  if (!Number.isFinite(ratio) || elapsed < minHours) return null;
+  return ratio * (24 / elapsed);
 }
 
 // 대량 수동 작업 가드: 예상 사용량을 더해 상한을 넘으면 실행 전에 막는다.

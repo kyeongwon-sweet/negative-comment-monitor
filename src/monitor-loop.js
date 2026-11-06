@@ -225,7 +225,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
       const usage = await readQuotaUsage();
       const plan = youtubeQuotaConservationPlan(usage, env);
       if (usage) {
-        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} quota_component=${component} youtube_quota=${usage.total}/${usage.limit} ratio=${usage.ratio.toFixed(4)}`);
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} quota_component=${component} youtube_quota=${usage.total}/${usage.limit} ratio=${usage.ratio.toFixed(4)}${Number.isFinite(usage.projectedRatio) ? ` projected=${usage.projectedRatio.toFixed(2)}` : ""}${plan.onTrackToRunOut ? " on_track_to_run_out=true" : ""}`);
       }
       return plan;
     } catch (error) {

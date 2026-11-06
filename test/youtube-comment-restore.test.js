@@ -180,8 +180,13 @@ test('이미 공개인 FP와 비소유 YouTube는 자동복원에서 변경하�
     { id: 2, source: null, platform: 'youtube', comment_id: 'external', post_url: 'https://youtu.be/externalVid1', review_decision: 'false_positive', reviewed_at: '2026-08-26T00:00:00Z' },
   ];
   let writes = 0;
+  const ledgerWrites = [];
   const fetchImpl = async (input, init = {}) => {
     const url = String(input);
+    if (url.includes('/cost_usage_ledger')) {
+      if (init.method === 'POST') { ledgerWrites.push(...JSON.parse(init.body).map((r) => r.run_key)); return response(201, []); }
+      return response(200, []);
+    }
     if (init.method === 'POST' || init.method === 'PATCH') writes += 1;
     if (url.includes('/negative_comment_alerts?')) return response(200, rows);
     if (url.includes('/rest/v1/meta_tokens')) return response(200, [{ kind: 'youtube_owner:owner1', token: 'refresh' }]);
@@ -204,6 +209,7 @@ test('이미 공개인 FP와 비소유 YouTube는 자동복원에서 변경하�
   assert.equal(result.restoreAttempted, 0);
   // OAuth refresh POST만 존재하며 댓글 모더레이션·DB 쓰기는 없다.
   assert.equal(writes, 1);
+  assert.deepEqual(ledgerWrites, ['fp-visible:visible'], '이미 공개 확인된 댓글은 원장에 남겨 다음 회차부터 건너뜀');
 });
 
 test('204 뒤에도 공개 확인이 안 된 과거 FP는 사람 결정을 보존하고 1회 격리한다', async () => {
@@ -256,4 +262,26 @@ test('204 뒤에도 공개 확인이 안 된 과거 FP는 사람 결정을 보�
     throw new Error('platform must not be called for a quarantined restore');
   }, Date.parse('2026-08-26T01:15:00Z'));
   assert.equal(skipped.candidates, 0);
+});
+
+test('11-06 quota: 공개 확인된 오탐은 다시 조회하지 않고, 남은 게 없으면 YouTube를 부르지 않는다', async () => {
+  const rows = [
+    { id: 1, source: null, platform: 'youtube', comment_id: 'visible', post_url: 'https://youtube.com/watch?v=ownedVideo1', review_decision: 'false_positive', reviewed_at: '2026-08-26T00:00:00Z' },
+  ];
+  const youtubeCalls = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = String(input);
+    if (url.includes('/negative_comment_alerts?')) return response(200, rows);
+    if (url.includes('/cost_usage_ledger')) return response(200, [{ run_key: 'fp-visible:visible' }]);
+    youtubeCalls.push(url);
+    throw new Error(`unexpected ${url}`);
+  };
+  const result = await autoRestoreYouTubeFalsePositives({
+    googleAdsClientId: 'client', googleAdsClientSecret: 'secret', supabaseUrl: 'https://db.test', supabaseKey: 'service',
+    slackBotToken: '', youtubeApiBase: 'https://youtube.test', lookbackHours: 48, maxRows: 100,
+    verificationAttempts: 1, verificationDelayMs: 1,
+  }, fetchImpl, Date.parse('2026-08-26T01:00:00Z'));
+  assert.equal(result.skippedConfirmedVisible, 1);
+  assert.equal(result.candidates, 0);
+  assert.deepEqual(youtubeCalls, [], '토큰·소유확인·댓글조회 모두 없음');
 });
