@@ -628,3 +628,56 @@ test('manual_required 행은 자동 숨김 대상이 아니다(사람 결정과 
   assert.equal(result.eligibleCandidates, 0);
   assert.equal(calls.moderation, 0);
 });
+
+test('11-06 quota: 소유 확인(channels mine)은 숨길 댓글이 있는 채널만 한다', async () => {
+  const calls = [];
+  const rejected = new Set();
+  const alerts = [
+    { id: 1, comment_id: 'commentB', post_url: 'https://youtube.com/watch?v=videoB1', review_decision: null, reviewed_by: null, reviewed_at: null },
+  ];
+  const result = await moderateYouTubeOwnerAlerts(config(), async (input, init = {}) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.includes('/rest/v1/meta_tokens')) return response(200, ['A', 'B', 'C'].map((x) => ({ kind: `youtube_owner:owner${x}`, token: `refresh${x}` })));
+    if (url.includes('/rest/v1/negative_comment_alerts') && (!init.method || init.method === 'GET')) return response(200, alerts);
+    if (url.includes('oauth2.googleapis.com')) {
+      return response(200, { access_token: `access${new URLSearchParams(init.body).get('refresh_token').slice(-1)}` });
+    }
+    if (url.includes('/channels')) return response(200, { items: [{ id: `owner${init.headers.Authorization.slice(-1)}` }] });
+    if (url.includes('/videos')) return response(200, { items: [{ id: 'videoB1', snippet: { channelId: 'ownerB' } }] });
+    if (url.includes('/comments?')) {
+      const ids = new URL(url).searchParams.get('id').split(',');
+      return response(200, { items: ids.filter((id) => !rejected.has(id)).map((id) => ({ id })) });
+    }
+    if (url.includes('/comments/setModerationStatus')) {
+      for (const id of new URL(url).searchParams.get('id').split(',')) rejected.add(id);
+      return response(204);
+    }
+    if (url.includes('/rest/v1/negative_comment_alerts') && init.method === 'PATCH') return response(200, [{ id: 1 }]);
+    throw new Error(`unexpected ${url}`);
+  }, Date.parse('2026-08-14T12:00:00Z'));
+  assert.equal(result.hidden, 1);
+  const verifies = calls.filter((call) => call.url.includes('/channels'));
+  assert.equal(verifies.length, 1, '3채널 전부가 아니라 숨길 댓글이 있는 ownerB만 확인');
+  assert.ok(verifies[0].init.headers.Authorization.endsWith('accessB'));
+});
+
+test('소유 확인에 실패한 채널의 댓글은 숨기지 않는다', async () => {
+  const calls = [];
+  const alerts = [
+    { id: 1, comment_id: 'commentB', post_url: 'https://youtube.com/watch?v=videoB1', review_decision: null, reviewed_by: null, reviewed_at: null },
+  ];
+  const result = await moderateYouTubeOwnerAlerts(config(), async (input, init = {}) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.includes('/rest/v1/meta_tokens')) return response(200, [{ kind: 'youtube_owner:ownerB', token: 'refreshB' }]);
+    if (url.includes('/rest/v1/negative_comment_alerts') && (!init.method || init.method === 'GET')) return response(200, alerts);
+    if (url.includes('oauth2.googleapis.com')) return response(200, { access_token: 'accessB' });
+    if (url.includes('/channels')) return response(200, { items: [{ id: 'someoneElse' }] });
+    if (url.includes('/videos')) return response(200, { items: [{ id: 'videoB1', snippet: { channelId: 'ownerB' } }] });
+    throw new Error(`unexpected ${url}`);
+  }, Date.parse('2026-08-14T12:00:00Z'));
+  assert.equal(result.attempted, 0);
+  assert.equal(result.ownerTokenFailures.length, 1);
+  assert.equal(calls.filter((call) => call.url.includes('setModerationStatus')).length, 0);
+});

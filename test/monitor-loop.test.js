@@ -561,6 +561,7 @@ test('quota 90%에서는 빠른 감시를 읽기 전용으로 유지하고 pendi
     gate: async () => false,
     latestScan: async () => Date.now(),
     quotaUsage: async () => ({ total: 9000, limit: 10000, ratio: 0.9, byJob: [] }),
+    claimPacingSlot: async () => ({ claimed: true }),
     runCommand: async () => {},
     runHeldReview: async () => calls.push('held'),
     runOwnerFastScan: async (scanEnv) => { calls.push('fast'); scanEnvs.push(scanEnv); },
@@ -637,4 +638,49 @@ test('핵심 스캔이 실패해도 남은 회차를 재시도하고 체인을 �
   assert.equal(starts, 4, '실패 뒤에도 남은 회차를 계속 스캔');
   assert.equal(chainCalls, 1, '실패해도 다음 실행 체인은 이어진다');
   assert.deepEqual(heartbeats.map((h) => h.iteration), [2, 3, 4], '실패한 회차는 스캔 heartbeat를 남기지 않는다');
+});
+
+test('11-06 숨김 페이싱: 사용률이 높으면 숨김은 칸을 잡은 회차에만 돌고, 빠른 감시(탐지)는 매 회차 돈다', async () => {
+  const calls = [];
+  const claims = [];
+  const taken = new Set();
+  const result = await runMonitorLoop({
+    ...BASE_ENV,
+    MONITOR_LOOP_ITERATIONS: '2',
+    YOUTUBE_OWNER_PENDING_HIDE_LOOP: 'true',
+    YOUTUBE_OWNER_FAST_SCAN_LOOP: 'true',
+  }, {
+    gate: async () => false,
+    latestScan: async () => Date.now(),
+    quotaUsage: async () => ({ total: 8000, limit: 10000, ratio: 0.8, byJob: [] }),
+    claimPacingSlot: async (name, minutes) => {
+      claims.push(`${name}:${minutes}`);
+      const key = `${name}:${minutes}`;
+      if (taken.has(key)) return { claimed: false };
+      taken.add(key);
+      return { claimed: true };
+    },
+    runCommand: async () => {},
+    runOwnerFastScan: async () => calls.push('fast'),
+    runPendingHide: async () => calls.push('hide'),
+    runFalsePositiveRestore: async () => calls.push('restore'),
+    recordOwnerFastScanOutcome: async () => {},
+    recordPendingHideOutcome: async () => {},
+    recordHeartbeat: async () => {},
+    sleep: async () => {},
+    chain: async () => disabledChain,
+  });
+  assert.deepEqual(claims, ['pending-hide:30', 'pending-hide:30']);
+  assert.deepEqual(calls, ['fast', 'hide', 'fast'], '두 번째 회차는 같은 30분 칸이라 숨김을 건너뜀');
+  assert.ok(result.quotaPausedRuns >= 1);
+});
+
+test('숨김 페이싱 기준: 75% 미만 15분, 75%부터 30분, 90%부터 60분', async () => {
+  const { youtubeQuotaConservationPlan } = await import('../src/youtube-quota-meter.js');
+  const at = (ratio) => youtubeQuotaConservationPlan({ ratio, total: ratio * 10000, limit: 10000, byJob: [] }, {}).pendingHideEveryMinutes;
+  assert.equal(at(0.74), 15);
+  assert.equal(at(0.75), 30);
+  assert.equal(at(0.89), 30);
+  assert.equal(at(0.90), 60);
+  assert.equal(at(0.97), 60);
 });

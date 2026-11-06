@@ -57,7 +57,13 @@ export function youtubeQuotaConservationPlan(usage, env = process.env) {
   const adsMax = ratioSetting(env, 'YOUTUBE_QUOTA_ADS_MAX_RATIO', nonHidingMax);
   const holdEnforceMax = ratioSetting(env, 'YOUTUBE_QUOTA_HOLD_ENFORCE_MAX_RATIO', nonHidingMax);
   const criticalMax = ratioSetting(env, 'YOUTUBE_QUOTA_CRITICAL_MAX_RATIO', 0.98);
+  // 숨김 페이싱(11-06): 숨김 1회 = 채널당 50 unit. 새 광고에 부정이 몰리면 15분마다 숨김만으로 시간당 ~400을 써
+  // 리셋 몇 시간 전에 98%에 닿고 숨김이 통째로 멈춘다. 사용률이 높으면 숨김을 모아서(30·60분 칸) 처리해
+  // 리셋까지 버틴다 — 노출이 최대 30·60분으로 늘지만 몇 시간 정지보다 낫다.
+  const paceHalfAt = ratioSetting(env, 'YOUTUBE_QUOTA_HIDE_PACE_30_RATIO', 0.75);
+  const paceHourAt = ratioSetting(env, 'YOUTUBE_QUOTA_HIDE_PACE_60_RATIO', 0.90);
   return {
+    pendingHideEveryMinutes: ratio >= paceHourAt ? 60 : ratio >= paceHalfAt ? 30 : 15,
     heldReview: ratio < heldMax,
     fastScan: ratio < criticalMax,
     fastScanHoldEnforce: ratio < holdEnforceMax,
@@ -163,6 +169,26 @@ export async function isYouTubeQuotaExhaustedToday(env = process.env, fetchImpl 
 // quota 브레이크(11-05): 오늘 사용률이 기준(기본 60%)을 넘거나 소진이면 '부정 댓글 찾기·숨기기'가 아닌 비싼 쓰기
 // (봇 보류 대행·보류 댓글 공개)를 멈춰 남은 quota를 숨김에 남긴다. 11-04~05 하루 사용 ~1만 중 절반 이상이
 // '모두 보류' 안 걸린 새 광고 19개의 댓글을 봇이 보류(50)→재공개(50)한 비용이었다. 조회 실패 시엔 멈추지 않는다(fail-open).
+// 주기 칸 선점(숨김 페이싱용): floor(now/주기) 칸을 원장 키로 한 번만 잡는다. 조회 실패는 실행(fail-open).
+export async function claimQuotaPacingSlot(env, name, minutes, fetchImpl = fetch, now = Date.now()) {
+  const db = sb(env || {});
+  const every = Math.max(1, Math.floor(Number(minutes) || 15));
+  const runKey = `quota-pace:${name}:${every}:${Math.floor(now / (every * 60 * 1000))}`;
+  if (!db) return { claimed: true, runKey, failOpen: true };
+  try {
+    const response = await fetchImpl(`${db.url}/rest/v1/cost_usage_ledger?on_conflict=run_key`, {
+      method: 'POST',
+      headers: { ...db.headers, 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=representation' },
+      body: JSON.stringify({ run_key: runKey, kst_date: kstDateKey(now), apify_usd: 0, anthropic_usd: 0 }),
+    });
+    if (!response.ok) return { claimed: true, runKey, failOpen: true };
+    const rows = await response.json().catch(() => null);
+    return { claimed: !Array.isArray(rows) || rows.length > 0, runKey };
+  } catch {
+    return { claimed: true, runKey, failOpen: true };
+  }
+}
+
 export async function quotaBrakeEngaged({ supabaseUrl, supabaseKey, ratio } = {}, fetchImpl = fetch, now = Date.now()) {
   const env = { SUPABASE_URL: supabaseUrl, SUPABASE_SERVICE_ROLE_KEY: supabaseKey };
   const limitRatio = Number.isFinite(Number(ratio)) && Number(ratio) > 0 ? Number(ratio) : 0.6;

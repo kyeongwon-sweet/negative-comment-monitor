@@ -210,7 +210,12 @@ async function googleJson(url, accessToken, fetchImpl) {
 }
 
 export async function refreshAndVerifyOwner(config, owner, fetchImpl, maxRefreshes = 2) {
-  let accessToken = await refreshGoogleAccessToken(config, owner.refreshToken, fetchImpl);
+  return verifyOwnerAccessToken(config, owner, await refreshGoogleAccessToken(config, owner.refreshToken, fetchImpl), fetchImpl, maxRefreshes);
+}
+
+// 이미 받은 access token이 그 채널 소유자 것인지 확인한다(channels mine, 1 unit). 401이면 재발급 후 재시도.
+export async function verifyOwnerAccessToken(config, owner, initialAccessToken, fetchImpl, maxRefreshes = 2) {
+  let accessToken = initialAccessToken;
   const url = new URL(`${config.youtubeApiBase}/channels`);
   url.searchParams.set('part', 'id');
   url.searchParams.set('mine', 'true');
@@ -755,22 +760,36 @@ export async function moderateYouTubeOwnerAlerts(config = loadYouTubeOwnerModera
   const owners = await loadYouTubeOwnerTokens(config, fetchImpl);
   if (!owners.length) throw new Error('No stored YouTube owner OAuth tokens');
   const accessTokens = new Map();
-  const validOwners = [];
+  const refreshedOwners = [];
   const ownerTokenFailures = [];
+  // 토큰 재발급(OAuth)은 YouTube quota가 들지 않는다. 소유 확인(channels mine, 1 unit)은 실제로 숨길 댓글이
+  // 있는 채널만 한다 — 예전엔 15분마다 11개 채널 전부 확인해 숨김 1건에도 ~25 unit씩 썼다(11-06, 72% 경고).
   for (const owner of owners) {
     try {
-      accessTokens.set(owner.channelId, await refreshAndVerifyOwner(config, owner, fetchImpl));
-      validOwners.push(owner);
+      accessTokens.set(owner.channelId, await refreshGoogleAccessToken(config, owner.refreshToken, fetchImpl));
+      refreshedOwners.push(owner);
     } catch (error) {
       ownerTokenFailures.push({ channelId: owner.channelId, stage: 'token', error: errorInfo(error) });
     }
   }
-  if (!validOwners.length) {
+  if (!refreshedOwners.length) {
     throw new Error(`All stored YouTube owner OAuth tokens failed (${ownerTokenFailures.length}/${owners.length})`);
   }
 
-  const mapped = await mapVideosToOwners(config, candidateAlerts, validOwners, accessTokens, fetchImpl);
+  const mapped = await mapVideosToOwners(config, candidateAlerts, refreshedOwners, accessTokens, fetchImpl);
   const grouped = groupAlertsByOwner(alerts, mapped.ownerByVideo, dispositionOptions);
+  const validOwners = [];
+  for (const owner of refreshedOwners) {
+    if (!(grouped.groups.get(owner.channelId) || []).length) continue;
+    try {
+      accessTokens.set(owner.channelId, await verifyOwnerAccessToken(config, owner, accessTokens.get(owner.channelId), fetchImpl));
+      validOwners.push(owner);
+    } catch (error) {
+      // 소유 확인 실패 채널의 댓글은 이번 회차에 건드리지 않는다(다음 회차 재시도).
+      grouped.groups.delete(owner.channelId);
+      ownerTokenFailures.push({ channelId: owner.channelId, stage: 'token', error: errorInfo(error) });
+    }
+  }
   const matchedCandidates = [...grouped.groups.values()]
     .reduce((sum, rows) => sum + rows.length, 0);
   const result = {

@@ -12,6 +12,7 @@ import {
   MONITOR_WATCHDOG_MAX_GAP_MINUTES,
 } from './monitor-chain.js';
 import {
+  claimQuotaPacingSlot,
   nextQuotaResetKst,
   youtubeQuotaConservationPlan,
   youtubeQuotaUsage,
@@ -198,6 +199,7 @@ export async function runMonitorLoop(env = process.env, options = {}) {
   const chain = options.chain || ((details) => chainNextMonitor(env, details));
   const codeIsStale = options.codeIsStale || (() => runCodeIsStale(env));
   const readQuotaUsage = options.quotaUsage || (() => youtubeQuotaUsage(env));
+  const claimPacingSlot = options.claimPacingSlot || ((name, minutes) => claimQuotaPacingSlot(env, name, minutes));
   let endedForNewCode = false;
   const now = options.now || Date.now;
   let dependenciesInstalled = false;
@@ -356,9 +358,17 @@ export async function runMonitorLoop(env = process.env, options = {}) {
 
     if (pendingHideEnabled) {
       const hidePlan = await quotaPlan(iteration, 'pending-hide');
+      const hideEvery = Number(hidePlan.pendingHideEveryMinutes) || 15;
+      const hideSlot = hidePlan.pendingHide && hideEvery > 15
+        ? await claimPacingSlot('pending-hide', hideEvery)
+        : { claimed: true };
       if (!hidePlan.pendingHide) {
         quotaPausedRuns += 1;
         console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} pending_hide=quota-paused priority=critical`);
+      } else if (!hideSlot.claimed) {
+        // 사용률이 높을 때 숨김을 30·60분 칸에 한 번만 모아서 한다(리셋 전 98% 정지 방지). 쌓인 댓글은 다음 칸에 한꺼번에.
+        quotaPausedRuns += 1;
+        console.error(`[monitor-loop] iteration=${iteration + 1}/${iterations} pending_hide=quota-paced every=${hideEvery}m`);
       } else {
       let hideOutcome = 'success';
       let hideReason = '15분 루프 정상';
