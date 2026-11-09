@@ -24,6 +24,7 @@ import { ensureDailyThread } from './threads.js';
 import { kstDateKey } from './schedule.js';
 import { sendAlert } from './slack.js';
 import { assertQuotaHeadroom } from './youtube-quota-meter.js';
+import { recordDeferredClassification } from './llm-health.js';
 
 export const PUBLIC_AUDIT_ACTOR = 'owner-public-audit';
 const NO_PRODUCT = '__no_product__';
@@ -345,7 +346,7 @@ export async function runPublicAudit(config, fetchImpl = fetch, now = Date.now()
     const key = `${route.scopeKey}${route.assignee ? '' : '(담당자없음)'}`;
     summary.flaggedByProduct[key] = (summary.flaggedByProduct[key] || 0) + 1;
   }
-  if (summary.deferred > 0) summary.errors.push(`판정 보류 ${summary.deferred}건(LLM 실패·예산) — 다음 회차 재판정`);
+  recordDeferredClassification(summary, llmStats);
   // 보류 원인(1차 LLM 실패 vs 강한 모델 승격 실패 vs 예산)을 로그에서 구분할 수 있게 숫자·사유 코드만 남긴다(공개 레포: 본문 없음).
   summary.llm = Object.fromEntries(Object.entries(llmStats).filter(([, v]) => typeof v === 'number' || typeof v === 'boolean' || (typeof v === 'string' && v.length <= 60)));
 

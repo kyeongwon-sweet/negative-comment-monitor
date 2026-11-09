@@ -5,6 +5,32 @@ function safeScope(value) {
   return String(value || 'classifier').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').slice(0, 48) || 'classifier';
 }
 
+// 내부 rolling budget은 실시간 감시 몫을 지키기 위해 의도적으로 호출을 멈추는 backpressure다.
+// 이를 공급자 장애와 같은 auxiliary failure로 세면, 예산이 찬 동안 fast-scan/public-audit이
+// 매 회차 degraded를 누적해 같은 원인의 경고가 중복된다. 단, 같은 회차에 5xx·인증 오류·
+// 불완전 응답 등이 섞였으면 실제 장애이므로 soft 처리하지 않는다.
+export function isExpectedBudgetDeferral(stats = {}, deferredComments = 0) {
+  const deferred = Math.max(0, Number(deferredComments || 0));
+  if (!deferred || String(stats.lastFailureCode || '') !== 'daily_budget') return false;
+  if (Number(stats.failedAttempts || 0) !== 1) return false;
+  if (Number(stats.persistentFailures || 0) > 0) return false;
+  const recordedDeferred = Number(stats.llmDeferredComments || 0);
+  return recordedDeferred === deferred;
+}
+
+export function recordDeferredClassification(summary, stats = {}) {
+  const deferred = Math.max(0, Number(summary?.deferred || 0));
+  if (!deferred) return { deferred: 0, expectedBudget: false };
+  summary.retryDeferred = deferred;
+  if (isExpectedBudgetDeferral(stats, deferred)) {
+    summary.budgetDeferred = deferred;
+    summary.deferredReason = 'daily_budget';
+    return { deferred, expectedBudget: true };
+  }
+  summary.errors.push(`판정 보류 ${deferred}건(LLM 실패·예산) — 다음 회차 재판정`);
+  return { deferred, expectedBudget: false };
+}
+
 export function summarizeLlmHealth(stats = {}, totalComments = 0) {
   const fallbackComments = Number(stats.keywordFallbackComments || 0);
   const immediateComments = Number(stats.keywordImmediateComments || 0);

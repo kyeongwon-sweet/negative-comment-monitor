@@ -143,6 +143,26 @@ test('프로젝트 공통 quota 오류는 첫 채널에서 중단해 나머지 �
   assert.ok(summary.errors.some((e) => e.includes(CH) && e.includes('quotaExceeded')));
 });
 
+test('내부 Gemini 안전예산만 찬 회차는 재처리 대기이지 빠른 감시 장애가 아니다', async () => {
+  const base = world();
+  const budgetClassifier = async (_items, _config, _unused, stats) => {
+    Object.assign(stats, {
+      failedAttempts: 1,
+      transientFailures: 1,
+      persistentFailures: 0,
+      lastFailureCode: 'daily_budget',
+    });
+    return null;
+  };
+  const summary = await runOwnerFastScan(BASE, base.fetchImpl, NOW, budgetClassifier);
+  assert.ok(summary.deferred > 0);
+  assert.equal(summary.budgetDeferred, summary.deferred);
+  assert.equal(summary.retryDeferred, summary.deferred);
+  assert.equal(summary.deferredReason, 'daily_budget');
+  assert.equal(summary.errors.some((e) => e.includes('판정 보류')), false);
+  assert.deepEqual(base.calls.rows, [], '보류분은 정상·seen으로 기록하지 않아 다음 회차에 다시 판정');
+});
+
 test('dry-run은 카드·행을 만들지 않는다', async () => {
   const { fetchImpl, calls, classifier } = world();
   const summary = await runOwnerFastScan({ ...BASE, dryRun: true }, fetchImpl, NOW, classifier);

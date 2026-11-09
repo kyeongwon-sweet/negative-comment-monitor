@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildLlmDegradedMessage, monitorLlmHealth, summarizeLlmHealth } from '../src/llm-health.js';
+import {
+  buildLlmDegradedMessage,
+  isExpectedBudgetDeferral,
+  monitorLlmHealth,
+  recordDeferredClassification,
+  summarizeLlmHealth,
+} from '../src/llm-health.js';
 
 const CONFIG = {
   supabaseUrl: 'https://db.test',
@@ -102,6 +108,39 @@ test('대량 작업 안전예산 도달은 장애가 아니라 정기 감시 몫
   assert.match(text, /대량 작업용 Gemini 안전예산 도달/);
   assert.match(text, /정기 감시 몫 보호/);
   assert.match(text, /오늘 이 1장만/);
+});
+
+test('의도된 daily_budget 단독 보류는 auxiliary 실패가 아니라 다음 회차 재처리로 기록한다', () => {
+  const summary = { deferred: 21, errors: [] };
+  const stats = {
+    failedAttempts: 1,
+    transientFailures: 1,
+    persistentFailures: 0,
+    lastFailureCode: 'daily_budget',
+    llmDeferredComments: 21,
+  };
+  assert.equal(isExpectedBudgetDeferral(stats, 21), true);
+  assert.deepEqual(recordDeferredClassification(summary, stats), { deferred: 21, expectedBudget: true });
+  assert.deepEqual(summary.errors, []);
+  assert.equal(summary.retryDeferred, 21);
+  assert.equal(summary.budgetDeferred, 21);
+  assert.equal(summary.deferredReason, 'daily_budget');
+});
+
+test('실제 LLM 장애·혼합 실패·응답 누락 보류는 계속 auxiliary 실패로 드러낸다', () => {
+  const cases = [
+    { lastFailureCode: 'server', failedAttempts: 1, transientFailures: 1, llmDeferredComments: 4 },
+    { lastFailureCode: 'daily_budget', failedAttempts: 2, transientFailures: 2, llmDeferredComments: 4 },
+    { lastFailureCode: 'daily_budget', failedAttempts: 1, persistentFailures: 1, llmDeferredComments: 4 },
+    { lastFailureCode: 'daily_budget', failedAttempts: 1, transientFailures: 1, llmDeferredComments: 3 },
+  ];
+  for (const stats of cases) {
+    const summary = { deferred: 4, errors: [] };
+    assert.equal(isExpectedBudgetDeferral(stats, 4), false);
+    recordDeferredClassification(summary, stats);
+    assert.match(summary.errors[0], /판정 보류 4건/);
+    assert.equal(summary.budgetDeferred, undefined);
+  }
 });
 
 test('1순위 Gemini 일시 오류 + 폴백 Anthropic 크레딧 부족은 즉시 경고하지 않고 3회 연속에서만 알린다', async () => {

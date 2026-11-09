@@ -102,6 +102,26 @@ test('판정 실패(LLM null)면 LLM 판정분은 카드 없이 보류로 남기
   assert.ok(summary.errors.length > 0);
 });
 
+test('내부 Gemini 안전예산만 찬 재감사는 실패 경고를 누적하지 않고 다음 회차에 다시 판정한다', async () => {
+  const base = world();
+  const budgetClassifier = async (_items, _config, _unused, stats) => {
+    Object.assign(stats, {
+      failedAttempts: 1,
+      transientFailures: 1,
+      persistentFailures: 0,
+      lastFailureCode: 'daily_budget',
+    });
+    return null;
+  };
+  const summary = await runPublicAudit(BASE, base.fetchImpl, Date.parse('2026-10-30T02:00:00Z'), budgetClassifier, NO_ADS);
+  assert.ok(summary.deferred > 0);
+  assert.equal(summary.budgetDeferred, summary.deferred);
+  assert.equal(summary.retryDeferred, summary.deferred);
+  assert.equal(summary.deferredReason, 'daily_budget');
+  assert.equal(summary.errors.some((e) => e.includes('판정 보류')), false);
+  assert.deepEqual(base.calls.rows.map((r) => r.comment_id), ['decided'], '하드 부정만 처리하고 문맥 보류분은 다음 회차에 재판정');
+});
+
 test('상태표에 제목이 없는 영상은 videos.list로 제목을 채워 상품(제과)을 맞게 라우팅한다', async () => {
   const { fetchImpl, calls, classifier } = world({ titleInState: false, alerted: ['decided'] });
   await runPublicAudit(BASE, fetchImpl, Date.parse('2026-10-30T02:00:00Z'), classifier, NO_ADS);

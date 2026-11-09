@@ -26,6 +26,7 @@ import { sendAlert } from './slack.js';
 import { retrySlackRateLimit } from './youtube-ads-run.js';
 import { parseHeldReviewChannels } from './youtube-owner-held-review.js';
 import { quotaBrakeEngaged, recordYouTubeHoldCost } from './youtube-quota-meter.js';
+import { recordDeferredClassification } from './llm-health.js';
 
 const HOUR = 60 * 60 * 1000;
 const HELD_REVIEW_LEDGER_PREFIX = 'held-review:';
@@ -452,7 +453,7 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
     });
   });
   summary.flagged = flagged.length;
-  if (summary.deferred > 0) summary.errors.push(`판정 보류 ${summary.deferred}건(LLM 실패·예산) — 다음 회차 재판정`);
+  recordDeferredClassification(summary, llmStats);
   if (summary.ownerGateUnreviewed > 0) {
     // 강한 모델 2차 판정 없이 부정을 억제했다 = 설정 누락(OWNED_BRAND_ESCALATION_MODEL) 신호.
     summary.errors.push(`강한 모델 미검토 억제 ${summary.ownerGateUnreviewed}건`);
