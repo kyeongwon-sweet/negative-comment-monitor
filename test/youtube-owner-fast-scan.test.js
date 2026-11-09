@@ -348,3 +348,45 @@ test("11-06 회귀: 절약 모드가 보류 대행을 일시정지하면 옛 '�
   assert.equal(holdPosts(base.calls).length, 0, '보류 누락·보류 실패 알림 모두 없음');
   assert.ok(base.calls.rows.length > 0, '부정 댓글 카드·알림행(→자동숨김)은 그대로');
 });
+
+// 11-09 재발방지: 보류 대행 비용을 채널·영상 단위로 원장에 남겨 할당량 경고가 원인 채널을 짚게 한다.
+test("보류 대행 비용 기록: 채널당 요청 수·영상ID·채널명을 yt-hold 원장에 남긴다", async () => {
+  const base = world();
+  base.calls.holdMode = true;
+  const holdCostKeys = [];
+  const fetchImpl = async (url, init = {}) => {
+    const u = new URL(String(url));
+    if (u.pathname.endsWith('/commentThreads') && u.searchParams.get('allThreadsRelatedToChannelId') === CH2) {
+      return { ok: true, status: 200, json: async () => ({ items: [
+        thread('a1', 'v3', '맛있겠다', ago(1)), thread('a2', 'v4', '좋아요', ago(1)),
+      ] }) };
+    }
+    if (init.method === 'POST' && String(init.body || '').includes('"yt-hold:')) {
+      holdCostKeys.push(JSON.parse(init.body).run_key);
+      return { ok: true, status: 201, json: async () => [] };
+    }
+    return base.fetchImpl(url, init);
+  };
+  const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, base.classifier);
+  assert.equal(summary.holdEnforced, 2);
+  assert.equal(holdCostKeys.length, 1, '채널 한 번 보류 = 기록 한 줄');
+  const { parseHoldCostKey } = await import('../src/youtube-quota-meter.js');
+  const parsed = parseHoldCostKey(holdCostKeys[0]);
+  assert.equal(parsed.channelId, CH2);
+  assert.equal(parsed.calls, 1);
+  assert.deepEqual(parsed.videoIds.sort(), ['v3', 'v4']);
+  assert.ok(parsed.channelName, '채널명이 남는다');
+});
+
+test("보류 대행 비용 기록이 실패해도 보류·감시는 그대로 간다(fail-open)", async () => {
+  const base = world();
+  base.calls.holdMode = true;
+  const fetchImpl = async (url, init = {}) => {
+    if (init.method === 'POST' && String(init.body || '').includes('"yt-hold:')) throw new Error('db down');
+    return base.fetchImpl(url, init);
+  };
+  const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, base.classifier);
+  assert.deepEqual(base.calls.holds, ['bad2']);
+  assert.equal(summary.holdEnforced, 1);
+  assert.ok(!summary.errors.some((e) => e.includes('보류 대행 실패')));
+});

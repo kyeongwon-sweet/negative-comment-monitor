@@ -25,7 +25,7 @@ import { kstDateKey } from './schedule.js';
 import { sendAlert } from './slack.js';
 import { retrySlackRateLimit } from './youtube-ads-run.js';
 import { parseHeldReviewChannels } from './youtube-owner-held-review.js';
-import { quotaBrakeEngaged } from './youtube-quota-meter.js';
+import { quotaBrakeEngaged, recordYouTubeHoldCost } from './youtube-quota-meter.js';
 
 const HOUR = 60 * 60 * 1000;
 const HELD_REVIEW_LEDGER_PREFIX = 'held-review:';
@@ -356,7 +356,21 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
           // 댓글당 한 번만(원장 선점). YouTube가 보류를 무시하는 예외 댓글을 매 회차 다시 보류해 quota를 태우지 않게.
           const allIds = channelLeaks.flatMap((leak) => leak.leaked.map((c) => c.id));
           const fresh = new Set(await claimHoldEnforce(config, kstDateKey(now), allIds, fetchImpl));
-          if (fresh.size) await holdComments(config, [...fresh], await tokenFor(owner), fetchImpl);
+          if (fresh.size) {
+            await holdComments(config, [...fresh], await tokenFor(owner), fetchImpl);
+            // 할당량 경고에 '어느 채널 새 영상 때문에 얼마'를 붙이기 위한 비용 기록(실패해도 진행).
+            await recordYouTubeHoldCost(
+              { SUPABASE_URL: config.supabaseUrl, SUPABASE_SERVICE_ROLE_KEY: config.supabaseKey },
+              {
+                channelId,
+                channelName: channelLeaks[0]?.channelName || '',
+                videoIds: channelLeaks.filter((leak) => leak.leaked.some((c) => fresh.has(c.id))).map((leak) => leak.videoId),
+                calls: Math.ceil(fresh.size / 50),
+              },
+              fetchImpl,
+              now,
+            );
+          }
           // 예전에 이미 보류했는데 또 공개 = 보류가 안 먹음(사람 승인·승인된 사용자 등). 반영 지연은 유예한다.
           const retried = allIds.filter((id) => !fresh.has(id));
           const triedAt = retried.length ? await holdEnforceTimes(config, retried, fetchImpl) : new Map();

@@ -143,3 +143,30 @@ test('사용량 조회에 예측치가 붙는다', async () => {
   assert.equal(usage.day, '2026-11-05');
   assert.ok(usage.projectedRatio > 1.0);
 });
+
+// 11-09 재발방지: 할당량 경고에 '모두 보류' 빠진 채널·영상과 한 번에 끝내는 방법을 붙인다.
+test("보류 대행 비용: 키 왕복·채널별 합산·경고 문구", async () => {
+  const { holdCostKey, parseHoldCostKey, loadYouTubeHoldCost, holdCostLines } = await import('../src/youtube-quota-meter.js');
+  const day = quotaDayKey(NOW);
+  const k1 = holdCostKey(day, 'UCa', 1, NOW, ['v1', 'v2', 'v1'], '먹는김에');
+  const k2 = holdCostKey(day, 'UCa', 2, NOW + 1, ['v3'], '먹는김에');
+  const k3 = holdCostKey(day, 'UCb', 1, NOW + 2, ['w1'], '먹짱언니_mukzzang unnie');
+  assert.deepEqual(parseHoldCostKey(k1), { day, channelId: 'UCa', calls: 1, videoIds: ['v1', 'v2'], channelName: '먹는김에' });
+  assert.equal(parseHoldCostKey(`yt-units:${day}:job:run:12`), null);
+  const env = { SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'svc' };
+  let seenUrl = '';
+  const rows = await loadYouTubeHoldCost(env, async (url) => {
+    seenUrl = decodeURIComponent(String(url));
+    return { ok: true, status: 200, json: async () => [{ run_key: k1 }, { run_key: k2 }, { run_key: k3 }, { run_key: 'yt-hold:broken' }] };
+  }, NOW);
+  assert.match(seenUrl, new RegExp(`yt-hold:${day}:\*`));
+  assert.deepEqual(rows.map((r) => [r.channelName, r.calls, r.units, r.videoIds.length]), [['먹는김에', 3, 150, 3], ['먹짱언니_mukzzang unnie', 1, 50, 1]]);
+  const text = quotaAlertMessage('70', { total: 7000, limit: 10000, ratio: 0.7, byJob: [] }, NOW, '', rows);
+  assert.match(text, /'모두 보류' 빠진 새 영상/);
+  assert.match(text, /먹는김에: 영상 3개 · 보류 3번/);
+  assert.match(text, /studio\.youtube\.com\/video\/v1\/edit/);
+  assert.match(text, /기본값/);
+  assert.deepEqual(holdCostLines([]), [], '보류 대행이 없던 날은 문구 없음');
+  assert.doesNotMatch(quotaAlertMessage('70', { total: 7000, limit: 10000, ratio: 0.7, byJob: [] }, NOW), /모두 보류/);
+  assert.deepEqual(await loadYouTubeHoldCost(env, async () => { throw new Error('down'); }, NOW), [], '조회 실패면 빈 목록(경고는 그대로 나감)');
+});

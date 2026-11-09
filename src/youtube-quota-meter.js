@@ -232,12 +232,93 @@ export async function quotaBrakeEngaged({ supabaseUrl, supabaseKey, ratio } = {}
   }
 }
 
-export function quotaAlertMessage(level, usage, now = Date.now(), assignee = '') {
+// '모두 보류' 누락 비용 원장(11-09 재발방지). 할당량 경고(11-04·05·06·07)가 반복된 큰 원인은 새 광고를 '모두 보류' 없이
+// 올리는 것 — 봇이 공개 댓글을 대신 보류(50)하고 승인 봇이 다시 공개(50)해 댓글마다 ~100이 든다. 영상마다 알리지는
+// 않되(11-03 사용자), 할당량 경고에 '어느 채널 때문에 얼마'와 채널 기본설정 한 번이면 끝난다는 걸 붙여 사람이 바로 끊게 한다.
+// 키: yt-hold:<PT날짜>:<채널ID>:<요청수>:<시각>:<영상ID,...>:<채널명(URI 인코딩)>. 공개 레포라 로그 아닌 원장에만 둔다.
+const HOLD_COST_PREFIX = 'yt-hold:';
+
+export function holdCostKey(day, channelId, calls, now, videoIds, channelName = '') {
+  const videos = [...new Set((videoIds || []).map((id) => String(id).replace(/[^A-Za-z0-9_-]/g, '')).filter(Boolean))].slice(0, 20);
+  return `${HOLD_COST_PREFIX}${day}:${String(channelId).replace(/:/g, '')}:${Math.max(1, Number(calls) || 1)}:${now}:${videos.join(',')}:${encodeURIComponent(String(channelName || '').slice(0, 40))}`;
+}
+
+export function parseHoldCostKey(runKey) {
+  const parts = String(runKey || '').split(':');
+  if (parts[0] !== 'yt-hold' || parts.length < 7) return null;
+  const calls = Number(parts[3]);
+  if (!Number.isFinite(calls)) return null;
+  let channelName = '';
+  try { channelName = decodeURIComponent(parts.slice(6).join(':')); } catch { channelName = ''; }
+  return { day: parts[1], channelId: parts[2], calls, videoIds: parts[5] ? parts[5].split(',') : [], channelName };
+}
+
+// 보류 대행 1번(채널당 setModerationStatus 요청 수)을 남긴다. 실패해도 보류 자체는 막지 않는다.
+export async function recordYouTubeHoldCost(env, { channelId, channelName, videoIds, calls }, fetchImpl = fetch, now = Date.now()) {
+  const db = sb(env || {});
+  if (!db || !channelId) return false;
+  try {
+    const response = await fetchImpl(`${db.url}/rest/v1/cost_usage_ledger?on_conflict=run_key`, {
+      method: 'POST',
+      headers: { ...db.headers, 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' },
+      body: JSON.stringify({ run_key: holdCostKey(quotaDayKey(now), channelId, calls, now, videoIds, channelName), kst_date: kstDateKey(now), apify_usd: 0, anthropic_usd: 0 }),
+    });
+    return Boolean(response?.ok);
+  } catch {
+    return false;
+  }
+}
+
+// 오늘(PT) 채널별 보류 대행 요약: [{ channelId, channelName, calls, units, videoIds }] (많이 쓴 순). 조회 실패 시 [].
+export async function loadYouTubeHoldCost(env, fetchImpl = fetch, now = Date.now()) {
+  const db = sb(env || {});
+  if (!db) return [];
+  try {
+    const byChannel = new Map();
+    for (let offset = 0; ; offset += 1000) {
+      const response = await fetchImpl(
+        `${db.url}/rest/v1/cost_usage_ledger?select=run_key&run_key=like.${encodeURIComponent(`${HOLD_COST_PREFIX}${quotaDayKey(now)}:*`)}&order=run_key.asc&offset=${offset}&limit=1000`,
+        { headers: db.headers },
+      );
+      if (!response.ok) return [];
+      const rows = await response.json();
+      for (const row of Array.isArray(rows) ? rows : []) {
+        const parsed = parseHoldCostKey(row.run_key);
+        if (!parsed) continue;
+        const entry = byChannel.get(parsed.channelId) || { channelId: parsed.channelId, channelName: '', calls: 0, videoIds: new Set() };
+        entry.calls += parsed.calls;
+        if (parsed.channelName) entry.channelName = parsed.channelName;
+        for (const id of parsed.videoIds) entry.videoIds.add(id);
+        byChannel.set(parsed.channelId, entry);
+      }
+      if (!Array.isArray(rows) || rows.length < 1000) break;
+    }
+    return [...byChannel.values()]
+      .map((e) => ({ ...e, units: e.calls * 50, videoIds: [...e.videoIds] }))
+      .sort((a, b) => b.units - a.units);
+  } catch {
+    return [];
+  }
+}
+
+export function holdCostLines(holdCost) {
+  const rows = (holdCost || []).filter((c) => c.calls > 0);
+  if (!rows.length) return [];
+  const units = rows.reduce((sum, c) => sum + c.units, 0);
+  return [
+    `이 중 *'모두 보류' 빠진 새 영상* 때문에 쓴 양: 봇 대신 보류 ${units} (괜찮은 댓글 다시 공개까지 치면 최대 약 ${units * 2})`,
+    ...rows.slice(0, 5).map((c) => `• ${c.channelName || c.channelId}: 영상 ${c.videoIds.length}개 · 보류 ${c.calls}번 — `
+      + c.videoIds.slice(0, 3).map((id) => `<https://studio.youtube.com/video/${id}/edit|${id}>`).join(' ')),
+    '근본 해결(한 번만): 위 채널 스튜디오 › 설정 › 커뮤니티 › *기본값* › 새 동영상 댓글을 *검토를 위해 모든 댓글 보류*로 켜 두면 앞으로 올리는 영상은 이 비용이 0입니다(이미 올린 영상은 영상별로 바꿔야 함).',
+  ];
+}
+
+export function quotaAlertMessage(level, usage, now = Date.now(), assignee = '', holdCost = []) {
   const top = usage.byJob.slice(0, 5).map(([job, units]) => `${job} ${units}`).join(', ');
   const head = level === 'exhausted'
     ? `:rotating_light: *YouTube API 일일 할당량 소진* — 소유채널 빠른 감시·승인·자동숨김이 ${nextQuotaResetKst(now)} KST(리셋)까지 멈춥니다.`
     : `:warning: *YouTube API 할당량 ${Math.round(usage.ratio * 100)}% 사용* (${usage.total}/${usage.limit}) — 리셋 ${nextQuotaResetKst(now)} KST.`;
-  const lines = [head, `오늘 많이 쓴 작업: ${top || '기록 없음'}`];
+  const lines = [head, `오늘 많이 쓴 작업: ${top || '기록 없음'}`, ...holdCostLines(holdCost)];
   if (level !== 'exhausted') {
     lines.push('자동 절약 모드: 정상댓글 공개·오탐 복원·인지광고 전수조회부터 멈추고, 부정 탐지·숨김용 quota를 우선 보존합니다.');
     lines.push('전체 영상 프로브·재감사 같은 대량 수동 작업은 리셋 뒤에 돌려주세요.');
@@ -277,10 +358,11 @@ export async function flushYouTubeQuotaMeter(state, env = process.env, now = Dat
   if (!usage) return;
   const level = state.exhausted ? 'exhausted' : usage.ratio >= 0.9 ? '90' : usage.ratio >= 0.7 ? '70' : '';
   if (!level || !(await claimAlert(db, day, level, now))) return;
+  const holdCost = await loadYouTubeHoldCost(env, fetch, now);
   await fetch('https://slack.com/api/chat.postMessage', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify({ channel, text: quotaAlertMessage(level, usage, now, String(env.SLACK_ASSIGNEE_OTHER || '').trim()), unfurl_links: false }),
+    body: JSON.stringify({ channel, text: quotaAlertMessage(level, usage, now, String(env.SLACK_ASSIGNEE_OTHER || '').trim(), holdCost), unfurl_links: false }),
   });
 }
 
