@@ -152,6 +152,8 @@ export function loadConfig(env = process.env, now = Date.now()) {
     // 댓글만 이 '강한 모델'로 2차 판정한다. 비어 있으면 승격 비활성(기본). 모델명 접두어로 공급자를
     // 추론한다(claude*→Anthropic, gemini*→Gemini). ⚠️Anthropic 모델은 계정 크레딧이 있어야 작동한다.
     ownedBrandEscalationModel: String(env.OWNED_BRAND_ESCALATION_MODEL || '').trim(),
+    // 강한 모델 묶음이 503 등으로 실패하면 이만큼 쉬고 실패 묶음만 1회 재시도(0=즉시). 11-12 공개 재감사 degraded.
+    ownedEscalationRetryPauseMs: Math.max(0, Math.min(60_000, Number(env.OWNED_ESCALATION_RETRY_PAUSE_MS ?? 20_000))),
     llmFailureThreshold: Math.max(1, Number(env.LLM_FAILURE_THRESHOLD || 3)),
     llmFailureAlertCooldownHours: Math.max(1, Number(env.LLM_FAILURE_ALERT_COOLDOWN_HOURS || 12)),
     sourceSpreadsheetId: String(env.SOURCE_SPREADSHEET_ID || '10WpAQU9TAsi3hRZ3ELvcQYj7Z228ILXfF6BUGz495Ak').trim(),

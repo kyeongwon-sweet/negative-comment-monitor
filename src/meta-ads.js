@@ -76,6 +76,7 @@ export function loadMetaAdsConfig(env = process.env, now = Date.now()) {
     // 이 로더를 상속하는 소유·광고 경로에 전달된다(09-21~10-28 누락 → 승격 미작동, 5q7z3FExo_Q).
     // 분류기가 읽는 키의 로더 간 동등성은 test/classifier-config-parity.test.js가 강제한다.
     ownedBrandEscalationModel: String(env.OWNED_BRAND_ESCALATION_MODEL || '').trim(),
+    ownedEscalationRetryPauseMs: Math.max(0, Math.min(60_000, Number(env.OWNED_ESCALATION_RETRY_PAUSE_MS ?? 20_000))),
     llmFailureThreshold: Math.max(1, Number(env.LLM_FAILURE_THRESHOLD || 3)),
     llmFailureAlertCooldownHours: Math.max(1, Number(env.LLM_FAILURE_ALERT_COOLDOWN_HOURS || 12)),
     metaGraphBase: String(env.META_GRAPH_BASE || DEFAULT_META_GRAPH).trim().replace(/\/$/, ''),

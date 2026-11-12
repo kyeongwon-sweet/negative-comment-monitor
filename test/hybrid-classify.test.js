@@ -661,7 +661,7 @@ test('5q7z3FExo_Q 재발방지: 강한 모델 호출이 실패(404 등 null)하�
     strongFails,
     stats,
   );
-  assert.equal(call, 2, '강한 모델 호출을 시도해야 함');
+  assert.equal(call, 3, '강한 모델 호출 + 실패 묶음 1회 재시도');
   // 1차 '부정'은 게이트 억제·캐시 고착 대신 보류 → 다음 회차 재판정.
   assert.equal(risk.engine, 'llm-deferred');
   assert.equal(risk.alert, false);
@@ -669,6 +669,85 @@ test('5q7z3FExo_Q 재발방지: 강한 모델 호출이 실패(404 등 null)하�
   assert.equal(stats.llmDeferredComments, 1);
   assert.equal(stats.ownedEscalationSkipped, 1);
   assert.equal(stats.ownedEscalationSkipReason, 'escalation_call_failed');
+});
+
+test('11-12 공개 재감사 재발방지: 강한 모델 묶음 하나가 실패해도 나머지 묶음 결과는 유지하고 실패 묶음만 보류한다', async () => {
+  // 1차: 전부 약한 '부정' 1건 + '정상' 다수. 강한 모델 2번째 묶음만 계속 실패(503 소진).
+  const texts = Array.from({ length: 60 }, (_, i) => ({ text: i % 20 === 0 ? `애매한 부정 ${i}` : `그냥 댓글 ${i}` }));
+  let strongCalls = 0;
+  const llm = async (items, cfg) => {
+    if (cfg.geminiQuotaClass !== 'escalation') {
+      return items.map((item) => (item.text.startsWith('애매한')
+        ? { alert: true, category: '광고/바이럴 의심', reason: 'r', priority: 'normal' }
+        : { alert: false, category: '정상댓글', reason: '', priority: 'normal' }));
+    }
+    strongCalls += 1;
+    if (items[0].text === texts[25].text) return null; // 2번째 묶음(25~49)은 재시도도 실패
+    return items.map(() => ({ alert: false, category: '정상댓글', reason: '', priority: 'normal' }));
+  };
+  const stats = {};
+  const risks = await classifyCommentsHybrid(
+    texts,
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true, fullContextReview: true },
+    { geminiKey: 'key', ownedBrandEscalationModel: 'gemini-3.5-flash-lite', ownedEscalationRetryPauseMs: 0 },
+    llm,
+    stats,
+  );
+  assert.equal(strongCalls, 4, '묶음 3개 + 실패 묶음 1회 재시도');
+  assert.equal(stats.ownedEscalationSkipped, 25, '실패 묶음만 미검토');
+  assert.equal(stats.ownedEscalationChecked, 35, '성공 묶음 결과는 살린다');
+  assert.equal(stats.ownedEscalationRetriedGroups, 1);
+  assert.equal(stats.ownedEscalationRecoveredGroups || 0, 0);
+  // 실패 묶음 안의 약한 부정(40)만 보류, 성공 묶음의 약한 부정(0, 20)은 강한 모델 판정 반영.
+  assert.equal(stats.llmDeferredComments, 1);
+  assert.equal(risks[40].engine, 'llm-deferred');
+  assert.equal(risks[0].ownedEscalationReviewed, true);
+  assert.equal(risks[20].ownedEscalationReviewed, true);
+});
+
+test('11-12 공개 재감사 재발방지: 일시 실패한 묶음은 1회 재시도로 회복되면 보류하지 않는다', async () => {
+  let strongCalls = 0;
+  const llm = async (items, cfg) => {
+    if (cfg.geminiQuotaClass !== 'escalation') {
+      return items.map(() => ({ alert: true, category: '광고/바이럴 의심', reason: 'r', priority: 'normal' }));
+    }
+    strongCalls += 1;
+    if (strongCalls === 1) return null; // 첫 시도 503 소진 → 재시도에선 회복
+    return items.map(() => ({ alert: true, category: '브랜드 적대/조롱', reason: 'strong', priority: 'high' }));
+  };
+  const stats = {};
+  const [risk] = await classifyCommentsHybrid(
+    [{ text: '요즘 이런 영상 너무 자주 보이네요' }],
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true, fullContextReview: true },
+    { geminiKey: 'key', ownedBrandEscalationModel: 'gemini-3.5-flash-lite', ownedEscalationRetryPauseMs: 0 },
+    llm,
+    stats,
+  );
+  assert.equal(strongCalls, 2);
+  assert.equal(risk.engine, 'llm-strong-owned');
+  assert.equal(stats.ownedEscalationSkipped || 0, 0);
+  assert.equal(stats.llmDeferredComments || 0, 0);
+  assert.equal(stats.ownedEscalationRecoveredGroups, 1);
+});
+
+test('11-12 재발방지: 강한 모델 회로가 열렸으면(예산·영구 오류) 재시도하지 않는다', async () => {
+  let strongCalls = 0;
+  const stats = {};
+  const llm = async (items, cfg, _f, s) => {
+    if (cfg.geminiQuotaClass !== 'escalation') return items.map(() => ({ alert: true, category: '광고/바이럴 의심', reason: 'r', priority: 'normal' }));
+    strongCalls += 1;
+    s.providerCircuit = { gemini: true };
+    return null;
+  };
+  await classifyCommentsHybrid(
+    [{ text: '요즘 이런 영상 너무 자주 보이네요' }],
+    { brandName: '라라스윗', ownedChannelBrandHostilityScope: true, fullContextReview: true },
+    { geminiKey: 'key', ownedBrandEscalationModel: 'gemini-3.5-flash-lite', ownedEscalationRetryPauseMs: 0 },
+    llm,
+    stats,
+  );
+  assert.equal(strongCalls, 1);
+  assert.equal(stats.ownedEscalationSkipped, 1);
 });
 
 test('5q7z3FExo_Q 회귀: 바이럴 피로·거부 표현은 소유 지면 하드넷으로 확정하고 중립 언급은 건드리지 않는다', async () => {

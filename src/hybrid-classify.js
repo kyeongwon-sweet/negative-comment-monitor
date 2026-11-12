@@ -17,6 +17,9 @@ function humanFalsePositiveResult() {
   return { alert: false, category: '정상댓글', priority: 'none', entity: { matched: true }, engine: 'human-fp', reason: '사람 오탐 판정(false_positive)' };
 }
 
+// 강한 모델 2차 판정 호출 단위(llm.js CHUNK와 같게). 실패가 이 단위 안에 갇힌다.
+const ESCALATION_GROUP_SIZE = 25;
+
 function llmDeferredResult(previous = {}) {
   return {
     ...previous,
@@ -293,23 +296,48 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
         // 강한 모델은 모델별 무료 한도가 따로다. 1차 실시간 감시 예산(gemini-request:*)을 갉아먹지 않게
         // 별도 rolling 예산(gemini-escalation:*)으로 센다(gemini-budget.js).
         : { ...config, llmProvider: 'gemini', anthropicKey: '', geminiModel: escalationModel, geminiQuotaClass: 'escalation' };
-      let escResults = null;
-      try {
-        escResults = await llmClassifier(escRefs.map((r) => ({
-          ...r.comment,
-          // 1차와 같은 지면 정책으로 판정한다(인지광고=엄격 [인지광고], 소유=[소유채널]). 소유 강제 시
-          // Meta·TikTok 광고 댓글이 소유채널 정책으로 판정된다.
-          ownedChannelBrandHostilityScope: entries[r.entry]?.target?.ownedChannelBrandHostilityScope === true,
-          awarenessAdScope: entries[r.entry]?.target?.awarenessAdScope === true,
-        })), strongConfig, undefined, stats);
-      } catch {
-        escResults = null; // 강한 모델 실패 → 승격 없이 1차 결과 유지.
+      // 묶음(25건) 단위로 호출하고 실패를 묶음 안에 가둔다. 11-10~11-12: 269건을 한 번에 넘기면
+      // 11개 청크 중 1개의 503(재시도 4회 소진)만으로 성공한 10개 청크 결과까지 전부 버려져
+      // 269건 미검토·약한 부정 5~66건 보류 → 공개 재감사 degraded가 하루 걸러 반복됐다.
+      const escalationCall = async (refs) => {
+        try {
+          const result = await llmClassifier(refs.map((r) => ({
+            ...r.comment,
+            // 1차와 같은 지면 정책으로 판정한다(인지광고=엄격 [인지광고], 소유=[소유채널]). 소유 강제 시
+            // Meta·TikTok 광고 댓글이 소유채널 정책으로 판정된다.
+            ownedChannelBrandHostilityScope: entries[r.entry]?.target?.ownedChannelBrandHostilityScope === true,
+            awarenessAdScope: entries[r.entry]?.target?.awarenessAdScope === true,
+          })), strongConfig, undefined, stats);
+          return Array.isArray(result) ? result : null;
+        } catch {
+          return null; // 강한 모델 실패 → 그 묶음만 승격 없이 1차 결과 유지.
+        }
+      };
+      const groups = [];
+      for (let g = 0; g < escRefs.length; g += ESCALATION_GROUP_SIZE) {
+        groups.push({ refs: escRefs.slice(g, g + ESCALATION_GROUP_SIZE), results: null });
       }
+      for (const group of groups) group.results = await escalationCall(group.refs);
+      // 503 과부하는 수십 초면 풀리는 경우가 많다. 실패 묶음만 한 번 쉬었다 재시도한다.
+      // 영구 실패(예산·키·404)로 회로가 열렸으면 재시도해도 소용없으므로 건너뛴다.
+      const escProvider = escalationIsAnthropic ? 'anthropic' : 'gemini';
+      const failedGroups = groups.filter((g) => !g.results);
+      if (failedGroups.length && !stats?.providerCircuit?.[escProvider]) {
+        const pauseMs = Math.max(0, Number(config.ownedEscalationRetryPauseMs || 0));
+        if (pauseMs) await new Promise((resolve) => setTimeout(resolve, pauseMs));
+        for (const group of failedGroups) {
+          group.results = await escalationCall(group.refs);
+          if (stats) stats.ownedEscalationRetriedGroups = (stats.ownedEscalationRetriedGroups || 0) + 1;
+          if (group.results && stats) stats.ownedEscalationRecoveredGroups = (stats.ownedEscalationRecoveredGroups || 0) + 1;
+        }
+      }
+      const failedRefs = groups.filter((g) => !g.results).flatMap((g) => g.refs);
+      const okPairs = groups.filter((g) => g.results).flatMap((g) => g.refs.map((ref, k) => ({ ref, verdict: g.results[k] })));
       // 실패는 1차 결과를 유지하지만 '무해'하지 않다: 약한 LLM 부정은 소유 게이트에 억제된다.
       // 10-28 확인: gemini-3.1-pro(404)로 승격이 매 회차 실패했는데 LLM health는 1차 성공 때문에 정상이었다.
-      if (!Array.isArray(escResults)) {
+      if (failedRefs.length) {
         if (stats) {
-          stats.ownedEscalationSkipped = (stats.ownedEscalationSkipped || 0) + escRefs.length;
+          stats.ownedEscalationSkipped = (stats.ownedEscalationSkipped || 0) + failedRefs.length;
           stats.ownedEscalationSkipReason = 'escalation_call_failed';
         }
         // 1차 '부정'을 그대로 두면 게이트가 억제하고, 캐시에 굳어 다음 회차엔 승격 대상(engine==='llm')에서도
@@ -317,7 +345,7 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
         // 1차 '정상'은 1차 결과를 유지한다(구제 기회만 놓침, 매 회차 재스캔 비용 방지).
         const deferredCacheFps = new Set();
         let deferred = 0;
-        for (const { entry, index } of escRefs) {
+        for (const { entry, index } of failedRefs) {
           const current = prepared[entry].out[index];
           if (current?.alert !== true) continue;
           prepared[entry].out[index] = llmDeferredResult(current);
@@ -333,11 +361,10 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
           stats.ownedEscalationDeferred = (stats.ownedEscalationDeferred || 0) + deferred;
         }
       }
-      if (Array.isArray(escResults)) {
+      if (okPairs.length) {
         let promotedCount = 0;
-        for (let k = 0; k < escRefs.length; k += 1) {
-          const verdict = escResults[k];
-          const { entry, index } = escRefs[k];
+        for (const { ref, verdict } of okPairs) {
+          const { entry, index } = ref;
           if (!verdict || verdict.alert !== true) {
             // 강한 모델이 본 뒤 '정상'이면 게이트 억제가 정당하다(run의 미검토 억제 감시가 이 표시를 본다).
             if (verdict) prepared[entry].out[index] = { ...prepared[entry].out[index], ownedEscalationReviewed: true };
@@ -357,7 +384,7 @@ export async function classifyTargetsBatched(entries, config, llmClassifier = cl
           promotedCount += 1;
         }
         if (stats) {
-          stats.ownedEscalationChecked = (stats.ownedEscalationChecked || 0) + escRefs.length;
+          stats.ownedEscalationChecked = (stats.ownedEscalationChecked || 0) + okPairs.length;
           stats.ownedEscalatedAlerts = (stats.ownedEscalatedAlerts || 0) + promotedCount;
         }
       }
