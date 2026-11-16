@@ -165,7 +165,10 @@ test("보류 대행 비용: 키 왕복·채널별 합산·경고 문구", async 
   assert.match(text, /'모두 보류' 빠진 새 영상/);
   assert.match(text, /먹는김에: 영상 3개 · 보류 3번/);
   assert.match(text, /studio\.youtube\.com\/video\/v1\/edit/);
-  assert.match(text, /기본값/);
+  // 11-16: 광고용 일부 공개 영상은 채널 기본값을 따르지 않음 → 영상별 조치를 안내하고, '기본값만 켜면 0'이라고 하지 않는다.
+  assert.match(text, /댓글 및 평가 › \*검토\*를 \*모두 보류\*/);
+  assert.match(text, /기본값\*\(설정 › 커뮤니티\)을 따르지 않고/);
+  assert.doesNotMatch(text, /앞으로 올리는 영상은 이 비용이 0/);
   assert.deepEqual(holdCostLines([]), [], '보류 대행이 없던 날은 문구 없음');
   assert.doesNotMatch(quotaAlertMessage('70', { total: 7000, limit: 10000, ratio: 0.7, byJob: [] }, NOW), /모두 보류/);
   assert.deepEqual(await loadYouTubeHoldCost(env, async () => { throw new Error('down'); }, NOW), [], '조회 실패면 빈 목록(경고는 그대로 나감)');
