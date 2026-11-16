@@ -448,7 +448,7 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
         }
       }
     }
-    // 첫 자동 보류 성공 직후 영상별로 딱 한 번 알린다. 영상 단위 영구 키라 다음 날에도 중복되지 않으며,
+    // 보류 누락을 감지하면 자동 보류 성공 여부와 관계없이 영상별로 딱 한 번 알린다. 영상 단위 영구 키라 다음 날에도 중복되지 않으며,
     // Slack 실패 시 선점을 풀어 다음 빠른 감시 회차가 재시도한다.
     const configMissing = leaks;
     if (configMissing.length && !config.dryRun && config.holdEnforce) {
