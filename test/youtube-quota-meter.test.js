@@ -151,7 +151,7 @@ test("보류 대행 비용: 키 왕복·채널별 합산·경고 문구", async 
   const k1 = holdCostKey(day, 'UCa', 1, NOW, ['v1', 'v2', 'v1'], '먹는김에');
   const k2 = holdCostKey(day, 'UCa', 2, NOW + 1, ['v3'], '먹는김에');
   const k3 = holdCostKey(day, 'UCb', 1, NOW + 2, ['w1'], '먹짱언니_mukzzang unnie');
-  assert.deepEqual(parseHoldCostKey(k1), { day, channelId: 'UCa', calls: 1, videoIds: ['v1', 'v2'], channelName: '먹는김에' });
+  assert.deepEqual(parseHoldCostKey(k1), { day, channelId: 'UCa', calls: 1, at: NOW, videoIds: ['v1', 'v2'], channelName: '먹는김에' });
   assert.equal(parseHoldCostKey(`yt-units:${day}:job:run:12`), null);
   const env = { SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'svc' };
   let seenUrl = '';
@@ -172,4 +172,72 @@ test("보류 대행 비용: 키 왕복·채널별 합산·경고 문구", async 
   assert.deepEqual(holdCostLines([]), [], '보류 대행이 없던 날은 문구 없음');
   assert.doesNotMatch(quotaAlertMessage('70', { total: 7000, limit: 10000, ratio: 0.7, byJob: [] }, NOW), /모두 보류/);
   assert.deepEqual(await loadYouTubeHoldCost(env, async () => { throw new Error('down'); }, NOW), [], '조회 실패면 빈 목록(경고는 그대로 나감)');
+});
+
+// 11-16 재발방지: '모두 보류' 빠진 새 영상은 하루 1회 묶음으로, 영상당 1번만 알린다.
+test("보류 누락 묶음 알림: 10시 전엔 안 보내고, 지난 알림 이후 처음 보류한 영상만 하루 1번 보낸다", async () => {
+  const { holdCostKey, runHoldNoticeDigest } = await import('../src/youtube-quota-meter.js');
+  const env = { SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'svc' };
+  const at10 = Date.parse('2026-11-16T01:30:00Z'); // 10:30 KST
+  const lastDigest = Date.parse('2026-11-15T01:05:00Z');
+  const rows = [
+    holdCostKey('2026-11-14', 'UCa', 1, lastDigest - 3_600_000, ['old1'], '먹는김에'), // 지난 알림 전 → 제외
+    holdCostKey('2026-11-15', 'UCa', 1, lastDigest + 3_600_000, ['old1', 'new1'], '먹는김에'), // old1 재등장은 제외
+    holdCostKey('2026-11-15', 'UCb', 1, lastDigest + 7_200_000, ['new2'], '먹짱언니_mukzzang unnie'),
+  ];
+  const make = ({ todayDone = false, slackOk = true } = {}) => {
+    const calls = [];
+    const fetchImpl = async (url, init = {}) => {
+      const u = decodeURIComponent(String(url));
+      calls.push({ u, method: init.method || 'GET', body: init.body });
+      if (u.includes('slack.com')) return { ok: true, json: async () => (slackOk ? { ok: true } : { ok: false, error: 'boom' }) };
+      if (init.method === 'POST') return { ok: true, json: async () => [{ run_key: 'x' }] };
+      if (init.method === 'DELETE') return { ok: true, json: async () => [] };
+      if (u.includes('run_key=eq.yt-hold-notice:')) return { ok: true, json: async () => (todayDone ? [{ run_key: 'x' }] : []) };
+      if (u.includes('run_key=like.yt-hold-notice:')) return { ok: true, json: async () => [{ created_at: new Date(lastDigest).toISOString() }] };
+      if (u.includes('run_key=like.yt-hold:')) return { ok: true, json: async () => rows.map((run_key) => ({ run_key })) };
+      throw new Error(`unexpected ${u}`);
+    };
+    return { calls, fetchImpl };
+  };
+  const slack = { slackBotToken: 't', slackChannelId: 'C1', assignee: 'U1', hourKst: 10 };
+
+  const early = make();
+  assert.deepEqual(await runHoldNoticeDigest(env, slack, early.fetchImpl, Date.parse('2026-11-15T23:30:00Z')), { skipped: 'early' });
+  assert.equal(early.calls.length, 0, '10시 전엔 조회조차 안 함');
+
+  const ok = make();
+  const result = await runHoldNoticeDigest(env, slack, ok.fetchImpl, at10);
+  assert.deepEqual(result.videoIds, ['new1', 'new2']);
+  const post = ok.calls.find((c) => c.u.includes('slack.com'));
+  const text = JSON.parse(post.body).text;
+  assert.match(text, /'모두 보류' 빠진 새 영상 2개/);
+  assert.match(text, /먹는김에: <https:\/\/studio\.youtube\.com\/video\/new1\/edit\|new1>/);
+  assert.match(text, /검토\* → \*모두 보류\*/);
+  assert.doesNotMatch(text, /old1/);
+  assert.match(text, /<@U1>/);
+  assert.ok(ok.calls.some((c) => c.method === 'POST' && c.body.includes('yt-hold-notice:2026-11-16')), '오늘 선점');
+
+  const done = make({ todayDone: true });
+  assert.deepEqual(await runHoldNoticeDigest(env, slack, done.fetchImpl, at10), { skipped: 'done' });
+  assert.ok(!done.calls.some((c) => c.u.includes('slack.com')), '하루 1번');
+
+  const failing = make({ slackOk: false });
+  await assert.rejects(runHoldNoticeDigest(env, slack, failing.fetchImpl, at10), /Slack: boom/);
+  assert.ok(failing.calls.some((c) => c.method === 'DELETE' && c.u.includes('yt-hold-notice:2026-11-16')), '게시 실패면 선점 해제 → 다음 회차 재시도');
+});
+
+test('보류 누락 묶음 알림: 새 영상이 없으면 선점하지 않는다(그날 늦게 생기면 그때 보냄)', async () => {
+  const { runHoldNoticeDigest } = await import('../src/youtube-quota-meter.js');
+  const env = { SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'svc' };
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    calls.push(init.method || 'GET');
+    const u = decodeURIComponent(String(url));
+    if (u.includes('run_key=eq.')) return { ok: true, json: async () => [] };
+    return { ok: true, json: async () => [] };
+  };
+  const result = await runHoldNoticeDigest(env, { slackBotToken: 't', slackChannelId: 'C1' }, fetchImpl, Date.parse('2026-11-16T01:30:00Z'));
+  assert.deepEqual(result, { skipped: 'none' });
+  assert.ok(!calls.includes('POST'));
 });

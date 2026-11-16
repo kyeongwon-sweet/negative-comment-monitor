@@ -250,7 +250,8 @@ export function parseHoldCostKey(runKey) {
   if (!Number.isFinite(calls)) return null;
   let channelName = '';
   try { channelName = decodeURIComponent(parts.slice(6).join(':')); } catch { channelName = ''; }
-  return { day: parts[1], channelId: parts[2], calls, videoIds: parts[5] ? parts[5].split(',') : [], channelName };
+  const at = Number(parts[4]);
+  return { day: parts[1], channelId: parts[2], calls, at: Number.isFinite(at) ? at : null, videoIds: parts[5] ? parts[5].split(',') : [], channelName };
 }
 
 // 보류 대행 1번(채널당 setModerationStatus 요청 수)을 남긴다. 실패해도 보류 자체는 막지 않는다.
@@ -314,6 +315,110 @@ export function holdCostLines(holdCost) {
     '해결: 위 영상 스튜디오 › 세부정보 › 댓글 및 평가 › *검토*를 *모두 보류*로 바꾸면 그 영상은 이 비용이 0입니다.',
     '⚠️ 광고용 일부 공개 영상은 채널 *기본값*(설정 › 커뮤니티)을 따르지 않고 \'검토 없음\'으로 올라옵니다 — 업로드 직후 영상별로 \'모두 보류\'를 켜 주세요.',
   ];
+}
+
+// ── '모두 보류' 빠진 새 영상 하루 1회 묶음 알림 ──────────────────────────────────────────────
+// 11-16: 광고용 일부 공개 영상은 채널 기본값을 따르지 않고 '검토 없음'으로 올라와, 봇 보류 대행이
+// 하루 2,000~2,800 unit을 썼다(유튜브 API로는 영상 검토 설정을 못 바꿈). 11-03엔 '보류 누락은 알림 말고
+// 봇이 알아서'였지만, 11-16 사용자 결정: 새 영상당 1번만, 하루 한 번 묶어서 알린다(대행은 계속).
+// 별도 상태 없이 yt-hold 원장(보류 대행 기록)에서 영상별 '처음 보류한 시각'을 구해, 지난 묶음 이후 처음 나온 영상만 담는다.
+const HOLD_NOTICE_PREFIX = 'yt-hold-notice:';
+const HOLD_NOTICE_LOOKBACK_DAYS = 14;
+
+// 최근 N일 yt-hold 원장 → videoId별 { channelId, channelName, firstAt, calls }. 조회 실패는 throw(호출부가 errors로 표면화).
+export async function loadHoldFirstSeen(env, fetchImpl = fetch, now = Date.now(), days = HOLD_NOTICE_LOOKBACK_DAYS) {
+  const db = sb(env || {});
+  if (!db) throw new Error('supabase env missing');
+  const since = new Date(now - days * 86_400_000).toISOString();
+  const byVideo = new Map();
+  // run_key는 유일 → 페이지 경계가 안정적(1,000행 조용한 절단 방지).
+  for (let offset = 0; ; offset += 1000) {
+    const response = await fetchImpl(
+      `${db.url}/rest/v1/cost_usage_ledger?select=run_key&run_key=like.${encodeURIComponent(`${HOLD_COST_PREFIX}*`)}&created_at=gte.${encodeURIComponent(since)}&order=run_key.asc&offset=${offset}&limit=1000`,
+      { headers: db.headers },
+    );
+    if (!response.ok) throw new Error(`hold ledger ${response.status}`);
+    const rows = await response.json();
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const parsed = parseHoldCostKey(row.run_key);
+      if (!parsed || !Number.isFinite(parsed.at)) continue;
+      for (const videoId of parsed.videoIds) {
+        const entry = byVideo.get(videoId) || { videoId, channelId: parsed.channelId, channelName: '', firstAt: parsed.at, calls: 0 };
+        entry.firstAt = Math.min(entry.firstAt, parsed.at);
+        entry.calls += 1;
+        if (parsed.channelName) entry.channelName = parsed.channelName;
+        byVideo.set(videoId, entry);
+      }
+    }
+    if (!Array.isArray(rows) || rows.length < 1000) break;
+  }
+  return byVideo;
+}
+
+export function holdNoticeMessage(videos, assignee = '') {
+  const byChannel = new Map();
+  for (const v of videos) {
+    const name = v.channelName || v.channelId;
+    if (!byChannel.has(name)) byChannel.set(name, []);
+    byChannel.get(name).push(v);
+  }
+  const lines = [
+    `:memo: *'모두 보류' 빠진 새 영상 ${videos.length}개* — 지난 알림 이후 새로 발견`,
+    '봇이 새 댓글마다 대신 보류하느라 YouTube 할당량을 씁니다(영상 1개당 하루 최대 수백). 영상마다 *한 번만* 바꿔 주세요:',
+    '스튜디오 › 영상 › 세부정보 › 댓글 및 평가 › *검토* → *모두 보류* (댓글 켜짐/꺼짐은 그대로)',
+    '광고용 일부 공개 영상은 채널 기본값을 따르지 않아, 올릴 때마다 \'검토 없음\'으로 올라옵니다.',
+    ...[...byChannel].map(([name, list]) => `• ${name}: ${list.slice(0, 25).map((v) => `<https://studio.youtube.com/video/${v.videoId}/edit|${v.videoId}>`).join(' ')}${list.length > 25 ? ` 외 ${list.length - 25}개` : ''}`),
+  ];
+  if (assignee) lines.push(`담당자: <@${assignee}>`);
+  return lines.join('\n');
+}
+
+function kstHour(now) {
+  return new Date(now + 9 * 3_600_000).getUTCHours();
+}
+
+// 하루 1회(KST hourKst시 이후 첫 회차, 새 영상이 있을 때만) 묶음 알림. 같은 영상은 다시 담지 않는다.
+export async function runHoldNoticeDigest(env, { slackBotToken, slackChannelId, assignee = '', hourKst = 10 } = {}, fetchImpl = fetch, now = Date.now()) {
+  const db = sb(env || {});
+  if (!db) return { skipped: 'no_db' };
+  if (!slackBotToken || !slackChannelId) return { skipped: 'no_slack' };
+  if (kstHour(now) < hourKst) return { skipped: 'early' };
+  const todayKey = `${HOLD_NOTICE_PREFIX}${kstDateKey(now)}`;
+  const today = await fetchImpl(`${db.url}/rest/v1/cost_usage_ledger?select=run_key&run_key=eq.${encodeURIComponent(todayKey)}`, { headers: db.headers });
+  if (!today.ok) throw new Error(`hold notice check ${today.status}`);
+  if ((await today.json()).length) return { skipped: 'done' };
+  const lastResponse = await fetchImpl(
+    `${db.url}/rest/v1/cost_usage_ledger?select=created_at&run_key=like.${encodeURIComponent(`${HOLD_NOTICE_PREFIX}*`)}&order=created_at.desc&limit=1`,
+    { headers: db.headers },
+  );
+  if (!lastResponse.ok) throw new Error(`hold notice last ${lastResponse.status}`);
+  const last = (await lastResponse.json())[0];
+  // 첫 실행은 최근 24시간만(이전 영상은 11-16에 수동 정리) — 옛 영상을 한꺼번에 쏟지 않는다.
+  const sinceMs = Number.isFinite(Date.parse(last?.created_at || '')) ? Date.parse(last.created_at) : now - 86_400_000;
+  const firstSeen = await loadHoldFirstSeen(env, fetchImpl, now);
+  const fresh = [...firstSeen.values()].filter((v) => v.firstAt > sinceMs).sort((a, b) => a.firstAt - b.firstAt);
+  if (!fresh.length) return { skipped: 'none' };
+  const claim = await fetchImpl(`${db.url}/rest/v1/cost_usage_ledger?on_conflict=run_key`, {
+    method: 'POST',
+    headers: { ...db.headers, 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=representation' },
+    body: JSON.stringify({ run_key: todayKey, kst_date: kstDateKey(now), apify_usd: 0, anthropic_usd: 0 }),
+  });
+  if (!claim.ok) throw new Error(`hold notice claim ${claim.status}`);
+  if (!(await claim.json().catch(() => [])).length) return { skipped: 'race' };
+  try {
+    const response = await fetchImpl('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${slackBotToken}`, 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({ channel: slackChannelId, text: holdNoticeMessage(fresh, assignee), unfurl_links: false }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) throw new Error(`Slack: ${payload.error || response.status}`);
+  } catch (error) {
+    // 게시 실패면 오늘 선점을 풀어 다음 회차가 다시 시도한다.
+    await fetchImpl(`${db.url}/rest/v1/cost_usage_ledger?run_key=eq.${encodeURIComponent(todayKey)}`, { method: 'DELETE', headers: db.headers }).catch(() => {});
+    throw error;
+  }
+  return { posted: fresh.length, videoIds: fresh.map((v) => v.videoId) };
 }
 
 export function quotaAlertMessage(level, usage, now = Date.now(), assignee = '', holdCost = []) {

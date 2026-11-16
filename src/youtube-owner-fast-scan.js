@@ -25,7 +25,7 @@ import { kstDateKey } from './schedule.js';
 import { sendAlert } from './slack.js';
 import { retrySlackRateLimit } from './youtube-ads-run.js';
 import { parseHeldReviewChannels } from './youtube-owner-held-review.js';
-import { quotaBrakeEngaged, recordYouTubeHoldCost } from './youtube-quota-meter.js';
+import { quotaBrakeEngaged, recordYouTubeHoldCost, runHoldNoticeDigest } from './youtube-quota-meter.js';
 import { recordDeferredClassification } from './llm-health.js';
 
 const HOUR = 60 * 60 * 1000;
@@ -65,6 +65,9 @@ export function loadFastScanConfig(env = process.env, now = Date.now()) {
     holdEnforce: String(env.YOUTUBE_OWNER_HOLD_ENFORCE || '').toLowerCase() === 'true',
     // quota 절약 모드(monitor-loop)가 보류 대행을 잠시 멈춘 사유. 대행은 켜진 채 브레이크처럼 조용히 건너뛴다.
     holdEnforcePaused: String(env.YOUTUBE_OWNER_HOLD_ENFORCE_PAUSED || '').trim(),
+    // '모두 보류' 빠진 새 영상 하루 1회 묶음 알림(11-16 사용자 결정). 끄려면 YOUTUBE_OWNER_HOLD_NOTICE=false.
+    holdNotice: String(env.YOUTUBE_OWNER_HOLD_NOTICE || 'true').toLowerCase() !== 'false',
+    holdNoticeHourKst: clampInt(env.YOUTUBE_OWNER_HOLD_NOTICE_HOUR_KST, 10, 0, 23),
   };
 }
 
@@ -225,7 +228,7 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
   const summary = {
     channels: 0, threadsRead: 0, recentComments: 0, alreadyAlerted: 0, classified: 0,
     flagged: 0, sentAlerts: 0, capped: 0, deferred: 0, quotaUnits: 0,
-    ownerGateSuppressed: 0, ownerGateUnreviewed: 0, holdLeakVideos: 0, holdLeakAlerted: 0, holdLeakSilenced: 0, holdEnforced: 0, holdEnforceBraked: '',
+    ownerGateSuppressed: 0, ownerGateUnreviewed: 0, holdLeakVideos: 0, holdLeakAlerted: 0, holdLeakSilenced: 0, holdEnforced: 0, holdEnforceBraked: '', holdNoticePosted: 0,
     newVideosTracked: 0, errors: [],
   };
   const holdSince = new Map((config.holdWatchChannels || []).map((c) => [
@@ -420,6 +423,22 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
     if (leaks.length) console.error(`[owner-fast-scan:hold-missing] ${leaks.map((l) => `${l.videoId}=${l.leaked.map((c) => `${c.id}@${c.timestamp}${c.updatedAt && c.updatedAt !== c.timestamp ? `~${c.updatedAt}` : ''}`).join(',')}`).join(' ')}`);
   } catch (error) {
     summary.errors.push(`보류 누락 감시 실패: ${String(error.message || error).slice(0, 160)}`);
+  }
+
+  // '모두 보류' 빠진 새 영상 하루 1회 묶음 알림(영상당 1번). 대행 비용의 근본 원인(영상 설정)을 사람이 고치게 한다.
+  if (!config.dryRun && config.holdEnforce && config.holdNotice) {
+    try {
+      const notice = await runHoldNoticeDigest(
+        { SUPABASE_URL: config.supabaseUrl, SUPABASE_SERVICE_ROLE_KEY: config.supabaseKey },
+        { slackBotToken: config.slackBotToken, slackChannelId: config.slackChannelId, assignee: config.slackAssignees?.other || '', hourKst: config.holdNoticeHourKst },
+        fetchImpl,
+        now,
+      );
+      summary.holdNoticePosted = notice.posted || 0;
+      if (notice.posted) console.error(`[owner-fast-scan:hold-notice] posted=${notice.posted} ${notice.videoIds.join(',')}`);
+    } catch (error) {
+      summary.errors.push(`보류 누락 묶음 알림 실패: ${String(error.message || error).slice(0, 160)}`);
+    }
   }
 
   // 이미 알림행이 있는 댓글(이 잡·3시간 모니터·사람 판정)은 다시 판정하지 않는다.
