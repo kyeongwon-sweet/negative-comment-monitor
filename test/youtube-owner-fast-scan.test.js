@@ -18,8 +18,8 @@ function thread(id, videoId, text, publishedAt, { author = 'UCx', replies = [] }
   };
 }
 
-function world({ alerted = [], failChannel = '', titleInState = true, approved = [], alreadyClaimed = [], alreadyEnforced = [], enforcedAt = NOW - 5 * 60 * 1000, holdFails = false, holdCostCalls = 0 } = {}) {
-  const calls = { stateInserts: [], cards: [], rows: [], hides: 0, holds: [], threadReads: 0, videoLookups: 0, classified: [], claims: [], releases: 0 };
+function world({ alerted = [], failChannel = '', titleInState = true, approved = [], alreadyClaimed = [], alreadyEnforced = [], enforcedAt = NOW - 5 * 60 * 1000, holdFails = false, holdCostCalls = 0, uploads = null } = {}) {
+  const calls = { stateInserts: [], cards: [], rows: [], hides: 0, holds: [], threadReads: 0, videoLookups: 0, classified: [], claims: [], releases: 0, playlistReads: [] };
   const enforcedKeys = new Set(alreadyEnforced.map((id) => `hold-enforce:${id}`));
   const claimedKeys = new Set(alreadyClaimed);
   const json = (body, ok = true, status = 200) => ({ ok, status, json: async () => body, text: async () => JSON.stringify(body) });
@@ -57,6 +57,14 @@ function world({ alerted = [], failChannel = '', titleInState = true, approved =
       return json(fresh);
     }
     if (u.includes('cost_usage_ledger') && init.method === 'POST' && /hold-(missing|stuck|config-missing):/.test(String(init.body))) {
+      const { run_key: key } = JSON.parse(init.body);
+      calls.claims.push(key);
+      if (claimedKeys.has(key)) return json([]);
+      claimedKeys.add(key);
+      return json([{ run_key: key }]);
+    }
+    if (u.includes('/playlistItems')) { calls.playlistReads.push(new URL(u).searchParams.get('playlistId')); return json({ items: uploads || [] }); }
+    if (uploads && u.includes('cost_usage_ledger') && init.method === 'POST' && /yt-ad-upload-(scan|notice):/.test(String(init.body))) {
       const { run_key: key } = JSON.parse(init.body);
       calls.claims.push(key);
       if (claimedKeys.has(key)) return json([]);
@@ -489,4 +497,81 @@ test("보류 대행 비용 예약이 실패하면 API 호출을 막고 선점을
   assert.ok(summary.errors.some((e) => e.includes('보류 대행 사용량 기록 실패')));
   assert.equal(base.calls.releases, 1, 'hold-enforce 선점을 풀어 DB 복구 뒤 재시도');
   assert.ok(base.calls.rows.length > 0, '부정 댓글 판정·카드 경로는 그대로');
+});
+
+// 11-16 재발방지: 사람이 고칠 '모두 보류' 요청은 상품 스레드에 그 상품 담당자를 태그한다.
+const ROUTED = { jd: { primary: 'UJD' }, jg: { primary: 'UJG', additional: ['UJG2'] }, other: 'UOPS' };
+
+test('설정 누락 즉시 알림은 최상위가 아니라 상품 스레드에 상품 담당자를 태그한다(운영 담당 아님)', async () => {
+  const { fetchImpl, calls, classifier } = world();
+  calls.holdMode = true;
+  const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true, slackAssignees: ROUTED }, fetchImpl, NOW, classifier);
+  assert.equal(summary.holdConfigAlerted, 1);
+  const [post] = holdPosts(calls);
+  assert.equal(post.thread_ts, '111.222');
+  assert.match(post.text, /<@UJD>/, 'v3=쫀득바 → 쫀득바 담당');
+  assert.doesNotMatch(post.text, /UOPS/);
+});
+
+const adItem = (videoId, title, hoursAgo, privacyStatus = 'unlisted') => ({
+  snippet: { title, publishedAt: ago(hoursAgo), resourceId: { videoId } },
+  contentDetails: { videoId, videoPublishedAt: ago(hoursAgo) },
+  status: { privacyStatus },
+});
+const UPLOADS = [
+  adItem('ad1', '[26.11]F_V_BT틱_인지_var1__이선민_261116_제과_김하영', 1),
+  adItem('ad2', '[26.11]F_V_BT틱_인지_var2__이선민_261116_제과_김하영', 1),
+  adItem('old', '[26.11]F_V_BT틱_인지_main__이선민_261113_제과_모현진', 10),
+  adItem('pub', '오늘의 먹방 브이로그', 1, 'public'),
+];
+const AD = { ...HOLD, adUploadNotice: true, adUploadNoticeSince: NOW - 5 * 3600 * 1000, slackAssignees: ROUTED };
+
+test('새 광고 영상: 보류 채널 업로드 목록에서 찾아 댓글 전에 상품 스레드로 담당자에게 한 번 요청한다', async () => {
+  const { fetchImpl, calls, classifier } = world({ uploads: UPLOADS });
+  const summary = await runOwnerFastScan(AD, fetchImpl, NOW, classifier);
+  assert.deepEqual(calls.playlistReads, [`UU${CH2.slice(2)}`], '보류 채널(CH2)만, 1 unit');
+  assert.equal(summary.adUploadChannelsScanned, 1);
+  assert.equal(summary.adUploadsRecent, 3, '48시간 안 광고 3개(공개 일반 영상 제외)');
+  assert.equal(summary.adUploadNoticed, 2, '배포 기준 시각 이전(old)은 알리지 않는다');
+  const post = calls.cards.find((c) => /새 광고 영상/.test(c.text || ''));
+  assert.equal(post.thread_ts, '111.222');
+  assert.match(post.text, /새 광고 영상 2개/);
+  assert.match(post.text, /studio\.youtube\.com\/video\/ad1\/edit/);
+  assert.doesNotMatch(post.text, /video\/old\/|video\/pub\//);
+  assert.match(post.text, /<@UJG> <@UJG2>/, '제과 → 제과 주담당+추가 담당');
+  assert.ok(calls.claims.includes('yt-ad-upload-notice:ad1'));
+});
+
+test('새 광고 영상: 같은 시간대에는 목록을 다시 읽지 않고, 이미 알린 영상은 반복하지 않는다', async () => {
+  const hourKey = 'yt-ad-upload-scan:2026-11-03T12';
+  const sameHour = world({ uploads: UPLOADS, alreadyClaimed: [hourKey] });
+  await runOwnerFastScan(AD, sameHour.fetchImpl, NOW, sameHour.classifier);
+  assert.equal(sameHour.calls.playlistReads.length, 0);
+  const notified = world({ uploads: UPLOADS, alreadyClaimed: ['yt-ad-upload-notice:ad1', 'yt-ad-upload-notice:ad2'] });
+  const summary = await runOwnerFastScan(AD, notified.fetchImpl, NOW, notified.classifier);
+  assert.equal(summary.adUploadNoticed, 0);
+  assert.equal(notified.calls.cards.filter((c) => /새 광고 영상/.test(c.text || '')).length, 0);
+});
+
+test('새 광고 영상: Slack 실패면 그 영상 선점만 풀어 다음 시간에 다시 알리고, 부정 카드 경로는 유지한다', async () => {
+  const base = world({ uploads: UPLOADS });
+  const fetchImpl = async (url, init = {}) => {
+    if (String(url).includes('chat.postMessage') && String(init.body).includes('새 광고 영상')) {
+      return { ok: true, status: 200, json: async () => ({ ok: false, error: 'ratelimited' }) };
+    }
+    return base.fetchImpl(url, init);
+  };
+  const summary = await runOwnerFastScan(AD, fetchImpl, NOW, base.classifier);
+  assert.equal(summary.adUploadNoticed, 0);
+  assert.equal(base.calls.releases, 2, 'ad1·ad2 선점 해제');
+  assert.ok(summary.errors.some((e) => e.includes('광고 업로드 알림 실패')));
+  assert.equal(base.calls.rows.length, 3);
+});
+
+test('새 광고 영상: dry-run·끄기 설정이면 목록을 읽지 않는다', async () => {
+  for (const cfg of [{ ...AD, dryRun: true }, { ...AD, adUploadNotice: false }]) {
+    const { fetchImpl, calls, classifier } = world({ uploads: UPLOADS });
+    await runOwnerFastScan(cfg, fetchImpl, NOW, classifier);
+    assert.equal(calls.playlistReads.length, 0);
+  }
 });

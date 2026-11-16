@@ -22,7 +22,7 @@ import { commentFingerprint, loadSeenFingerprints, recordAlert } from './dedup.j
 import { computeClassifierHash } from './cache.js';
 import { ensureDailyThread } from './threads.js';
 import { kstDateKey } from './schedule.js';
-import { sendAlert } from './slack.js';
+import { productGroup, sendAlert } from './slack.js';
 import { retrySlackRateLimit } from './youtube-ads-run.js';
 import { parseHeldReviewChannels } from './youtube-owner-held-review.js';
 import { loadYouTubeHoldCost, quotaBrakeEngaged, recordYouTubeHoldCost, runHoldNoticeDigest } from './youtube-quota-meter.js';
@@ -71,7 +71,139 @@ export function loadFastScanConfig(env = process.env, now = Date.now()) {
     // Studio 설정 누락이 오래 방치돼도 정상댓글 보류 대행이 핵심 부정 탐지·숨김 quota를 잠식하지 않게
     // 전용 일일 상한을 둔다. 1회=50 unit, 기본 1,000이면 최대 20회다.
     holdEnforceDailyUnitCap: clampInt(env.YOUTUBE_OWNER_HOLD_DAILY_UNIT_CAP, 1_000, 50, 5_000),
+    // 새 광고 영상 업로드 즉시 '모두 보류' 요청(11-16 사용자 재발방지: "스레드에 해당 담당자 태그해서 알려").
+    // 광고 영상은 채널 기본값을 무시하고 '검토 없음'으로 올라오는데(11-16 10개 중 8개), 봇은 댓글이 달려야
+    // 영상을 보므로 첫 누수 전엔 몰랐다. 보류 채널 업로드 목록(채널당 1 unit)을 시간당 1번 본다.
+    adUploadNotice: String(env.YOUTUBE_OWNER_AD_UPLOAD_NOTICE || 'true').toLowerCase() !== 'false',
+    // 이 시각 이전 업로드는 알리지 않는다(배포 전 업로드=이미 수작업 정리분 재알림 방지).
+    adUploadNoticeSince: Number.isFinite(Date.parse(env.YOUTUBE_OWNER_AD_UPLOAD_NOTICE_SINCE || ''))
+      ? Date.parse(env.YOUTUBE_OWNER_AD_UPLOAD_NOTICE_SINCE) : AD_UPLOAD_NOTICE_DEFAULT_SINCE,
   };
+}
+
+// 광고 소재명 제목: '[26.11]F_V_…_261116_제과_김하영'처럼 [YY.MM]으로 시작한다.
+const AD_TITLE_RE = /^\s*\[\d{2}\.\d{1,2}\]/;
+const AD_UPLOAD_LOOKBACK_MS = 48 * HOUR;
+const AD_UPLOAD_NOTICE_DEFAULT_SINCE = Date.parse('2026-11-16T09:00:00Z');
+
+export function isAdUpload({ title = '', privacyStatus = '' } = {}) {
+  return AD_TITLE_RE.test(String(title)) || String(privacyStatus) === 'unlisted';
+}
+
+// 보류 설정 요청은 그 상품 담당자가 고쳐야 한다: 상품 스레드 주담당 + 카드와 같은 추가 담당(제과·파인트).
+export function noticeAssigneeIds(target, assignees = {}) {
+  const route = ownerThreadRoute(target, assignees);
+  const group = productGroup(target?.productName);
+  const extra = group === 'jg' ? assignees.jg?.additional : group === 'p' ? assignees.p?.additional : [];
+  return { route, ids: [...new Set([route.assignee, ...(extra || [])].filter(Boolean))] };
+}
+
+function mentionLine(assignee) {
+  const ids = [].concat(assignee || []).filter(Boolean);
+  return ids.length ? `담당자: ${ids.map((id) => `<@${id}>`).join(' ')}` : '';
+}
+
+export function adUploadMessage(items, assignee = '') {
+  const lines = [
+    `:clapper: *새 광고 영상 ${items.length}개* — 댓글 검토를 *모두 보류*로 바꿔주세요.`,
+    '광고 영상은 채널 기본값을 따르지 않아 \'검토 없음\'으로 올라옵니다. 스튜디오 → 영상 세부정보 → 댓글 → 검토: *모두 보류* → 저장(댓글 켜짐/꺼짐은 그대로).',
+    '이미 바꿨다면 이 알림은 넘어가셔도 됩니다.',
+    ...items.map((it) => `• <https://studio.youtube.com/video/${it.videoId}/edit|${it.videoId}> · ${it.channelName}${it.title ? ` · ${it.title.slice(0, 60)}` : ''}`),
+  ];
+  const mention = mentionLine(assignee);
+  if (mention) lines.push(mention);
+  return lines.join('\n');
+}
+
+// 사람이 고칠 보류 설정 요청을 상품 일일 스레드에 담당자 태그로 올린다. 스레드 묶음별로 성공/실패를 나눠
+// 실패한 묶음만 선점을 풀게 한다(성공한 묶음까지 풀면 다음 회차에 중복 게시).
+async function postOwnerNotices(config, items, buildText, fetchImpl, now) {
+  const groups = new Map();
+  for (const item of items) {
+    const { route, ids } = noticeAssigneeIds(item.target, config.slackAssignees);
+    if (!groups.has(route.scopeKey)) groups.set(route.scopeKey, { route, ids: new Set(), items: [] });
+    const group = groups.get(route.scopeKey);
+    ids.forEach((id) => group.ids.add(id));
+    group.items.push(item);
+  }
+  const posted = [];
+  const failed = [];
+  const errors = [];
+  for (const group of groups.values()) {
+    try {
+      const threadTs = await ensureDailyThread(config, {
+        kstDate: kstDateKey(now), scopeKey: group.route.scopeKey, productLabel: group.route.label,
+        category: group.route.category, assignee: group.route.assignee,
+      }, fetchImpl);
+      if (!threadTs) throw new Error('스레드 확보 실패');
+      const response = await fetchImpl('https://slack.com/api/chat.postMessage', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${config.slackBotToken}`, 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({ channel: config.slackChannelId, thread_ts: threadTs, text: buildText(group.items, [...group.ids]), unfurl_links: false }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) throw new Error(`Slack: ${payload.error || response.status}`);
+      posted.push(...group.items);
+    } catch (error) {
+      failed.push(...group.items);
+      errors.push(String(error.message || error).slice(0, 120));
+    }
+  }
+  return { posted, failed, errors };
+}
+
+// 보류 누락 영상의 상품 라우팅용 대상. 제목만으로 상품을 정한다(카드 라우팅과 같은 ownerChannelTarget).
+function leakTarget(config, { channelId, channelName, videoId, title }) {
+  const channel = (config.youtubeOwnerChannels || []).find((c) => c.channelId === channelId)
+    || { channelId, channelCategory: '소유 YouTube' };
+  return ownerChannelTarget(config, channel, channelName, { id: videoId, snippet: { title } }, videoId, {});
+}
+
+// 보류 채널 업로드 목록(채널당 1 unit)에서 새 광고 영상을 찾아 영상당 한 번 담당자에게 요청한다.
+// 시간당 1번만(원장 선점). 놓친 회차는 48시간 되돌아보기로 다음 시간에 잡힌다.
+async function runAdUploadNotice(config, { tokens, tokenFor, channelTitles, summary }, fetchImpl, now) {
+  const watched = new Set((config.holdWatchChannels || []).map((c) => c.channelId));
+  const channels = (config.youtubeOwnerChannels || []).filter((c) => watched.has(c.channelId) && tokens.has(c.channelId));
+  if (!channels.length) return;
+  const kstDate = kstDateKey(now);
+  const hourKst = String(Math.floor(((now + 9 * HOUR) % (24 * HOUR)) / HOUR)).padStart(2, '0');
+  const scan = await claimHoldLeak(config, kstDate, `${kstDate}T${hourKst}`, fetchImpl, 'yt-ad-upload-scan', true);
+  if (!scan.claimed) return;
+  const floor = Math.max(now - AD_UPLOAD_LOOKBACK_MS, config.adUploadNoticeSince ?? -Infinity);
+  const fresh = [];
+  for (const channel of channels) {
+    try {
+      const payload = await googleGet(config, 'playlistItems', {
+        part: 'snippet,status,contentDetails', playlistId: `UU${channel.channelId.slice(2)}`, maxResults: 25,
+      }, await tokenFor(tokens.get(channel.channelId)), fetchImpl);
+      summary.quotaUnits += 1;
+      summary.adUploadChannelsScanned += 1;
+      for (const item of payload.items || []) {
+        const videoId = String(item.contentDetails?.videoId || item.snippet?.resourceId?.videoId || '');
+        const title = String(item.snippet?.title || '');
+        const at = Date.parse(item.contentDetails?.videoPublishedAt || item.snippet?.publishedAt || '');
+        if (!videoId || !Number.isFinite(at) || !isAdUpload({ title, privacyStatus: item.status?.privacyStatus })) continue;
+        if (at >= now - AD_UPLOAD_LOOKBACK_MS) summary.adUploadsRecent += 1;
+        if (at < floor) continue;
+        const channelName = channelTitles.get(channel.channelId) || channel.name || channel.channelId;
+        fresh.push({ channelId: channel.channelId, channelName, videoId, title });
+      }
+    } catch (error) {
+      summary.errors.push(`광고 업로드 목록 실패 ${channel.channelId}: ${String(error.message || error).slice(0, 120)}`);
+      if (isYouTubeQuotaExhausted(error)) break;
+    }
+  }
+  const claimed = [];
+  for (const item of fresh) {
+    const claim = await claimHoldLeak(config, kstDate, item.videoId, fetchImpl, 'yt-ad-upload-notice', true);
+    if (claim.claimed) claimed.push({ ...item, runKey: claim.runKey, target: leakTarget(config, item) });
+  }
+  if (!claimed.length) return;
+  const result = await postOwnerNotices(config, claimed, adUploadMessage, fetchImpl, now);
+  for (const item of result.failed) await releaseHoldLeak(config, item.runKey, fetchImpl);
+  summary.adUploadNoticed = result.posted.length;
+  if (result.posted.length) console.error(`[owner-fast-scan:ad-upload] noticed=${result.posted.map((it) => it.videoId).join(',')}`);
+  if (result.failed.length) throw new Error(`게시 실패: ${result.errors.join('; ')}`);
 }
 
 // 보류 채널의 공개 댓글 중 감시 시작 이후 작성됐고 봇이 공개한 기록이 없는 것 → 영상별 개수.
@@ -205,7 +337,8 @@ export function holdLeakMessage(items, assignee = '') {
     ...items.map((it) => `• <https://studio.youtube.com/video/${it.videoId}/edit|${it.videoId}> · ${it.channelName}${it.title ? ` · ${it.title.slice(0, 40)}` : ''} · 공개된 새 댓글 ${it.count}개`
       + (it.leaked || []).slice(0, 3).map((c) => ` <https://www.youtube.com/watch?v=${it.videoId}&lc=${c.id}|댓글>`).join('')),
   ];
-  if (assignee) lines.push(`담당자: <@${assignee}>`);
+  const mention = mentionLine(assignee);
+  if (mention) lines.push(mention);
   return lines.join('\n');
 }
 
@@ -247,7 +380,7 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
     flagged: 0, sentAlerts: 0, capped: 0, deferred: 0, quotaUnits: 0,
     ownerGateSuppressed: 0, ownerGateUnreviewed: 0, holdLeakVideos: 0, holdLeakAlerted: 0, holdConfigAlerted: 0,
     holdLeakSilenced: 0, holdEnforced: 0, holdEnforceDailyUnits: 0, holdEnforceBraked: '', holdNoticePosted: 0,
-    newVideosTracked: 0, errors: [],
+    newVideosTracked: 0, adUploadChannelsScanned: 0, adUploadsRecent: 0, adUploadNoticed: 0, errors: [],
   };
   const holdSince = new Map((config.holdWatchChannels || []).map((c) => [
     c.channelId, Math.max(c.since, config.holdWatchSince ?? Infinity),
@@ -450,28 +583,21 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
     }
     // 보류 누락을 감지하면 자동 보류 성공 여부와 관계없이 영상별로 딱 한 번 알린다. 영상 단위 영구 키라 다음 날에도 중복되지 않으며,
     // Slack 실패 시 선점을 풀어 다음 빠른 감시 회차가 재시도한다.
+    // 사람이 영상 설정을 고쳐야 하므로 상품 스레드에 그 상품 담당자를 태그한다(11-16 사용자). 봇 보류 실패
+    // 같은 운영 경고(아래 hold-stuck/hold-missing)는 그대로 최상위·운영 담당이다.
     const configMissing = leaks;
     if (configMissing.length && !config.dryRun && config.holdEnforce) {
       const kstDate = kstDateKey(now);
       const claimed = [];
       for (const leak of configMissing) {
         const claim = await claimHoldLeak(config, kstDate, leak.videoId, fetchImpl, 'hold-config-missing', true);
-        if (claim.claimed) claimed.push({ ...leak, runKey: claim.runKey });
+        if (claim.claimed) claimed.push({ ...leak, runKey: claim.runKey, target: leakTarget(config, leak) });
       }
       if (claimed.length) {
-        try {
-          const response = await fetchImpl('https://slack.com/api/chat.postMessage', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${config.slackBotToken}`, 'Content-Type': 'application/json; charset=utf-8' },
-            body: JSON.stringify({ channel: config.slackChannelId, text: holdLeakMessage(claimed, config.slackAssignees?.other || ''), unfurl_links: false }),
-          });
-          const payload = await response.json().catch(() => ({}));
-          if (!response.ok || !payload.ok) throw new Error(`Slack: ${payload.error || response.status}`);
-          summary.holdConfigAlerted = claimed.length;
-        } catch (error) {
-          for (const leak of claimed) await releaseHoldLeak(config, leak.runKey, fetchImpl);
-          throw error;
-        }
+        const result = await postOwnerNotices(config, claimed, holdLeakMessage, fetchImpl, now);
+        for (const leak of result.failed) await releaseHoldLeak(config, leak.runKey, fetchImpl);
+        summary.holdConfigAlerted = result.posted.length;
+        if (result.failed.length) throw new Error(`보류 설정 요청 게시 실패: ${result.errors.join('; ')}`);
       }
     }
     // 봇 보류 대행이 켜져 있으면 보류 누락 자체는 알리지 않는다(봇이 처리). 보류가 안 먹은 댓글만 알린다.
@@ -522,6 +648,15 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
       if (notice.posted) console.error(`[owner-fast-scan:hold-notice] posted=${notice.posted} ${notice.videoIds.join(',')}`);
     } catch (error) {
       summary.errors.push(`보류 누락 묶음 알림 실패: ${String(error.message || error).slice(0, 160)}`);
+    }
+  }
+
+  // 새 광고 영상은 댓글이 달리기 전에 담당자에게 '모두 보류'를 요청한다(시간당 1번, 보류 채널만).
+  if (!config.dryRun && config.adUploadNotice && !summary.quotaExhausted) {
+    try {
+      await runAdUploadNotice(config, { tokens, tokenFor, channelTitles, summary }, fetchImpl, now);
+    } catch (error) {
+      summary.errors.push(`광고 업로드 알림 실패: ${String(error.message || error).slice(0, 160)}`);
     }
   }
 
