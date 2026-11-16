@@ -99,9 +99,9 @@ async function approvedByBot(config, ids, fetchImpl) {
   return found;
 }
 
-// 같은 영상은 하루 한 번만 알린다(원장 키 선점). 선점 성공=true.
-async function claimHoldLeak(config, kstDate, videoId, fetchImpl, prefix = 'hold-missing') {
-  const runKey = `${prefix}:${kstDate}:${videoId}`;
+// 보류 누락 알림 원장 키 선점. 일반 경고는 날짜별, 설정 누락 즉시 경고는 영상별 영구 키를 쓴다.
+async function claimHoldLeak(config, kstDate, videoId, fetchImpl, prefix = 'hold-missing', persistent = false) {
+  const runKey = persistent ? `${prefix}:${videoId}` : `${prefix}:${kstDate}:${videoId}`;
   const response = await fetchImpl(`${config.supabaseUrl}/rest/v1/cost_usage_ledger?on_conflict=run_key`, {
     method: 'POST',
     headers: sbHeaders(config, { 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=representation' }),
@@ -132,6 +132,17 @@ async function claimHoldEnforce(config, kstDate, ids, fetchImpl) {
   if (!response.ok) throw new Error(`보류 대행 선점 실패(${response.status})`);
   const rows = await response.json();
   return (Array.isArray(rows) ? rows : []).map((row) => String(row.run_key).slice('hold-enforce:'.length));
+}
+
+async function releaseHoldEnforce(config, ids, fetchImpl) {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return;
+  const keys = unique.map((id) => `"hold-enforce:${String(id).replace(/"/g, '')}"`).join(',');
+  try {
+    await fetchImpl(`${config.supabaseUrl}/rest/v1/cost_usage_ledger?run_key=${encodeURIComponent(`in.(${keys})`)}`, {
+      method: 'DELETE', headers: sbHeaders(config, { Prefer: 'return=minimal' }),
+    });
+  } catch { /* 비용 예약 실패 뒤 다음 회차 재시도를 위한 best-effort */ }
 }
 
 async function registerNewOwnerVideos(config, channelId, items, now, fetchImpl) {
@@ -231,7 +242,7 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
   const summary = {
     channels: 0, threadsRead: 0, recentComments: 0, alreadyAlerted: 0, classified: 0,
     flagged: 0, sentAlerts: 0, capped: 0, deferred: 0, quotaUnits: 0,
-    ownerGateSuppressed: 0, ownerGateUnreviewed: 0, holdLeakVideos: 0, holdLeakAlerted: 0,
+    ownerGateSuppressed: 0, ownerGateUnreviewed: 0, holdLeakVideos: 0, holdLeakAlerted: 0, holdConfigAlerted: 0,
     holdLeakSilenced: 0, holdEnforced: 0, holdEnforceDailyUnits: 0, holdEnforceBraked: '', holdNoticePosted: 0,
     newVideosTracked: 0, errors: [],
   };
@@ -342,18 +353,28 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
     // 그 전에도 새 댓글마다 50 unit가 반복될 수 있으므로 전용 일일 상한으로 핵심 감시 quota를 보호한다.
     // quota 브레이크: 사용률이 높으면 보류 대행(채널당 50 unit)을 멈춘다. 공개 댓글 중 부정은 아래 판정·숨김이 그대로 잡는다.
     let holdDailyUnits = 0;
+    let holdLedgerUnavailable = false;
     if (leaks.length && !config.dryRun && config.holdEnforce) {
-      const costs = await loadYouTubeHoldCost(
-        { SUPABASE_URL: config.supabaseUrl, SUPABASE_SERVICE_ROLE_KEY: config.supabaseKey },
-        fetchImpl,
-        now,
-      );
-      holdDailyUnits = costs.reduce((sum, row) => sum + Number(row.units || 0), 0);
-      summary.holdEnforceDailyUnits = holdDailyUnits;
+      try {
+        const costs = await loadYouTubeHoldCost(
+          { SUPABASE_URL: config.supabaseUrl, SUPABASE_SERVICE_ROLE_KEY: config.supabaseKey },
+          fetchImpl,
+          now,
+          { strict: true },
+        );
+        holdDailyUnits = costs.reduce((sum, row) => sum + Number(row.units || 0), 0);
+        summary.holdEnforceDailyUnits = holdDailyUnits;
+      } catch (error) {
+        // 사용량을 모르면 0으로 간주해 계속 쓰지 않는다. 정상댓글 공개가 늦는 쪽이 핵심 탐지 quota 소진보다 안전하다.
+        holdLedgerUnavailable = true;
+        summary.errors.push(`보류 대행 사용량 조회 실패: ${String(error.message || error).slice(0, 120)}`);
+      }
     }
     const holdDailyCap = Math.max(50, Number(config.holdEnforceDailyUnitCap) || 1_000);
     const brake = leaks.length && !config.dryRun && config.holdEnforce && config.holdEnforcePaused
       ? { engaged: true, reason: config.holdEnforcePaused }
+      : leaks.length && !config.dryRun && config.holdEnforce && holdLedgerUnavailable
+      ? { engaged: true, reason: 'hold-ledger-unavailable' }
       : leaks.length && !config.dryRun && config.holdEnforce && holdDailyUnits >= holdDailyCap
       ? { engaged: true, reason: `hold-daily-cap(${holdDailyUnits}/${holdDailyCap})` }
       : leaks.length && !config.dryRun && config.holdEnforce
@@ -388,12 +409,10 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
           const attemptIds = allIds.filter((id) => !existingTimes.has(id)).slice(0, remainingCalls * 50);
           const fresh = new Set(await claimHoldEnforce(config, kstDateKey(now), attemptIds, fetchImpl));
           if (fresh.size) {
-            await holdComments(config, [...fresh], await tokenFor(owner), fetchImpl);
             const used = Math.ceil(fresh.size / 50) * 50;
-            holdDailyUnits += used;
-            summary.holdEnforceDailyUnits = holdDailyUnits;
-            // 할당량 경고에 '어느 채널 새 영상 때문에 얼마'를 붙이기 위한 비용 기록(실패해도 진행).
-            await recordYouTubeHoldCost(
+            // API 호출 전에 비용을 예약한다. 기록 실패를 무시하고 호출하면 다음 회차가 사용량을 0으로 오인해
+            // 일일 상한을 우회할 수 있다. 예약 실패 시 댓글 선점도 풀어 DB 복구 뒤 재시도한다.
+            const costRecorded = await recordYouTubeHoldCost(
               { SUPABASE_URL: config.supabaseUrl, SUPABASE_SERVICE_ROLE_KEY: config.supabaseKey },
               {
                 channelId,
@@ -404,6 +423,13 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
               fetchImpl,
               now,
             );
+            if (!costRecorded) {
+              await releaseHoldEnforce(config, [...fresh], fetchImpl);
+              throw new Error('보류 대행 사용량 기록 실패');
+            }
+            holdDailyUnits += used;
+            summary.holdEnforceDailyUnits = holdDailyUnits;
+            await holdComments(config, [...fresh], await tokenFor(owner), fetchImpl);
           }
           // 예전에 이미 보류했는데 또 공개 = 보류가 안 먹음(사람 승인·승인된 사용자 등). 반영 지연은 유예한다.
           const triedAt = existingTimes;
@@ -416,6 +442,32 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
         } catch (error) {
           for (const leak of channelLeaks) { leak.problem = leak.leaked; leak.reason = '봇 보류 실패'; }
           summary.errors.push(`보류 대행 실패 ${channelId}: ${String(error.message || error).slice(0, 120)}`);
+        }
+      }
+    }
+    // 첫 자동 보류 성공 직후 영상별로 딱 한 번 알린다. 영상 단위 영구 키라 다음 날에도 중복되지 않으며,
+    // Slack 실패 시 선점을 풀어 다음 빠른 감시 회차가 재시도한다.
+    const configMissing = leaks.filter((leak) => leak.enforced > 0);
+    if (configMissing.length && !config.dryRun) {
+      const kstDate = kstDateKey(now);
+      const claimed = [];
+      for (const leak of configMissing) {
+        const claim = await claimHoldLeak(config, kstDate, leak.videoId, fetchImpl, 'hold-config-missing', true);
+        if (claim.claimed) claimed.push({ ...leak, runKey: claim.runKey });
+      }
+      if (claimed.length) {
+        try {
+          const response = await fetchImpl('https://slack.com/api/chat.postMessage', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${config.slackBotToken}`, 'Content-Type': 'application/json; charset=utf-8' },
+            body: JSON.stringify({ channel: config.slackChannelId, text: holdLeakMessage(claimed, config.slackAssignees?.other || ''), unfurl_links: false }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload.ok) throw new Error(`Slack: ${payload.error || response.status}`);
+          summary.holdConfigAlerted = claimed.length;
+        } catch (error) {
+          for (const leak of claimed) await releaseHoldLeak(config, leak.runKey, fetchImpl);
+          throw error;
         }
       }
     }

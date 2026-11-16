@@ -56,7 +56,7 @@ function world({ alerted = [], failChannel = '', titleInState = true, approved =
       fresh.forEach((row) => enforcedKeys.add(row.run_key));
       return json(fresh);
     }
-    if (u.includes('cost_usage_ledger') && init.method === 'POST' && /hold-(missing|stuck):/.test(String(init.body))) {
+    if (u.includes('cost_usage_ledger') && init.method === 'POST' && /hold-(missing|stuck|config-missing):/.test(String(init.body))) {
       const { run_key: key } = JSON.parse(init.body);
       calls.claims.push(key);
       if (claimedKeys.has(key)) return json([]);
@@ -277,16 +277,27 @@ test('보류 누락: Slack 실패면 선점을 풀어 다음 회차가 다시 �
 });
 
 // 봇 보류 대행(11-03 재발방지): 보류 누락 영상의 새 공개 댓글을 봇이 보류로 돌린다(한 댓글 한 번).
-test("보류 대행: 누락 영상의 봇 미승인 공개 댓글을 보류로 돌리고, 즉시 알림은 보내지 않는다", async () => {
+test("보류 대행: 첫 자동 보류 성공 직후 영상 설정 누락을 즉시 한 번 알린다", async () => {
   const { fetchImpl, calls, classifier } = world();
   calls.holdMode = true;
   const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, classifier);
   assert.deepEqual(calls.holds, ["bad2"]);
   assert.equal(summary.holdEnforced, 1);
+  assert.equal(summary.holdConfigAlerted, 1);
   assert.equal(summary.holdLeakSilenced, 1);
   assert.equal(summary.holdLeakAlerted, 0);
+  assert.equal(holdPosts(calls).length, 1);
+  assert.deepEqual(calls.claims, ['hold-config-missing:v3']);
+  assert.match(holdPosts(calls)[0].text, /스튜디오에서 영상별로/);
+});
+
+test("보류 대행: 같은 영상 설정 누락은 다음 날에도 즉시 알림을 반복하지 않는다", async () => {
+  const { fetchImpl, calls, classifier } = world({ alreadyClaimed: ['hold-config-missing:v3'] });
+  calls.holdMode = true;
+  const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, classifier);
+  assert.deepEqual(calls.holds, ['bad2']);
+  assert.equal(summary.holdConfigAlerted, 0);
   assert.equal(holdPosts(calls).length, 0);
-  assert.equal(calls.claims.length, 0, '설정 누락은 일일 묶음 알림이 별도로 담당한다');
 });
 
 test("보류 대행: 보류한 지 1시간이 지났는데도 공개면(보류 안 먹음) 그때만 알린다", async () => {
@@ -374,6 +385,23 @@ test("보류 대행 전용 일일 상한: 1,000 unit를 쓰면 추가 보류를 
   assert.ok(base.calls.rows.length > 0, '부정 댓글 판정·카드 경로는 그대로');
 });
 
+test("보류 대행 사용량 원장을 읽지 못하면 0으로 간주하지 않고 fail-closed로 멈춘다", async () => {
+  const base = world();
+  base.calls.holdMode = true;
+  const fetchImpl = async (url, init = {}) => {
+    const u = decodeURIComponent(String(url));
+    if (u.includes('cost_usage_ledger') && u.includes('yt-hold:') && (init.method || 'GET') === 'GET') {
+      return { ok: false, status: 503, json: async () => ({}) };
+    }
+    return base.fetchImpl(url, init);
+  };
+  const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, base.classifier);
+  assert.deepEqual(base.calls.holds, []);
+  assert.equal(summary.holdEnforceBraked, 'hold-ledger-unavailable');
+  assert.ok(summary.errors.some((e) => e.includes('보류 대행 사용량 조회 실패')));
+  assert.ok(base.calls.rows.length > 0, '부정 댓글 판정·카드 경로는 그대로');
+});
+
 test("보류 대행 전용 상한: 앞쪽 기존 처리건을 빼고 뒤의 신규 댓글에 남은 1회 예산을 쓴다", async () => {
   const base = world({ alreadyEnforced: ['old-hold'], holdCostCalls: 19 });
   base.calls.holdMode = true;
@@ -437,7 +465,7 @@ test("보류 대행 비용 기록: 채널당 요청 수·영상ID·채널명을 
   assert.ok(parsed.channelName, '채널명이 남는다');
 });
 
-test("보류 대행 비용 기록이 실패해도 보류·감시는 그대로 간다(fail-open)", async () => {
+test("보류 대행 비용 예약이 실패하면 API 호출을 막고 선점을 풀어 다음 회차에 재시도한다", async () => {
   const base = world();
   base.calls.holdMode = true;
   const fetchImpl = async (url, init = {}) => {
@@ -445,7 +473,9 @@ test("보류 대행 비용 기록이 실패해도 보류·감시는 그대로 �
     return base.fetchImpl(url, init);
   };
   const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, base.classifier);
-  assert.deepEqual(base.calls.holds, ['bad2']);
-  assert.equal(summary.holdEnforced, 1);
-  assert.ok(!summary.errors.some((e) => e.includes('보류 대행 실패')));
+  assert.deepEqual(base.calls.holds, []);
+  assert.equal(summary.holdEnforced, 0);
+  assert.ok(summary.errors.some((e) => e.includes('보류 대행 사용량 기록 실패')));
+  assert.equal(base.calls.releases, 1, 'hold-enforce 선점을 풀어 DB 복구 뒤 재시도');
+  assert.ok(base.calls.rows.length > 0, '부정 댓글 판정·카드 경로는 그대로');
 });

@@ -271,9 +271,12 @@ export async function recordYouTubeHoldCost(env, { channelId, channelName, video
 }
 
 // 오늘(PT) 채널별 보류 대행 요약: [{ channelId, channelName, calls, units, videoIds }] (많이 쓴 순). 조회 실패 시 [].
-export async function loadYouTubeHoldCost(env, fetchImpl = fetch, now = Date.now()) {
+export async function loadYouTubeHoldCost(env, fetchImpl = fetch, now = Date.now(), { strict = false } = {}) {
   const db = sb(env || {});
-  if (!db) return [];
+  if (!db) {
+    if (strict) throw new Error('hold ledger env missing');
+    return [];
+  }
   try {
     const byChannel = new Map();
     for (let offset = 0; ; offset += 1000) {
@@ -281,7 +284,10 @@ export async function loadYouTubeHoldCost(env, fetchImpl = fetch, now = Date.now
         `${db.url}/rest/v1/cost_usage_ledger?select=run_key&run_key=like.${encodeURIComponent(`${HOLD_COST_PREFIX}${quotaDayKey(now)}:*`)}&order=run_key.asc&offset=${offset}&limit=1000`,
         { headers: db.headers },
       );
-      if (!response.ok) return [];
+      if (!response.ok) {
+        if (strict) throw new Error(`hold ledger ${response.status}`);
+        return [];
+      }
       const rows = await response.json();
       for (const row of Array.isArray(rows) ? rows : []) {
         const parsed = parseHoldCostKey(row.run_key);
@@ -297,7 +303,8 @@ export async function loadYouTubeHoldCost(env, fetchImpl = fetch, now = Date.now
     return [...byChannel.values()]
       .map((e) => ({ ...e, units: e.calls * 50, videoIds: [...e.videoIds] }))
       .sort((a, b) => b.units - a.units);
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     return [];
   }
 }
@@ -323,6 +330,7 @@ export function holdCostLines(holdCost) {
 // 봇이 알아서'였지만, 11-16 사용자 결정: 새 영상당 1번만, 하루 한 번 묶어서 알린다(대행은 계속).
 // 별도 상태 없이 yt-hold 원장(보류 대행 기록)에서 영상별 '처음 보류한 시각'을 구해, 지난 묶음 이후 처음 나온 영상만 담는다.
 const HOLD_NOTICE_PREFIX = 'yt-hold-notice:';
+const HOLD_IMMEDIATE_NOTICE_PREFIX = 'hold-config-missing:';
 const HOLD_NOTICE_LOOKBACK_DAYS = 14;
 
 // 최근 N일 yt-hold 원장 → videoId별 { channelId, channelName, firstAt, calls }. 조회 실패는 throw(호출부가 errors로 표면화).
@@ -353,6 +361,27 @@ export async function loadHoldFirstSeen(env, fetchImpl = fetch, now = Date.now()
     if (!Array.isArray(rows) || rows.length < 1000) break;
   }
   return byVideo;
+}
+
+// 빠른 감시가 첫 자동 보류 직후 이미 알린 영상. 일일 묶음 알림은 이 영상을 다시 올리지 않는다.
+async function loadImmediateHoldNoticeVideoIds(env, fetchImpl = fetch) {
+  const db = sb(env || {});
+  if (!db) throw new Error('supabase env missing');
+  const ids = new Set();
+  for (let offset = 0; ; offset += 1000) {
+    const response = await fetchImpl(
+      `${db.url}/rest/v1/cost_usage_ledger?select=run_key&run_key=like.${encodeURIComponent(`${HOLD_IMMEDIATE_NOTICE_PREFIX}*`)}&order=run_key.asc&offset=${offset}&limit=1000`,
+      { headers: db.headers },
+    );
+    if (!response.ok) throw new Error(`hold immediate notice ledger ${response.status}`);
+    const rows = await response.json();
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const key = String(row.run_key || '');
+      if (key.startsWith(HOLD_IMMEDIATE_NOTICE_PREFIX)) ids.add(key.slice(HOLD_IMMEDIATE_NOTICE_PREFIX.length));
+    }
+    if (!Array.isArray(rows) || rows.length < 1000) break;
+  }
+  return ids;
 }
 
 export function holdNoticeMessage(videos, assignee = '') {
@@ -396,7 +425,10 @@ export async function runHoldNoticeDigest(env, { slackBotToken, slackChannelId, 
   // 첫 실행은 최근 24시간만(이전 영상은 11-16에 수동 정리) — 옛 영상을 한꺼번에 쏟지 않는다.
   const sinceMs = Number.isFinite(Date.parse(last?.created_at || '')) ? Date.parse(last.created_at) : now - 86_400_000;
   const firstSeen = await loadHoldFirstSeen(env, fetchImpl, now);
-  const fresh = [...firstSeen.values()].filter((v) => v.firstAt > sinceMs).sort((a, b) => a.firstAt - b.firstAt);
+  const immediatelyNotified = await loadImmediateHoldNoticeVideoIds(env, fetchImpl);
+  const fresh = [...firstSeen.values()]
+    .filter((v) => v.firstAt > sinceMs && !immediatelyNotified.has(v.videoId))
+    .sort((a, b) => a.firstAt - b.firstAt);
   if (!fresh.length) return { skipped: 'none' };
   const claim = await fetchImpl(`${db.url}/rest/v1/cost_usage_ledger?on_conflict=run_key`, {
     method: 'POST',
