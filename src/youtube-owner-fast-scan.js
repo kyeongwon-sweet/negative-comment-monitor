@@ -194,10 +194,13 @@ async function holdComments(config, ids, accessToken, fetchImpl) {
 
 export function holdLeakMessage(items, assignee = '') {
   const enforced = items.reduce((sum, it) => sum + (it.enforced || 0), 0);
+  const stillPublic = items.reduce((sum, it) => sum + Math.max(0, Number(it.count || 0) - Number(it.enforced || 0)), 0);
   const lines = [
     `:warning: *'모두 보류' 빠진 영상 ${items.length}개* — 봇 승인 없이 새 댓글이 바로 공개됐습니다.`,
     ...(enforced ? [`봇이 그 댓글 ${enforced}개를 일단 보류로 돌렸습니다(괜찮은 댓글은 다음 승인 회차에 다시 공개).`] : []),
+    ...(stillPublic ? [`자동 보류되지 않은 댓글 ${stillPublic}개는 공개로 남아 있을 수 있습니다. 부정댓글 판정·숨김은 별도로 계속됩니다.`] : []),
     '스튜디오에서 영상별로 댓글 검토를 *모두 보류*로 바꿔주세요(댓글 켜짐/꺼짐은 그대로). 부정 댓글은 빠른 감시가 따로 숨깁니다.',
+    '광고용 일부 공개 영상은 채널 기본값을 따르지 않을 수 있어, 업로드한 영상마다 이 값을 확인해야 합니다.',
     '이미 *모두 보류*로 되어 있다면 그 댓글 작성자가 "승인된 사용자" 목록에 있거나 사람이 직접 승인한 경우입니다 — 아래 댓글을 확인해주세요.',
     ...items.map((it) => `• <https://studio.youtube.com/video/${it.videoId}/edit|${it.videoId}> · ${it.channelName}${it.title ? ` · ${it.title.slice(0, 40)}` : ''} · 공개된 새 댓글 ${it.count}개`
       + (it.leaked || []).slice(0, 3).map((c) => ` <https://www.youtube.com/watch?v=${it.videoId}&lc=${c.id}|댓글>`).join('')),
@@ -447,8 +450,8 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
     }
     // 첫 자동 보류 성공 직후 영상별로 딱 한 번 알린다. 영상 단위 영구 키라 다음 날에도 중복되지 않으며,
     // Slack 실패 시 선점을 풀어 다음 빠른 감시 회차가 재시도한다.
-    const configMissing = leaks.filter((leak) => leak.enforced > 0);
-    if (configMissing.length && !config.dryRun) {
+    const configMissing = leaks;
+    if (configMissing.length && !config.dryRun && config.holdEnforce) {
       const kstDate = kstDateKey(now);
       const claimed = [];
       for (const leak of configMissing) {

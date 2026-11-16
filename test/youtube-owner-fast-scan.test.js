@@ -301,12 +301,15 @@ test("보류 대행: 같은 영상 설정 누락은 다음 날에도 즉시 알�
 });
 
 test("보류 대행: 보류한 지 1시간이 지났는데도 공개면(보류 안 먹음) 그때만 알린다", async () => {
-  const { fetchImpl, calls, classifier } = world({ alreadyEnforced: ["bad2"], enforcedAt: NOW - 2 * 3600 * 1000 });
+  const { fetchImpl, calls, classifier } = world({
+    alreadyEnforced: ["bad2"], enforcedAt: NOW - 2 * 3600 * 1000,
+    alreadyClaimed: ['hold-config-missing:v3'],
+  });
   calls.holdMode = true;
   const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, classifier);
   assert.deepEqual(calls.holds, [], '같은 댓글을 다시 보류하지 않는다(quota)');
   assert.equal(summary.holdLeakAlerted, 1);
-  assert.deepEqual(calls.claims, ['hold-stuck:2026-11-03:v3'], '누락 알림과 별도 키(하루 1회)');
+  assert.deepEqual(calls.claims, ['hold-config-missing:v3', 'hold-stuck:2026-11-03:v3'], '설정 누락 영구 키 확인 뒤 보류 실패는 날짜별 별도 키');
   assert.match(holdPosts(calls)[0].text, /봇이 보류로 못 돌린/);
   assert.match(holdPosts(calls)[0].text, /보류 후 다시 공개/);
 });
@@ -315,12 +318,14 @@ test("보류 대행: 봇 보류 API가 실패하면 알린다", async () => {
   const { fetchImpl, calls, classifier } = world({ holdFails: true });
   const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, classifier);
   assert.equal(summary.holdLeakAlerted, 1);
-  assert.match(holdPosts(calls)[0].text, /봇 보류 실패/);
+  assert.equal(summary.holdConfigAlerted, 1);
+  assert.ok(holdPosts(calls).some((post) => /봇 보류 실패/.test(post.text)));
+  assert.ok(holdPosts(calls).some((post) => /공개로 남아 있을 수 있습니다/.test(post.text)));
   assert.ok(summary.errors.some((e) => e.includes('보류 대행 실패')));
 });
 
 test("보류 대행: 이미 한 번 보류를 시도한 댓글은 다시 하지 않고, 반영 지연(1시간 안)은 알리지 않는다", async () => {
-  const { fetchImpl, calls, classifier } = world({ alreadyEnforced: ["bad2"] });
+  const { fetchImpl, calls, classifier } = world({ alreadyEnforced: ["bad2"], alreadyClaimed: ['hold-config-missing:v3'] });
   calls.holdMode = true;
   const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, classifier);
   assert.deepEqual(calls.holds, []);
@@ -357,7 +362,7 @@ test("보류 대행은 채널 단위로 한 요청에 묶는다(영상별 호출
   assert.equal(summary.holdEnforced, 3);
 });
 
-test("quota 브레이크: 사용률이 높으면 보류 대행(50 unit)을 하지 않고 알림도 내지 않는다(부정 판정·숨김 경로는 그대로)", async () => {
+test("quota 브레이크: 보류 대행은 멈춰도 설정 누락은 즉시 알리고 부정 판정·숨김은 유지한다", async () => {
   const base = world({ alreadyEnforced: ["bad2"], enforcedAt: NOW - 2 * 3600 * 1000 });
   base.calls.holdMode = true;
   const fetchImpl = async (url, init = {}) => {
@@ -369,7 +374,9 @@ test("quota 브레이크: 사용률이 높으면 보류 대행(50 unit)을 하�
   assert.deepEqual(base.calls.holds, []);
   assert.equal(summary.holdEnforced, 0);
   assert.match(summary.holdEnforceBraked, /70%/);
-  assert.equal(holdPosts(base.calls).length, 0, '의도된 중단이라 "보류 실패" 알림 없음');
+  assert.equal(summary.holdConfigAlerted, 1, '브레이크 중에도 설정 누락은 즉시 알림');
+  assert.equal(holdPosts(base.calls).length, 1, '보류 실패가 아니라 설정 누락 알림만 보냄');
+  assert.match(holdPosts(base.calls)[0].text, /공개로 남아 있을 수 있습니다/);
   assert.ok(base.calls.rows.length > 0, '부정 댓글 카드·알림행(→자동숨김)은 그대로');
 });
 
@@ -381,7 +388,8 @@ test("보류 대행 전용 일일 상한: 1,000 unit를 쓰면 추가 보류를 
   assert.equal(summary.holdEnforced, 0);
   assert.equal(summary.holdEnforceDailyUnits, 1_000);
   assert.equal(summary.holdEnforceBraked, 'hold-daily-cap(1000/1000)');
-  assert.equal(holdPosts(base.calls).length, 0, '의도된 상한 중단은 실패 경고가 아니다');
+  assert.equal(summary.holdConfigAlerted, 1);
+  assert.equal(holdPosts(base.calls).length, 1, '상한 중단이어도 설정 누락은 즉시 알림');
   assert.ok(base.calls.rows.length > 0, '부정 댓글 판정·카드 경로는 그대로');
 });
 
@@ -399,6 +407,8 @@ test("보류 대행 사용량 원장을 읽지 못하면 0으로 간주하지 �
   assert.deepEqual(base.calls.holds, []);
   assert.equal(summary.holdEnforceBraked, 'hold-ledger-unavailable');
   assert.ok(summary.errors.some((e) => e.includes('보류 대행 사용량 조회 실패')));
+  assert.equal(summary.holdConfigAlerted, 1);
+  assert.equal(holdPosts(base.calls).length, 1, '원장 장애 중에도 설정 누락은 즉시 알림');
   assert.ok(base.calls.rows.length > 0, '부정 댓글 판정·카드 경로는 그대로');
 });
 
@@ -426,13 +436,14 @@ test("보류 대행 전용 상한: 앞쪽 기존 처리건을 빼고 뒤의 신�
   assert.equal(summary.holdEnforceDailyUnits, 1_000);
 });
 
-test("11-06 회귀: 절약 모드가 보류 대행을 일시정지하면 옛 '모두 보류 빠진 영상' 알림을 내지 않는다", async () => {
+test("절약 모드: 보류 대행은 일시정지해도 설정 누락은 즉시 알린다", async () => {
   const base = world({ alreadyEnforced: ["bad2"], enforcedAt: NOW - 2 * 3600 * 1000 });
   base.calls.holdMode = true;
   const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true, holdEnforcePaused: 'quota-plan' }, base.fetchImpl, NOW, base.classifier);
   assert.deepEqual(base.calls.holds, [], '보류 요청(50 unit) 없음');
   assert.equal(summary.holdEnforceBraked, 'quota-plan');
-  assert.equal(holdPosts(base.calls).length, 0, '보류 누락·보류 실패 알림 모두 없음');
+  assert.equal(summary.holdConfigAlerted, 1);
+  assert.equal(holdPosts(base.calls).length, 1, '절약 모드여도 설정 누락은 즉시 알림');
   assert.ok(base.calls.rows.length > 0, '부정 댓글 카드·알림행(→자동숨김)은 그대로');
 });
 
