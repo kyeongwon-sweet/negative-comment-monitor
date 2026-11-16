@@ -142,6 +142,8 @@ jobs:
           # 보류 빠진 영상의 봇 미승인 새 공개 댓글은 봇이 즉시 보류로 돌린다(한 댓글 한 번) → 승인 봇이 재판정.
           # 새 광고영상에 사람이 '모두 보류'를 안 걸어도 같은 효과(노출 최대 한 회차). API로는 영상 설정 변경 불가.
           YOUTUBE_OWNER_HOLD_ENFORCE: 'true'
+          # 설정 누락이 오래 방치돼도 보류 대행이 핵심 부정 탐지·숨김 quota를 잠식하지 않게 하루 최대 20회(1,000 unit).
+          YOUTUBE_OWNER_HOLD_DAILY_UNIT_CAP: '1000'
           # 빠른 감시 전용 강한 모델(3시간 모니터와 같은 값). 루프가 이 잡에만 OWNED_BRAND_ESCALATION_MODEL로
           # 넘긴다 — 같은 스텝의 핵심 수집(npm start) 판정은 바꾸지 않는다.
           YOUTUBE_OWNER_FAST_ESCALATION_MODEL: gemini-3.5-flash-lite

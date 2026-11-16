@@ -18,7 +18,7 @@ function thread(id, videoId, text, publishedAt, { author = 'UCx', replies = [] }
   };
 }
 
-function world({ alerted = [], failChannel = '', titleInState = true, approved = [], alreadyClaimed = [], alreadyEnforced = [], enforcedAt = NOW - 5 * 60 * 1000, holdFails = false } = {}) {
+function world({ alerted = [], failChannel = '', titleInState = true, approved = [], alreadyClaimed = [], alreadyEnforced = [], enforcedAt = NOW - 5 * 60 * 1000, holdFails = false, holdCostCalls = 0 } = {}) {
   const calls = { stateInserts: [], cards: [], rows: [], hides: 0, holds: [], threadReads: 0, videoLookups: 0, classified: [], claims: [], releases: 0 };
   const enforcedKeys = new Set(alreadyEnforced.map((id) => `hold-enforce:${id}`));
   const claimedKeys = new Set(alreadyClaimed);
@@ -69,6 +69,9 @@ function world({ alerted = [], failChannel = '', titleInState = true, approved =
     }
     if (u.includes('cost_usage_ledger') && decodeURIComponent(u).includes('hold-enforce:')) {
       return json(alreadyEnforced.map((id) => ({ run_key: `hold-enforce:${id}`, created_at: new Date(enforcedAt).toISOString() })));
+    }
+    if (u.includes('cost_usage_ledger') && decodeURIComponent(u).includes('yt-hold:')) {
+      return json(holdCostCalls ? [{ run_key: `yt-hold:2026-11-02:${CH2}:${holdCostCalls}:${NOW}:v3:${encodeURIComponent('먹는김에')}` }] : []);
     }
     if (u.includes('cost_usage_ledger')) return json([]);
     if (u.includes('negative_comment_alerts') && init.method === 'POST') { calls.rows.push(JSON.parse(init.body)); return json([{ id: 1 }]); }
@@ -274,7 +277,7 @@ test('보류 누락: Slack 실패면 선점을 풀어 다음 회차가 다시 �
 });
 
 // 봇 보류 대행(11-03 재발방지): 보류 누락 영상의 새 공개 댓글을 봇이 보류로 돌린다(한 댓글 한 번).
-test("보류 대행: 누락 영상의 봇 미승인 공개 댓글을 보류로 돌리고, 알림은 보내지 않는다(11-03 사용자: 봇이 알아서)", async () => {
+test("보류 대행: 누락 영상의 봇 미승인 공개 댓글을 보류로 돌리고, 즉시 알림은 보내지 않는다", async () => {
   const { fetchImpl, calls, classifier } = world();
   calls.holdMode = true;
   const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true }, fetchImpl, NOW, classifier);
@@ -283,7 +286,7 @@ test("보류 대행: 누락 영상의 봇 미승인 공개 댓글을 보류로 �
   assert.equal(summary.holdLeakSilenced, 1);
   assert.equal(summary.holdLeakAlerted, 0);
   assert.equal(holdPosts(calls).length, 0);
-  assert.equal(calls.claims.length, 0, '알림 선점도 하지 않는다');
+  assert.equal(calls.claims.length, 0, '설정 누락은 일일 묶음 알림이 별도로 담당한다');
 });
 
 test("보류 대행: 보류한 지 1시간이 지났는데도 공개면(보류 안 먹음) 그때만 알린다", async () => {
@@ -357,6 +360,42 @@ test("quota 브레이크: 사용률이 높으면 보류 대행(50 unit)을 하�
   assert.match(summary.holdEnforceBraked, /70%/);
   assert.equal(holdPosts(base.calls).length, 0, '의도된 중단이라 "보류 실패" 알림 없음');
   assert.ok(base.calls.rows.length > 0, '부정 댓글 카드·알림행(→자동숨김)은 그대로');
+});
+
+test("보류 대행 전용 일일 상한: 1,000 unit를 쓰면 추가 보류를 멈추고 부정 판정은 유지한다", async () => {
+  const base = world({ holdCostCalls: 20 });
+  base.calls.holdMode = true;
+  const summary = await runOwnerFastScan({ ...HOLD, holdEnforce: true, holdEnforceDailyUnitCap: 1_000 }, base.fetchImpl, NOW, base.classifier);
+  assert.deepEqual(base.calls.holds, []);
+  assert.equal(summary.holdEnforced, 0);
+  assert.equal(summary.holdEnforceDailyUnits, 1_000);
+  assert.equal(summary.holdEnforceBraked, 'hold-daily-cap(1000/1000)');
+  assert.equal(holdPosts(base.calls).length, 0, '의도된 상한 중단은 실패 경고가 아니다');
+  assert.ok(base.calls.rows.length > 0, '부정 댓글 판정·카드 경로는 그대로');
+});
+
+test("보류 대행 전용 상한: 앞쪽 기존 처리건을 빼고 뒤의 신규 댓글에 남은 1회 예산을 쓴다", async () => {
+  const base = world({ alreadyEnforced: ['old-hold'], holdCostCalls: 19 });
+  base.calls.holdMode = true;
+  const fetchImpl = async (url, init = {}) => {
+    const u = new URL(String(url));
+    if (u.pathname.endsWith('/commentThreads') && u.searchParams.get('allThreadsRelatedToChannelId') === CH2) {
+      return { ok: true, status: 200, json: async () => ({ items: [
+        thread('old-hold', 'v3', '전에 보류됨', ago(1)),
+        thread('fresh-hold', 'v4', '새 댓글', ago(1)),
+      ] }) };
+    }
+    return base.fetchImpl(url, init);
+  };
+  const summary = await runOwnerFastScan(
+    { ...HOLD, holdEnforce: true, holdEnforceDailyUnitCap: 1_000 },
+    fetchImpl,
+    NOW,
+    base.classifier,
+  );
+  assert.deepEqual(base.calls.holds, ['fresh-hold']);
+  assert.equal(summary.holdEnforced, 1);
+  assert.equal(summary.holdEnforceDailyUnits, 1_000);
 });
 
 test("11-06 회귀: 절약 모드가 보류 대행을 일시정지하면 옛 '모두 보류 빠진 영상' 알림을 내지 않는다", async () => {

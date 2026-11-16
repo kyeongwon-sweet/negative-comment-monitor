@@ -25,7 +25,7 @@ import { kstDateKey } from './schedule.js';
 import { sendAlert } from './slack.js';
 import { retrySlackRateLimit } from './youtube-ads-run.js';
 import { parseHeldReviewChannels } from './youtube-owner-held-review.js';
-import { quotaBrakeEngaged, recordYouTubeHoldCost, runHoldNoticeDigest } from './youtube-quota-meter.js';
+import { loadYouTubeHoldCost, quotaBrakeEngaged, recordYouTubeHoldCost, runHoldNoticeDigest } from './youtube-quota-meter.js';
 import { recordDeferredClassification } from './llm-health.js';
 
 const HOUR = 60 * 60 * 1000;
@@ -68,6 +68,9 @@ export function loadFastScanConfig(env = process.env, now = Date.now()) {
     // '모두 보류' 빠진 새 영상 하루 1회 묶음 알림(11-16 사용자 결정). 끄려면 YOUTUBE_OWNER_HOLD_NOTICE=false.
     holdNotice: String(env.YOUTUBE_OWNER_HOLD_NOTICE || 'true').toLowerCase() !== 'false',
     holdNoticeHourKst: clampInt(env.YOUTUBE_OWNER_HOLD_NOTICE_HOUR_KST, 10, 0, 23),
+    // Studio 설정 누락이 오래 방치돼도 정상댓글 보류 대행이 핵심 부정 탐지·숨김 quota를 잠식하지 않게
+    // 전용 일일 상한을 둔다. 1회=50 unit, 기본 1,000이면 최대 20회다.
+    holdEnforceDailyUnitCap: clampInt(env.YOUTUBE_OWNER_HOLD_DAILY_UNIT_CAP, 1_000, 50, 5_000),
   };
 }
 
@@ -182,7 +185,7 @@ export function holdLeakMessage(items, assignee = '') {
   const enforced = items.reduce((sum, it) => sum + (it.enforced || 0), 0);
   const lines = [
     `:warning: *'모두 보류' 빠진 영상 ${items.length}개* — 봇 승인 없이 새 댓글이 바로 공개됐습니다.`,
-    ...(enforced ? [`봇이 그 댓글 ${enforced}개를 일단 보류로 돌렸습니다(괜찮은 댓글은 승인 봇이 15분 안에 다시 공개).`] : []),
+    ...(enforced ? [`봇이 그 댓글 ${enforced}개를 일단 보류로 돌렸습니다(괜찮은 댓글은 다음 승인 회차에 다시 공개).`] : []),
     '스튜디오에서 영상별로 댓글 검토를 *모두 보류*로 바꿔주세요(댓글 켜짐/꺼짐은 그대로). 부정 댓글은 빠른 감시가 따로 숨깁니다.',
     '이미 *모두 보류*로 되어 있다면 그 댓글 작성자가 "승인된 사용자" 목록에 있거나 사람이 직접 승인한 경우입니다 — 아래 댓글을 확인해주세요.',
     ...items.map((it) => `• <https://studio.youtube.com/video/${it.videoId}/edit|${it.videoId}> · ${it.channelName}${it.title ? ` · ${it.title.slice(0, 40)}` : ''} · 공개된 새 댓글 ${it.count}개`
@@ -228,7 +231,8 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
   const summary = {
     channels: 0, threadsRead: 0, recentComments: 0, alreadyAlerted: 0, classified: 0,
     flagged: 0, sentAlerts: 0, capped: 0, deferred: 0, quotaUnits: 0,
-    ownerGateSuppressed: 0, ownerGateUnreviewed: 0, holdLeakVideos: 0, holdLeakAlerted: 0, holdLeakSilenced: 0, holdEnforced: 0, holdEnforceBraked: '', holdNoticePosted: 0,
+    ownerGateSuppressed: 0, ownerGateUnreviewed: 0, holdLeakVideos: 0, holdLeakAlerted: 0,
+    holdLeakSilenced: 0, holdEnforced: 0, holdEnforceDailyUnits: 0, holdEnforceBraked: '', holdNoticePosted: 0,
     newVideosTracked: 0, errors: [],
   };
   const holdSince = new Map((config.holdWatchChannels || []).map((c) => [
@@ -334,11 +338,24 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
     summary.holdLeakVideos = leaks.length;
     // 봇이 '모두 보류'를 대신한다: 새 영상에 사람이 보류를 안 걸어도(유튜브 API로는 영상 보류 설정을 못 바꿈)
     // 봇 승인 없이 공개된 새 댓글을 즉시 보류로 돌린다 → 다음 회차 승인 봇이 판정해 괜찮은 건 다시 공개.
-    // 결과적으로 '모두 보류'와 같고 노출은 최대 한 회차(15분). 그래서 누락 자체는 알리지 않고(11-03 사용자 지시),
-    // 봇 보류가 실패했거나 보류 후에도 공개로 남은 댓글만 알린다(hold-stuck, 영상당 하루 1회).
+    // 결과적으로 '모두 보류'와 같고 노출은 최대 한 회차(15분). 설정 누락은 아래 일일 묶음 알림으로 보완하고,
+    // 그 전에도 새 댓글마다 50 unit가 반복될 수 있으므로 전용 일일 상한으로 핵심 감시 quota를 보호한다.
     // quota 브레이크: 사용률이 높으면 보류 대행(채널당 50 unit)을 멈춘다. 공개 댓글 중 부정은 아래 판정·숨김이 그대로 잡는다.
+    let holdDailyUnits = 0;
+    if (leaks.length && !config.dryRun && config.holdEnforce) {
+      const costs = await loadYouTubeHoldCost(
+        { SUPABASE_URL: config.supabaseUrl, SUPABASE_SERVICE_ROLE_KEY: config.supabaseKey },
+        fetchImpl,
+        now,
+      );
+      holdDailyUnits = costs.reduce((sum, row) => sum + Number(row.units || 0), 0);
+      summary.holdEnforceDailyUnits = holdDailyUnits;
+    }
+    const holdDailyCap = Math.max(50, Number(config.holdEnforceDailyUnitCap) || 1_000);
     const brake = leaks.length && !config.dryRun && config.holdEnforce && config.holdEnforcePaused
       ? { engaged: true, reason: config.holdEnforcePaused }
+      : leaks.length && !config.dryRun && config.holdEnforce && holdDailyUnits >= holdDailyCap
+      ? { engaged: true, reason: `hold-daily-cap(${holdDailyUnits}/${holdDailyCap})` }
       : leaks.length && !config.dryRun && config.holdEnforce
       ? await quotaBrakeEngaged({ supabaseUrl: config.supabaseUrl, supabaseKey: config.supabaseKey, ratio: config.quotaBrakeRatio }, fetchImpl, now)
       : { engaged: false };
@@ -351,6 +368,11 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
         byChannel.get(leak.channelId).push(leak);
       }
       for (const [channelId, channelLeaks] of byChannel) {
+        const remainingCalls = Math.floor((holdDailyCap - holdDailyUnits) / 50);
+        if (remainingCalls <= 0) {
+          summary.holdEnforceBraked = `hold-daily-cap(${holdDailyUnits}/${holdDailyCap})`;
+          break;
+        }
         const owner = tokens.get(channelId);
         if (!owner) {
           for (const leak of channelLeaks) { leak.problem = leak.leaked; leak.reason = '소유자 토큰 없음'; }
@@ -359,9 +381,17 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
         try {
           // 댓글당 한 번만(원장 선점). YouTube가 보류를 무시하는 예외 댓글을 매 회차 다시 보류해 quota를 태우지 않게.
           const allIds = channelLeaks.flatMap((leak) => leak.leaked.map((c) => c.id));
-          const fresh = new Set(await claimHoldEnforce(config, kstDateKey(now), allIds, fetchImpl));
+          // 이미 선점된 ID를 먼저 빼고 상한만큼만 새로 선점한다. 단순히 앞 N개를 자르면 그 앞쪽이 모두
+          // 기존 처리건인 경우 뒤의 신규 댓글이 영원히 굶는다.
+          const existingTimes = await holdEnforceTimes(config, allIds, fetchImpl);
+          // 상한 밖 댓글은 원장 선점도 하지 않는다. 다음 quota 날짜에 다시 보류할 수 있어야 한다.
+          const attemptIds = allIds.filter((id) => !existingTimes.has(id)).slice(0, remainingCalls * 50);
+          const fresh = new Set(await claimHoldEnforce(config, kstDateKey(now), attemptIds, fetchImpl));
           if (fresh.size) {
             await holdComments(config, [...fresh], await tokenFor(owner), fetchImpl);
+            const used = Math.ceil(fresh.size / 50) * 50;
+            holdDailyUnits += used;
+            summary.holdEnforceDailyUnits = holdDailyUnits;
             // 할당량 경고에 '어느 채널 새 영상 때문에 얼마'를 붙이기 위한 비용 기록(실패해도 진행).
             await recordYouTubeHoldCost(
               { SUPABASE_URL: config.supabaseUrl, SUPABASE_SERVICE_ROLE_KEY: config.supabaseKey },
@@ -376,8 +406,7 @@ export async function runOwnerFastScan(config, fetchImpl = fetch, now = Date.now
             );
           }
           // 예전에 이미 보류했는데 또 공개 = 보류가 안 먹음(사람 승인·승인된 사용자 등). 반영 지연은 유예한다.
-          const retried = allIds.filter((id) => !fresh.has(id));
-          const triedAt = retried.length ? await holdEnforceTimes(config, retried, fetchImpl) : new Map();
+          const triedAt = existingTimes;
           for (const leak of channelLeaks) {
             leak.enforced = leak.leaked.filter((c) => fresh.has(c.id)).length;
             summary.holdEnforced += leak.enforced;
