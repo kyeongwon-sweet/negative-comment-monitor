@@ -268,7 +268,8 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   const pintTeamAssignees = isPintTeamCard
     ? [...new Set([baseAssignee, ...(assignees.p?.additional || [])].filter(Boolean))]
     : [];
-  // 제과 카드는 카테고리 구분 없이 모현진·김해솔·장수영·이선민을 함께 태그한다.
+  // 제과 카드는 카테고리 구분 없이 주담당(모현진)과 추가 담당(SLACK_ASSIGNEE_JG_ADDITIONAL)을 함께 태그한다.
+  // 11-18 사용자: 장수영은 모든 태그에서 제외 → 추가 담당 변수 삭제(현재 모현진 단독).
   // 부모 스레드는 assigneeForTarget의 주담당(모현진) 1명만 사용한다.
   const isJg = productGroup(target.productName) === 'jg';
   const jgAssignees = isJg
