@@ -95,10 +95,12 @@ export function combinePendingModerationResults(results) {
   return combined;
 }
 
-// 숨김 요청이 3회 접수됐는데도 계속 공개인 댓글 → 봇은 더 시도하지 않고(quota) 사람에게 한 번 알린다.
+// 숨김 요청이 접수됐는데도 계속 공개인 댓글 → 봇은 더 시도하지 않고(quota) 사람에게 한 번 알린다.
+// 횟수를 적지 않는다: 승인 봇이 공개했던 댓글은 API로 다시 숨겨지지 않아 첫 시도에서 바로 넘긴다(11-18 '3번' 오기재).
 export function manualRequiredMessage(rows, assignee = '') {
   const lines = [
-    `:warning: *봇이 숨기지 못한 댓글 ${rows.length}개* — 숨김 요청을 3번 보냈지만 유튜브에서 계속 공개입니다.`,
+    `:warning: *봇이 숨기지 못한 댓글 ${rows.length}개* — 숨김 요청이 유튜브에 반영되지 않아 계속 공개입니다.`,
+    '승인 봇이 한 번 공개했던 댓글은 유튜브 API로 다시 숨겨지지 않습니다(이번처럼 나중 재감사에서 부정으로 바뀐 경우).',
     '봇은 더 시도하지 않습니다(재시도마다 유튜브 할당량 소모). 스튜디오에서 이 댓글만 *삭제*해주세요("사용자 숨기기" 말고).',
     ...rows.map((row) => {
       const videoId = String(row.post_url || '').match(/[?&]v=([^&]+)/)?.[1] || '';
