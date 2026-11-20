@@ -8,7 +8,7 @@ const CH = 'UCxfjcCvRPOPzo6PeAttO4Dg';
 // Google Ads 조회 없이(광고 소재 없음) 제목 추론만 검증하는 기본 옵션.
 const NO_ADS = { loadAdCreatives: async () => new Map() };
 
-function world({ alerted = [], llm = 'ok', titleInState = true, fetchedTitle = '[26.10]새우깡제친_main_261029_제과_김하영' } = {}) {
+function world({ alerted = [], llm = 'ok', titleInState = true, fetchedTitle = '[26.10]새우깡제친_main_261029_제과_김하영', botApproved = [], ledgerFails = false } = {}) {
   const calls = { cards: [], rows: [], hides: 0, videoLookups: 0 };
   const json = (body, ok = true, status = 200) => ({ ok, status, json: async () => body, text: async () => JSON.stringify(body) });
   const threads = [
@@ -37,6 +37,9 @@ function world({ alerted = [], llm = 'ok', titleInState = true, fetchedTitle = '
     if (u.includes('chat.postMessage')) { calls.cards.push(JSON.parse(init.body)); return json({ ok: true, ts: '333.444' }); }
     if (u.includes('reactions.remove')) return json({ ok: true });
     if (u.includes('setModerationStatus')) { calls.hides += 1; return json({}); }
+    if (u.includes('cost_usage_ledger') && decodeURIComponent(u).includes('held-review:')) {
+      return ledgerFails ? json({}, false, 500) : json(botApproved.map((id) => ({ run_key: `held-review:${id}` })));
+    }
     throw new Error(`unexpected ${u}`);
   };
   // 약한 모델이 '싸가지'만 부정, 강한 모델도 동의(게이트 통과) — 나머지는 정상.
@@ -182,4 +185,24 @@ test('재감사는 escalation 공유 예산(200)의 60%까지만 쓴다 — 실�
   assert.equal(cfg.geminiEscalationRollingRequestBudget, 120);
   assert.equal(cfg.classificationCacheReadOnly, true);
   assert.equal(publicAuditClassifyConfig({ ...base, publicAuditEscalationBudgetPercent: 50, geminiEscalationRollingRequestBudget: 300 }).geminiEscalationRollingRequestBudget, 150);
+});
+
+// 11-18 재발방지: 승인 봇이 공개했던 댓글은 API로 다시 숨겨지지 않는다 → 처음부터 사람(상품 담당) 판단으로.
+test('재감사: 승인 봇이 공개했던 댓글은 manual_required로 적재하고 카드에 삭제 판단 안내를 단다(24시간 자동숨김 대상 아님)', async () => {
+  const { fetchImpl, calls, classifier } = world({ alerted: ['decided'], botApproved: ['bad'] });
+  const summary = await runPublicAudit(BASE, fetchImpl, Date.parse('2026-10-30T02:00:00Z'), classifier, NO_ADS);
+  assert.equal(summary.botPublishedFlagged, 1);
+  assert.equal(calls.rows[0].review_decision, 'manual_required');
+  assert.equal(calls.rows[0].reviewed_by, PUBLIC_AUDIT_ACTOR);
+  assert.match(JSON.stringify(calls.cards[0]), /봇이 숨길 수 없음/);
+  assert.equal(calls.cards[0].thread_ts, '111.222', '상품 스레드(담당자 카드)');
+  assert.equal(calls.hides, 0);
+});
+
+test('재감사: 승인 봇 원장 조회가 실패하면 카드는 막지 않고 기존 hold로 둔다', async () => {
+  const { fetchImpl, calls, classifier } = world({ alerted: ['decided'], ledgerFails: true });
+  const summary = await runPublicAudit(BASE, fetchImpl, Date.parse('2026-10-30T02:00:00Z'), classifier, NO_ADS);
+  assert.equal(summary.cardsPosted, 1);
+  assert.equal(calls.rows[0].review_decision, 'hold');
+  assert.ok(summary.errors.some((e) => e.includes('승인 봇 공개 여부 확인 실패')));
 });

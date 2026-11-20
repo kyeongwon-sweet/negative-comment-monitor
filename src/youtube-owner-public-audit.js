@@ -191,8 +191,30 @@ async function seenFingerprints(config, fingerprints, fetchImpl) {
   return seen;
 }
 
+// 승인 봇(held-review)이 한 번 공개한 댓글은 유튜브 API로 다시 숨겨지지 않는다(11-04~05, 11-18 재현).
+// 재감사가 그런 댓글을 부정으로 잡으면 24시간 뒤 자동 숨김을 헛시도하고 운영 경고로 새지 않게, 처음부터
+// 사람 몫(manual_required)으로 적재하고 카드에 '지울지 판단' 안내를 단다(11-18 사용자: 담당자에게 물어보기).
+export const BOT_PUBLISHED_DECISION = 'manual_required';
+const HELD_REVIEW_LEDGER_PREFIX = 'held-review:';
+
+export async function loadBotPublishedIds(config, ids, fetchImpl) {
+  const found = new Set();
+  const unique = [...new Set(ids.map(String).filter(Boolean))];
+  for (let i = 0; i < unique.length; i += 50) {
+    const keys = unique.slice(i, i + 50).map((id) => `"${HELD_REVIEW_LEDGER_PREFIX}${id.replace(/"/g, '')}"`).join(',');
+    const response = await fetchImpl(
+      `${config.supabaseUrl}/rest/v1/cost_usage_ledger?select=run_key&run_key=${encodeURIComponent(`in.(${keys})`)}`,
+      { headers: sbHeaders(config) },
+    );
+    if (!response.ok) throw new Error(`승인 봇 원장 조회 실패(${response.status})`);
+    for (const row of await response.json()) found.add(String(row.run_key).slice(HELD_REVIEW_LEDGER_PREFIX.length));
+  }
+  return found;
+}
+
 // 'hold'로 적재해 15분 자동숨김(pending-hide)에서 빠지게 한다. 사람이 [숨김]을 눌러야 decision=hide.
-export function auditAlertRow(config, target, comment, fingerprint, slackTs, classifierHash, nowIso) {
+// 봇이 공개했던 댓글은 decision=manual_required(24시간 자동 숨김 대상도 아님).
+export function auditAlertRow(config, target, comment, fingerprint, slackTs, classifierHash, nowIso, { botPublished = false } = {}) {
   return {
     fingerprint,
     platform: 'youtube',
@@ -211,7 +233,7 @@ export function auditAlertRow(config, target, comment, fingerprint, slackTs, cla
     comment_timestamp: String(comment.timestamp || '') || null,
     author_channel_id: String(comment.authorChannelId || '') || null,
     author_display_name: String(comment.authorDisplayName || comment.username || '') || null,
-    review_decision: 'hold',
+    review_decision: botPublished ? BOT_PUBLISHED_DECISION : 'hold',
     reviewed_by: PUBLIC_AUDIT_ACTOR,
     reviewed_at: nowIso,
   };
@@ -231,7 +253,7 @@ async function loadOpenAuditCardIds(config, fetchImpl) {
   const ids = new Set();
   for (let offset = 0; ; offset += 1000) {
     const url = `${config.supabaseUrl}/rest/v1/negative_comment_alerts?select=comment_id`
-      + `&reviewed_by=eq.${PUBLIC_AUDIT_ACTOR}&review_decision=eq.hold&order=id.asc&offset=${offset}&limit=1000`;
+      + `&reviewed_by=eq.${PUBLIC_AUDIT_ACTOR}&review_decision=in.(hold,${BOT_PUBLISHED_DECISION})&order=id.asc&offset=${offset}&limit=1000`;
     const response = await fetchImpl(url, { headers: sbHeaders(config) });
     if (!response.ok) throw new Error(`negative_comment_alerts read failed (${response.status})`);
     const rows = await response.json();
@@ -352,6 +374,16 @@ export async function runPublicAudit(config, fetchImpl = fetch, now = Date.now()
 
   const threads = new Map();
   const nowIso = new Date(now).toISOString();
+  // 조회 실패면 카드를 막지 않고 기존 경로(hold)로 둔다 — 최악은 오늘처럼 24시간 뒤 사람에게 넘어가는 것.
+  let botPublished = new Set();
+  if (!config.publicAuditDryRun && flagged.length) {
+    try {
+      botPublished = await loadBotPublishedIds(config, flagged.map((item) => item.comment.id), fetchImpl);
+    } catch (error) {
+      summary.errors.push(`승인 봇 공개 여부 확인 실패: ${String(error.message || error).slice(0, 120)}`);
+    }
+  }
+  summary.botPublishedFlagged = 0;
   for (const item of flagged) {
     if (config.publicAuditDryRun) {
       console.error(`[owner-public-audit:dry-flag] ${item.target.youtubeVideoId} ${item.comment.id} engine=${item.comment.risk.engine || ''} category=${item.comment.risk.category || ''}`);
@@ -366,10 +398,15 @@ export async function runPublicAudit(config, fetchImpl = fetch, now = Date.now()
     }
     const threadTs = threads.get(route.scopeKey);
     if (!threadTs) throw new Error('재감사 카드 스레드 확보 실패 — 최상위 게시로 폴백하지 않음');
-    const comment = { ...item.comment, risk: { ...item.comment.risk, reason: `[매일 재감사·자동 숨김 안 함, 확인 후 숨김] ${item.comment.risk.reason || ''}`.trim() } };
+    const isBotPublished = botPublished.has(String(item.comment.id));
+    const prefix = isBotPublished
+      ? '[매일 재감사 · 봇이 이미 공개한 댓글이라 봇이 숨길 수 없음 → 지울지 판단해 주세요. 지우려면 스튜디오에서 이 댓글만 삭제(되돌릴 수 없음), 둬도 되면 [승인]]'
+      : '[매일 재감사·자동 숨김 안 함, 확인 후 숨김]';
+    const comment = { ...item.comment, risk: { ...item.comment.risk, reason: `${prefix} ${item.comment.risk.reason || ''}`.trim() } };
     const slack = await sendAlert(config, item.target, comment, fetchImpl, threadTs);
     const fingerprint = commentFingerprint(item.target, comment);
-    await insertAuditAlert(config, auditAlertRow(config, item.target, comment, fingerprint, slack.ts, classifierHash, nowIso), fetchImpl);
+    await insertAuditAlert(config, auditAlertRow(config, item.target, comment, fingerprint, slack.ts, classifierHash, nowIso, { botPublished: isBotPublished }), fetchImpl);
+    if (isBotPublished) summary.botPublishedFlagged += 1;
     summary.cardsPosted += 1;
   }
   return summary;
