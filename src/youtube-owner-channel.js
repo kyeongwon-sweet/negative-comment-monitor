@@ -32,6 +32,10 @@ export const YOUTUBE_OWNER_VIDEO_PRODUCT_OVERRIDES = Object.freeze({
   // 먹는김에 '카라멜 1톤…' 2편: 제목·설명에 상품 없고 연결된 Google Ads 캠페인에도 없음 → 사용자 확인 제과(10-30).
   L_gjhYRNS9E: '제과',
   '3ZDNLKuVFsw': '제과',
+  // 먹는김에 '먹방 하나로 30억뷰 찍은 떵개 근황' 3편: 제목에 상품 없어 쫀득바 폴백 → 사용자 확인 바치케(11-23).
+  b7F8GZEogAA: 'P바치',
+  c2FmxxEEj0c: 'P바치',
+  aaHgbGl0U_k: 'P바치',
 });
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -271,6 +275,8 @@ export function inferOwnerVideoProduct(video, fallback = 'JD') {
   // 광고 소재명 제목(예: '[26.10]…새우깡제친_main…_261029_제과_김하영')은 상품명 없이 '제과'만 적힌다.
   // 10-30 재감사 카드 11장이 이 제목 때문에 쫀득바(JD) 폴백으로 오배정됐다.
   if (/제과|새우깡/i.test(text)) return '제과';
+  // 바치케(P바치)는 파인트와 별개 상품군. '떵개가 먹은 바치케 파인트'가 파인트로 새던 것(11-23) → 파인트보다 먼저.
+  if (/바치케|p바치/i.test(text)) return 'P바치';
   if (/파인트|p(?:혼|망|딸|애)/i.test(text)) return 'P';
   if (/듬뿍|db(?:혼|망|딸|애)/i.test(text)) return 'DB';
   if (/쫀득|멜론바|망고바|jd(?:멜|망|혼|복)/i.test(text)) return 'JD';

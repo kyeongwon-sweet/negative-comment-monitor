@@ -179,6 +179,8 @@ test('product inference keeps organic routing useful without changing posted_at'
   assert.equal(inferOwnerVideoProduct({ snippet: { title: '부모님도 홀딱 빠진 멜론바' } }), 'JD');
   assert.equal(inferOwnerVideoProduct({ snippet: { title: '라라스윗 파인트 신상' } }), 'P');
   assert.equal(inferOwnerVideoProduct({ snippet: { title: '듬뿍바 리뷰' } }), 'DB');
+  assert.equal(inferOwnerVideoProduct({ snippet: { title: '떵개가 먹은 바치케 파인트' } }), 'P바치', '바치케는 파인트보다 먼저');
+  assert.equal(inferOwnerVideoProduct({ id: 'b7F8GZEogAA', snippet: { title: '먹방 하나로 30억뷰 찍은 떵개 근황' } }), 'P바치');
 });
 
 test('영상ID 상품군 override는 제목 키워드보다 우선한다(제과 라우팅)', () => {
