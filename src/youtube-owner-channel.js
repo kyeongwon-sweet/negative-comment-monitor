@@ -36,6 +36,26 @@ export const YOUTUBE_OWNER_VIDEO_PRODUCT_OVERRIDES = Object.freeze({
   b7F8GZEogAA: 'P바치',
   c2FmxxEEj0c: 'P바치',
   aaHgbGl0U_k: 'P바치',
+  // 같은 떵개 바치케 캠페인(10-23 업로드, 먹는김에·먹짱언니) — 사용자 확인 전부 바치케(11-24).
+  // 위성·썰박스의 떵개 소재 영상(남의 콘텐츠)은 대상 아님 → 제목 규칙 대신 영상 ID로 고정.
+  // '떵개 영향력 무엇'
+  _Ffwlr65FH4: 'P바치',
+  jwRCD6ZWtIM: 'P바치',
+  rivFLAXkHdQ: 'P바치',
+  'A3L-v7m3V10': 'P바치',
+  ehpHVG3Tw_E: 'P바치',
+  qk_21witOXk: 'P바치',
+  // '떵개 영향력 생각보다 대단한데'
+  cVGzQIOMcEU: 'P바치',
+  lOrcpQd6Whw: 'P바치',
+  lWHxzaX0FwA: 'P바치',
+  p_ucJlreI5Y: 'P바치',
+  UbkGwedl3vA: 'P바치',
+  VNDua1njj9A: 'P바치',
+  // '떵개가 먹고 난리난 이것'
+  KkqNDn5AA6c: 'P바치',
+  DZo1pUP0T5k: 'P바치',
+  zfSUA6jBgRY: 'P바치',
 });
 
 const DAY_MS = 24 * 60 * 60 * 1000;
