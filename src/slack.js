@@ -116,7 +116,7 @@ export function productLabel(group) {
   if (group === 'p') return '파인트';
   if (group === 'jg') return '제과';
   if (group === 'pbachi') return '바치케'; // 표기명(대표 지정). 상품코드는 여전히 정확히 'P바치'
-  if (group === 'bb') return '크봉';
+  if (group === 'bb') return '크봉이'; // 스레드 표기명(11-25 사용자 지정). 판정 정본은 src/kbong.js
   return '기타';
 }
 
