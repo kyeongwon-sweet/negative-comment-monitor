@@ -441,6 +441,15 @@ jobs:
           SLACK_ASSIGNEE_P_OWNED_YOUTUBE: ${{ vars.SLACK_ASSIGNEE_P_OWNED_YOUTUBE }}
           SLACK_ASSIGNEE_JD_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JD_PRIMARY }}
           FAILURE_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: Kick late owner-channel monitor
+        # 소유채널 보조 모니터 '17 */3' 크론이 실제 8~12시간 간격으로 밀린다(11-24~25 워치독 경고 반복).
+        # 이 메인 감시는 ~45분마다 확실히 돌므로, 최근 정상 회차가 3.5시간 넘게 없으면 한 번 대신 실행시킨다.
+        if: ${{ always() }}
+        continue-on-error: true
+        run: node src/youtube-owner-kick.js
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          YOUTUBE_OWNER_KICK_AFTER_HOURS: '3.5'
       - name: Sync new negative comments to Google Sheet
         if: ${{ always() }}
         continue-on-error: true

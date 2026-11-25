@@ -42,7 +42,7 @@ export function buildOwnerWatchdogMessage(health, env = process.env, recovery = 
   ].filter(Boolean).join('\n');
 }
 
-async function githubJson(env, pathname, options, fetchImpl) {
+export async function githubJson(env, pathname, options, fetchImpl) {
   const repo = String(env.GITHUB_REPOSITORY || '').trim();
   const token = String(env.GH_TOKEN || env.GITHUB_TOKEN || '').trim();
   if (!repo || !token) throw new Error('Missing GITHUB_REPOSITORY or token');
@@ -106,7 +106,7 @@ export async function runYouTubeOwnerWatchdog(env = process.env, now = Date.now(
   let dispatchError = '';
   try {
     await githubJson(env, '/actions/workflows/youtube-owner-channel.yml/dispatches', {
-      method: 'POST', body: JSON.stringify({ ref, inputs: { dry_run: 'false' } }),
+      method: 'POST', body: JSON.stringify({ ref, inputs: { dry_run: 'false', scheduled_kick: 'true' } }),
     }, fetchImpl);
   } catch (error) {
     dispatchError = error.message;
@@ -133,7 +133,7 @@ export async function runYouTubeOwnerWatchdog(env = process.env, now = Date.now(
   return { warned: true, dispatched: !dispatchError, recovered: false, ...health };
 }
 
-if (import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`) {
+if (process.argv[1] && import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`) {
   runYouTubeOwnerWatchdog().catch((error) => {
     console.error(error.message);
     process.exitCode = 1;

@@ -21,6 +21,11 @@ on:
         description: Override the owned-channel strong escalation model for this run (blank = workflow default)
         required: false
         type: string
+      scheduled_kick:
+        description: Stand-in for a late/dropped scheduled run (main-monitor kick or watchdog recovery); Gemini budget counts as live
+        required: false
+        type: boolean
+        default: false
   schedule:
     # 댓글 최초 감지 지연 상한을 약 3시간으로 유지. 댓글수 변화가 없는 영상은 본문 API를 호출하지 않는다.
     - cron: '17 */3 * * *'
@@ -55,7 +60,7 @@ jobs:
         run: npm run start:youtube-owner-channels
         env:
           LLM_PROVIDER: gemini
-          GEMINI_QUOTA_CLASS: ${{ github.event_name == 'workflow_dispatch' && 'bulk' || 'live' }}
+          GEMINI_QUOTA_CLASS: ${{ github.event_name == 'workflow_dispatch' && !inputs.scheduled_kick && 'bulk' || 'live' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.1-flash-lite
           # 무료 Gemini의 분당 호출 한도를 넘겨 마지막 분류 청크가 키워드로
