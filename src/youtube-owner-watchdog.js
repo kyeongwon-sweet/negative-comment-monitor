@@ -26,13 +26,18 @@ export function evaluateOwnerWorkflowHealth(runs, jobsByRunId, now = Date.now(),
   return { healthy: lastHealthyAt != null && lastHealthyAt >= threshold, lastHealthyAt, threshold };
 }
 
-export function buildOwnerWatchdogMessage(health, env = process.env) {
+export function buildOwnerWatchdogMessage(health, env = process.env, recovery = null) {
   const owner = String(env.SLACK_ASSIGNEE_OTHER || '').trim();
+  const recoveryLine = recovery?.dispatchError
+    ? '자가치유 실패: 소유채널 보조 모니터 재실행 요청이 거부됐습니다. 직접 확인이 필요합니다.'
+    : recovery?.waited
+      ? `자가치유 실패: 재실행을 요청하고 ${recovery.waitedMinutes}분 기다렸지만 정상 회차가 확인되지 않았습니다. 직접 확인이 필요합니다.`
+      : '자가치유: 소유채널 보조 모니터 재실행을 요청했습니다.';
   return [
     '⚠️ *YouTube 소유채널 보조 모니터 — 정상 결과 미확인*',
     '핵심 부정댓글 모니터링 전체 장애가 아닙니다.',
     `최근 정상 회차: ${fmtKst(health.lastHealthyAt)}`,
-    '자가치유: 소유채널 보조 모니터 재실행을 요청했습니다.',
+    recoveryLine,
     owner ? `담당자: <@${owner}>` : '',
   ].filter(Boolean).join('\n');
 }
@@ -69,27 +74,63 @@ async function postSlack(env, text, fetchImpl) {
   if (!payload.ok) throw new Error(`Slack API: ${payload.error || 'unknown_error'}`);
 }
 
-export async function runYouTubeOwnerWatchdog(env = process.env, now = Date.now(), fetchImpl = fetch) {
+// 완료된 회차의 job은 바뀌지 않으므로 jobsByRunId를 재사용해 폴링마다 새 회차만 조회한다.
+async function checkOwnerHealth(env, now, fetchImpl, jobsByRunId, staleHours) {
   const runsPayload = await githubJson(env, '/actions/workflows/youtube-owner-channel.yml/runs?per_page=10', {}, fetchImpl);
   const runs = (runsPayload.workflow_runs || []).filter((run) => run.status === 'completed');
-  const jobsByRunId = new Map();
   for (const run of runs) {
+    if (jobsByRunId.has(String(run.id))) continue;
     const jobsPayload = await githubJson(env, `/actions/runs/${run.id}/jobs?per_page=10`, {}, fetchImpl);
     jobsByRunId.set(String(run.id), jobsPayload.jobs || []);
   }
+  return evaluateOwnerWorkflowHealth(runs, jobsByRunId, now, staleHours);
+}
+
+const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// 11-25 사용자 결정: 자가치유 재실행이 성공하면 알림을 올리지 않는다. 늦게 시작된 예약 회차 때문에
+// 같은 경고가 3번 떴고 3번 모두 재실행 1분 만에 정상화됐다(사람이 매번 수동 삭제). 이제는
+// 재실행 → 정상 회차가 나올 때까지 기다림(기본 25분) → 그래도 정상 회차가 없거나 재실행 요청 자체가
+// 실패했을 때만 Slack에 올린다.
+export async function runYouTubeOwnerWatchdog(env = process.env, now = Date.now(), fetchImpl = fetch, options = {}) {
+  const sleep = options.sleep || defaultSleep;
+  const clock = options.clock || (() => Date.now());
   const staleHours = Number(env.YOUTUBE_OWNER_WATCHDOG_STALE_HOURS || DEFAULT_STALE_HOURS);
-  const health = evaluateOwnerWorkflowHealth(runs, jobsByRunId, now, staleHours);
+  const jobsByRunId = new Map();
+  const health = await checkOwnerHealth(env, now, fetchImpl, jobsByRunId, staleHours);
   if (health.healthy) {
     console.log(`[youtube-owner-watchdog] OK — last=${fmtKst(health.lastHealthyAt)}`);
-    return { warned: false, dispatched: false, ...health };
+    return { warned: false, dispatched: false, recovered: false, ...health };
   }
   const ref = String(env.GITHUB_REF_NAME || 'master').trim() || 'master';
-  await githubJson(env, '/actions/workflows/youtube-owner-channel.yml/dispatches', {
-    method: 'POST', body: JSON.stringify({ ref, inputs: { dry_run: 'false' } }),
-  }, fetchImpl);
-  await postSlack(env, buildOwnerWatchdogMessage(health, env), fetchImpl);
-  console.error(`[youtube-owner-watchdog] STALE — last=${fmtKst(health.lastHealthyAt)}; recovery dispatched`);
-  return { warned: true, dispatched: true, ...health };
+  let dispatchError = '';
+  try {
+    await githubJson(env, '/actions/workflows/youtube-owner-channel.yml/dispatches', {
+      method: 'POST', body: JSON.stringify({ ref, inputs: { dry_run: 'false' } }),
+    }, fetchImpl);
+  } catch (error) {
+    dispatchError = error.message;
+  }
+  const waitMinutes = Math.max(0, Number(env.YOUTUBE_OWNER_WATCHDOG_RECOVERY_WAIT_MINUTES ?? 25));
+  const pollMs = Math.max(1000, Number(env.YOUTUBE_OWNER_WATCHDOG_POLL_SECONDS ?? 60) * 1000);
+  let latest = health;
+  if (!dispatchError) {
+    const deadline = clock() + waitMinutes * 60_000;
+    while (clock() < deadline) {
+      await sleep(pollMs);
+      // 재실행 회차는 지금 시작하므로 '지금' 기준으로 다시 판정한다.
+      latest = await checkOwnerHealth(env, clock(), fetchImpl, jobsByRunId, staleHours);
+      if (latest.healthy) {
+        console.log(`[youtube-owner-watchdog] STALE→RECOVERED — prevLast=${fmtKst(health.lastHealthyAt)} newLast=${fmtKst(latest.lastHealthyAt)}; no Slack alert`);
+        return { warned: false, dispatched: true, recovered: true, ...latest };
+      }
+    }
+  }
+  await postSlack(env, buildOwnerWatchdogMessage(health, env, {
+    dispatchError, waited: !dispatchError, waitedMinutes: waitMinutes,
+  }), fetchImpl);
+  console.error(`[youtube-owner-watchdog] STALE — last=${fmtKst(health.lastHealthyAt)}; ${dispatchError ? `dispatch failed: ${dispatchError}` : `not recovered within ${waitMinutes}m`}`);
+  return { warned: true, dispatched: !dispatchError, recovered: false, ...health };
 }
 
 if (import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`) {

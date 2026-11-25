@@ -17,7 +17,7 @@ concurrency:
 jobs:
   watchdog:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -43,3 +43,5 @@ jobs:
           SLACK_ASSIGNEE_P_OWNED_YOUTUBE: ${{ vars.SLACK_ASSIGNEE_P_OWNED_YOUTUBE }}
           SLACK_ASSIGNEE_JD_PRIMARY: ${{ vars.SLACK_ASSIGNEE_JD_PRIMARY }}
           YOUTUBE_OWNER_WATCHDOG_STALE_HOURS: '7'
+          # 재실행 후 정상 회차를 기다리는 시간. 회복되면 Slack 알림 없음(11-25).
+          YOUTUBE_OWNER_WATCHDOG_RECOVERY_WAIT_MINUTES: '25'
