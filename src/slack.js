@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { isManagedChannel, isAdCommentSource } from './routing.js';
 import { canRequestAutomaticHide, isSponsorshipTarget } from './moderation-state.js';
+import { isKbongText } from './kbong.js';
 
 const DEFAULT_COMPLETED_THREAD_EMOJI = '\uC644\uB8CC\uB290\uB08C\uD45C';
 const managedActions = [['숨김', 'hide', 'danger'], ['승인', 'approve', 'primary'], ['보류', 'hold'], ['숨김해제', 'unhide']];
@@ -82,9 +83,9 @@ export function productGroup(productName) {
   const p = String(productName || '').trim().toLowerCase();
   if (!p) return 'other';
   // 'P바치'는 'p'로 시작하지만 파인트와 별개 상품군 → 파인트 판정보다 먼저 잡는다.
+  // 크봉(크런치봉봉): 크봉·봉봉·BB바/말/초가 들어 있으면 무조건 크봉(11-25 사용자 지정). 다른 상품군보다 먼저.
+  if (p.startsWith('bb') || isKbongText(p)) return 'bb';
   if (p === 'p바치') return 'pbachi';
-  // 크런치봉봉(BB바·BB초·BB말, 별칭 크봉). 2026-11-25 신규 상품군.
-  if (p.startsWith('bb') || p.includes('크런치봉봉') || p.includes('크봉')) return 'bb';
   if (p.startsWith('jg') || p.includes('제과') || p.includes('블트하')) return 'jg';
   if (p.includes('jd')) return 'jd';
   if (p.startsWith('p')) return 'p';
@@ -115,7 +116,7 @@ export function productLabel(group) {
   if (group === 'p') return '파인트';
   if (group === 'jg') return '제과';
   if (group === 'pbachi') return '바치케'; // 표기명(대표 지정). 상품코드는 여전히 정확히 'P바치'
-  if (group === 'bb') return '크런치봉봉';
+  if (group === 'bb') return '크봉';
   return '기타';
 }
 
@@ -181,7 +182,7 @@ export function assigneeForTarget(target, assignees = {}) {
     // 제과는 카테고리 구분 없이 모현진을 부모 스레드 대표 담당자로 쓴다.
     if (assignees.jg?.primary) return assignees.jg.primary;
   } else if (group === 'bb') {
-    // 크런치봉봉은 카테고리 구분 없이(위성·온드·인지광고 포함) 오혜정이 부모 스레드 대표 담당.
+    // 크봉은 카테고리 구분 없이(위성·온드·인지광고 포함) 이재원이 부모 스레드 대표 담당(11-25 사용자 지정).
     if (assignees.bb?.primary) return assignees.bb.primary;
   }
   // 온드미디어는 상품군 무관 전담(김바다). 위성채널은 상품군 무관 이세진(base satellite).
@@ -281,7 +282,7 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   const jgAssignees = isJg
     ? [...new Set([baseAssignee, ...(assignees.jg?.additional || [])].filter(Boolean))]
     : [];
-  // 크런치봉봉 카드는 카테고리 구분 없이 주담당(오혜정)+추가 담당(이재원)을 함께 태그한다(11-25 사용자 지정).
+  // 크봉 카드는 카테고리 구분 없이 주담당(이재원)+추가 담당(SLACK_ASSIGNEE_BB_ADDITIONAL, 현재 없음)을 태그한다.
   const isBb = productGroup(target.productName) === 'bb';
   const bbAssignees = isBb
     ? [...new Set([baseAssignee, ...(assignees.bb?.additional || [])].filter(Boolean))]

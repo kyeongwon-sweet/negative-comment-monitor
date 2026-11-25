@@ -1,5 +1,6 @@
 import { constants, createCipheriv, publicEncrypt, randomBytes } from 'node:crypto';
 import { extractPostKey } from './delta.js';
+import { isKbongText, KBONG_PRODUCT_CODE } from './kbong.js';
 import { campaignNameMatchesFilter } from './normalize.js';
 import {
   fetchActiveGoogleAdsCustomerIds,
@@ -93,6 +94,9 @@ export function productCodesFromText(value) {
 }
 
 export function inferProductFromEvidence(evidence, fallback = '미확인') {
+  // 크봉 단어가 하나라도 있으면 무조건 크봉(11-25 사용자 지정) — 다른 상품코드보다 먼저.
+  const kbong = (evidence || []).find((value) => isKbongText(value));
+  if (kbong != null) return { product: KBONG_PRODUCT_CODE, evidence: String(kbong), ambiguous: false };
   for (const value of evidence || []) {
     const codes = productCodesFromText(value);
     if (codes.length) return { product: codes.join('/'), evidence: String(value), ambiguous: codes.length > 1 };
@@ -101,7 +105,6 @@ export function inferProductFromEvidence(evidence, fallback = '미확인') {
   if (/파인트/i.test(joined)) return { product: 'P', evidence: joined, ambiguous: false };
   if (/쫀득|멜론바|망고바/i.test(joined)) return { product: 'JD', evidence: joined, ambiguous: false };
   if (/듬뿍/i.test(joined)) return { product: 'DB', evidence: joined, ambiguous: false };
-  if (/크런치\s*봉봉|크봉/i.test(joined)) return { product: 'BB', evidence: joined, ambiguous: false };
   return { product: fallback, evidence: '', ambiguous: false };
 }
 

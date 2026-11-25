@@ -1,4 +1,5 @@
 import { kstDateKey } from './schedule.js';
+import { isKbongText, KBONG_PRODUCT_CODE } from './kbong.js';
 
 // 광고 어댑터(메타·틱톡·유튜브) 공통 유틸. 각 어댑터는 자기 이름의 얇은 wrapper로 노출하고
 // 로직은 여기 단일 소스로 둔다(중복 제거 — 창 판정·원장키·실행여부를 한 곳에서 유지).
@@ -10,10 +11,10 @@ import { kstDateKey } from './schedule.js';
 export function awarenessProductName(defaultProductName, campaignName = '', adTitle = '') {
   const fallback = String(defaultProductName || '').trim();
   const identity = `${String(campaignName || '')} ${String(adTitle || '')}`;
+  // 크봉 단어가 있으면 무조건 크봉(11-25 사용자 지정) — 다른 상품 규칙보다 먼저.
+  if (isKbongText(identity)) return KBONG_PRODUCT_CODE;
   if (/JD(?:복|그사)/i.test(`${fallback} ${identity}`)) return fallback;
   if (/블트하|제과|맛피아|감자스틱/i.test(identity)) return 'JG';
-  // 크런치봉봉(BB바·BB초·BB말, 별칭 크봉) 캠페인/소재 → 'BB'(productGroup 'bb', 11-25).
-  if (/크런치\s*봉봉|크봉|BB(?:바|초|말)/i.test(identity)) return 'BB';
   // 파인트 캠페인은 '파인트' 대신 상품 코드 'P팝'만 적히기도 한다(10-30 사용자 확인). 'P바치'(바치케)는 별개.
   return /파인트|(?:^|[^A-Za-z0-9가-힣])P팝/i.test(identity) ? 'P' : fallback;
 }

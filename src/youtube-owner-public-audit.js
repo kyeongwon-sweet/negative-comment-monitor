@@ -14,6 +14,7 @@ import {
 } from './youtube-owner-channel.js';
 import { DEFAULT_GOOGLE_ADS_API_BASE, DEFAULT_GOOGLE_ADS_API_VERSION } from './youtube-ads.js';
 import { loadYouTubeAdCreativeMap, productCodesFromText } from './august-product-restore.js';
+import { isKbongText, KBONG_PRODUCT_CODE } from './kbong.js';
 import { loadYouTubeOwnerTokens, refreshAndVerifyOwner } from './youtube-owner-moderation.js';
 import { ownerThreadRoute } from './youtube-owner-channel-run.js';
 import { classifyTargetsBatched, isLlmDeferred } from './hybrid-classify.js';
@@ -69,8 +70,11 @@ function googleAdsLookupConfig(env, base) {
 // 소재명·캠페인명에서 상품을 하나로 확정할 수 있을 때만 돌려준다. 이름마다 정확한 상품 코드(JD멜·P팝·P바치 등)를
 // 먼저 보고, 없으면 제과·파인트 단어를 본다. 서로 다른 상품이 섞이면 ''(제목 추론으로 넘김 — 추측 배정 금지).
 export function productFromAdCreative(creative) {
+  const names = [...(creative?.adNames || []), ...(creative?.campaignNames || [])];
+  // 크봉 단어가 하나라도 있으면 무조건 크봉(11-25 사용자 지정) — 섞임 판정보다 먼저.
+  if (isKbongText(...names)) return KBONG_PRODUCT_CODE;
   const found = new Set();
-  for (const value of [...(creative?.adNames || []), ...(creative?.campaignNames || [])]) {
+  for (const value of names) {
     const text = String(value || '');
     const codes = productCodesFromText(text);
     if (codes.length === 1) found.add(codes[0]);
@@ -304,7 +308,9 @@ export async function runPublicAudit(config, fetchImpl = fetch, now = Date.now()
         const titleProduct = target.productName;
         const adProduct = productFromAdCreative(adCreatives.get(videoId));
         let source = 'title';
-        if (YOUTUBE_OWNER_VIDEO_PRODUCT_OVERRIDES[videoId]) source = 'override';
+        // 제목에 크봉 단어가 있으면 무조건 크봉(11-25) — 광고 소재명 상품보다 우선(제목 판정 유지).
+        if (titleProduct === KBONG_PRODUCT_CODE) source = 'title';
+        else if (YOUTUBE_OWNER_VIDEO_PRODUCT_OVERRIDES[videoId]) source = 'override';
         else if (adProduct) { target.productName = adProduct; source = 'ad'; }
         else if (inferOwnerVideoProduct(video, NO_PRODUCT) === NO_PRODUCT) source = 'fallback';
         summary.productSources[source] += 1;

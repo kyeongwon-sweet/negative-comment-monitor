@@ -307,18 +307,20 @@ test('productGroup: JG·제과·블트하는 jg 상품군으로 분류한다', (
   assert.equal(productGroup('블트하'), 'jg');
 });
 
-test('크런치봉봉(BB바·BB초·BB말·크봉): 전 카테고리 오혜정 주담당 + 카드에 이재원 동반 태그', () => {
-  for (const code of ['BB바', 'BB초', 'BB말', 'BB', '크런치봉봉', '크봉']) assert.equal(productGroup(code), 'bb', code);
+test('크봉(크봉·BB바·BB말·BB초·봉봉·크런치봉봉): 무조건 크봉, 전 카테고리 주담당 1명 + 추가 담당', () => {
+  for (const code of ['BB바', 'BB초', 'BB말', 'BB', '크런치봉봉', '크봉', '봉봉', 'JD멜 봉봉 콜라보', 'P바치 크봉']) {
+    assert.equal(productGroup(code), 'bb', code);
+  }
   // 기존 상품코드는 그대로(BA=듬뿍바 계열, P바=파인트).
   assert.equal(productGroup('BA혼'), 'other');
   assert.equal(productGroup('P바'), 'p');
-  assert.equal(productLabel('bb'), '크런치봉봉');
+  assert.equal(productLabel('bb'), '크봉');
   for (const channelCategory of ['인지 광고', '협찬 (인플루언서)', '바이럴 (영상)', '위성채널', '온드미디어', '소유 YouTube']) {
     assert.equal(assigneeForTarget({ productName: 'BB바', channelCategory }, assignees), 'U_BB', channelCategory);
     const blocks = buildAlertBlocks({
       url: 'https://x', channelCategory, productName: 'BB초', extraAssignees: ['U_VIDEO'],
     }, { id: 'c1', platform: 'youtube', text: '별로', risk: {} }, undefined, assignees);
-    assert.ok(blocks.some((x) => x.text?.text === `*[크런치봉봉] ${channelCategory}*`), channelCategory);
+    assert.ok(blocks.some((x) => x.text?.text === `*[크봉] ${channelCategory}*`), channelCategory);
     assert.ok(blocks.some((x) => x.text?.text === '*담당자*\n<@U_BB> <@U_BB_2>'), channelCategory);
   }
 });

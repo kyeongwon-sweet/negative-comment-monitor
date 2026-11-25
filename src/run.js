@@ -13,6 +13,7 @@ import { computeClassifierHash, purgeCache } from './cache.js';
 import { falsePositiveStats } from './review.js';
 import { ensureDailyThread, markCompletedThreads, cleanupOrphanedCopyMessages } from './threads.js';
 import { assigneeForTarget, productGroup, productLabel, hasProductName, videoAssigneeFromAdTitle } from './slack.js';
+import { kbongProductName } from './kbong.js';
 import { APIFY_LOW_BALANCE_USD, DEFAULT_COST_THRESHOLDS, estimateApifyUsd, fetchApifyUsage, maybeAlertApifyLow, maybeAlertCosts, postApifyLowWarning, postCostWarning, recordRunCost, runKey, sumDailyCost } from './cost.js';
 import { hasAdRunToday } from './ad-common.js';
 import { autoHideOrganicSatelliteYouTube } from './youtube-organic-auto-hide.js';
@@ -50,6 +51,8 @@ export async function runMonitor(config = loadConfig()) {
   const eligibleMappedTargets = eligibleTargets.map((target) => ({
     ...target,
     platform: String(target.platform || detectPlatform(target.url)).toLowerCase(),
+    // 크봉 단어가 상품명·소재명·캡션에 있으면 무조건 크봉(11-25). Supabase 이력 조회가 실패해도 적용되게 여기서도.
+    productName: kbongProductName(target.productName, target.assetName, target.caption),
     trackingDays: config.trackingDays,
     // 감시 대상 = 라라스윗 협찬 게시물 → 브랜드 컨텍스트 부여(캡션에 브랜드명이 없어도
     // 제품 관련 부정댓글을 entity 게이트가 놓치지 않게 함). brandName은 classify가 postContext로 읽음.
@@ -79,7 +82,11 @@ export async function runMonitor(config = loadConfig()) {
           ...target,
           lastCollectedAt: target.lastCollectedAt || counts[target.url]?.lastCheckedAt || '',
           recentNegativeDetectedAt: recentAlerts.get(extractPostKey(target.url)) || target.recentNegativeDetectedAt || '',
-          productName: target.productName || counts[target.url]?.productName || '',
+          // 크봉 단어가 상품명·소재명·캡션 어디에 있어도 무조건 크봉(11-25 사용자 지정).
+          productName: kbongProductName(
+            target.productName || counts[target.url]?.productName || '',
+            assetName, target.caption, counts[target.url]?.caption,
+          ),
           assetName,
           extraAssignees: creator ? [creator] : (target.extraAssignees || []),
         };
