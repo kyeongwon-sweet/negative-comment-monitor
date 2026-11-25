@@ -94,7 +94,9 @@ export function isAdUpload({ title = '', privacyStatus = '' } = {}) {
 export function noticeAssigneeIds(target, assignees = {}) {
   const route = ownerThreadRoute(target, assignees);
   const group = productGroup(target?.productName);
-  const extra = group === 'jg' ? assignees.jg?.additional : group === 'p' ? assignees.p?.additional : [];
+  const extra = group === 'jg' ? assignees.jg?.additional
+    : group === 'p' ? assignees.p?.additional
+      : group === 'bb' ? assignees.bb?.additional : [];
   return { route, ids: [...new Set([route.assignee, ...(extra || [])].filter(Boolean))] };
 }
 

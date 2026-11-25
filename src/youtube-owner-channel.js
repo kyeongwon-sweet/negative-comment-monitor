@@ -297,6 +297,8 @@ export function inferOwnerVideoProduct(video, fallback = 'JD') {
   if (/제과|새우깡/i.test(text)) return '제과';
   // 바치케(P바치)는 파인트와 별개 상품군. '떵개가 먹은 바치케 파인트'가 파인트로 새던 것(11-23) → 파인트보다 먼저.
   if (/바치케|p바치/i.test(text)) return 'P바치';
+  // 크런치봉봉(BB바·BB초·BB말, 별칭 크봉) — 11-25 신규 상품군(오혜정·이재원).
+  if (/크런치\s*봉봉|크봉|bb(?:바|초|말)/i.test(text)) return 'BB';
   if (/파인트|p(?:혼|망|딸|애)/i.test(text)) return 'P';
   if (/듬뿍|db(?:혼|망|딸|애)/i.test(text)) return 'DB';
   if (/쫀득|멜론바|망고바|jd(?:멜|망|혼|복)/i.test(text)) return 'JD';

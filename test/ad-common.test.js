@@ -10,6 +10,9 @@ import {
 
 test('인지 광고 캠페인명 파인트는 P로, 그 외와 JD복은 기존 상품을 유지한다', () => {
   assert.equal(awarenessProductName('JD', '[빙과] 파인트 인지', '소재'), 'P');
+  assert.equal(awarenessProductName('JD', '[빙과] 크런치봉봉 인지', '소재'), 'BB');
+  assert.equal(awarenessProductName('JD', '', '[26.11]F_V_BB말_main_빙과_홍길동'), 'BB');
+  assert.equal(awarenessProductName('JD', '', '크봉 인지 소재'), 'BB');
   assert.equal(awarenessProductName('JD', '', '[파인트] 인지 소재'), 'P');
   assert.equal(awarenessProductName('JD', '[빙과] 쫀득바 인지', '소재'), 'JD');
   assert.equal(awarenessProductName('JD복', '[빙과] 파인트 인지', '소재'), 'JD복');

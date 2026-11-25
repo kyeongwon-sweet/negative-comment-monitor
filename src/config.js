@@ -98,6 +98,13 @@ export function loadSlackAssignees(env = process.env, now = Date.now()) {
       additional: String(env.SLACK_ASSIGNEE_JG_ADDITIONAL || '')
         .split(',').map((value) => value.trim()).filter(Boolean),
     },
+    // 크런치봉봉(BB바·BB초·BB말, 2026-11-25 사용자 지정): 전 카테고리 주담당 오혜정 + 카드 추가 태그 이재원.
+    // 부모 스레드는 주담당 1명만(제과 jg와 같은 규칙).
+    bb: {
+      primary: String(env.SLACK_ASSIGNEE_BB_PRIMARY || '').trim(),
+      additional: String(env.SLACK_ASSIGNEE_BB_ADDITIONAL || '')
+        .split(',').map((value) => value.trim()).filter(Boolean),
+    },
   };
 }
 

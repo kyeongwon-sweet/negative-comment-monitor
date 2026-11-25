@@ -83,6 +83,8 @@ export function productGroup(productName) {
   if (!p) return 'other';
   // 'P바치'는 'p'로 시작하지만 파인트와 별개 상품군 → 파인트 판정보다 먼저 잡는다.
   if (p === 'p바치') return 'pbachi';
+  // 크런치봉봉(BB바·BB초·BB말, 별칭 크봉). 2026-11-25 신규 상품군.
+  if (p.startsWith('bb') || p.includes('크런치봉봉') || p.includes('크봉')) return 'bb';
   if (p.startsWith('jg') || p.includes('제과') || p.includes('블트하')) return 'jg';
   if (p.includes('jd')) return 'jd';
   if (p.startsWith('p')) return 'p';
@@ -113,6 +115,7 @@ export function productLabel(group) {
   if (group === 'p') return '파인트';
   if (group === 'jg') return '제과';
   if (group === 'pbachi') return '바치케'; // 표기명(대표 지정). 상품코드는 여전히 정확히 'P바치'
+  if (group === 'bb') return '크런치봉봉';
   return '기타';
 }
 
@@ -177,6 +180,9 @@ export function assigneeForTarget(target, assignees = {}) {
   } else if (group === 'jg') {
     // 제과는 카테고리 구분 없이 모현진을 부모 스레드 대표 담당자로 쓴다.
     if (assignees.jg?.primary) return assignees.jg.primary;
+  } else if (group === 'bb') {
+    // 크런치봉봉은 카테고리 구분 없이(위성·온드·인지광고 포함) 오혜정이 부모 스레드 대표 담당.
+    if (assignees.bb?.primary) return assignees.bb.primary;
   }
   // 온드미디어는 상품군 무관 전담(김바다). 위성채널은 상품군 무관 이세진(base satellite).
   if (isOwned && assignees.owned) return assignees.owned;
@@ -275,6 +281,11 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
   const jgAssignees = isJg
     ? [...new Set([baseAssignee, ...(assignees.jg?.additional || [])].filter(Boolean))]
     : [];
+  // 크런치봉봉 카드는 카테고리 구분 없이 주담당(오혜정)+추가 담당(이재원)을 함께 태그한다(11-25 사용자 지정).
+  const isBb = productGroup(target.productName) === 'bb';
+  const bbAssignees = isBb
+    ? [...new Set([baseAssignee, ...(assignees.bb?.additional || [])].filter(Boolean))]
+    : [];
   const isCreatorCard = isAdCommentSource(target) || isViral;
   // 협찬 크리에이터×상품 지정(예: 떵개의 바치케 협찬 → 김유진)이면 그 카드는 지정 담당자만 태그한다.
   const sponsorshipCreator = sponsorshipCreatorAssignee(target, assignees.sponsorshipCreators);
@@ -286,6 +297,8 @@ export function buildAlertBlocks(target, comment, managedCategories = ['온드�
       ? pintTeamAssignees
       : jgAssignees.length
         ? jgAssignees
+        : bbAssignees.length
+        ? bbAssignees
         : isCreatorCard
           ? [...new Set((extras.length ? extras : (baseAssignee ? [baseAssignee] : [])))]
           : [...new Set([baseAssignee, ...extras].filter(Boolean))];

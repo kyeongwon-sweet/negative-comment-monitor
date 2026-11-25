@@ -87,7 +87,7 @@ export async function loadOwnerVideoCatalog(config, fetchImpl = fetch) {
 // 단독 영문 P, 1P 같은 제작 규격은 파인트 코드로 오인하지 않고 한글이 뒤따르는 P*만 허용한다.
 export function productCodesFromText(value) {
   const text = String(value || '');
-  const matches = text.match(/(?:^|[^A-Za-z0-9가-힣])((?:JD|DB|ZB|BA)[가-힣A-Za-z0-9]*|P[가-힣]+|C[가-힣]+)(?=$|[^A-Za-z0-9가-힣])/giu) || [];
+  const matches = text.match(/(?:^|[^A-Za-z0-9가-힣])((?:JD|DB|ZB|BA|BB)[가-힣A-Za-z0-9]*|P[가-힣]+|C[가-힣]+)(?=$|[^A-Za-z0-9가-힣])/giu) || [];
   const codes = matches.map((match) => match.replace(/^[^A-Za-z0-9가-힣]+/u, '').trim());
   return unique(codes);
 }
@@ -101,6 +101,7 @@ export function inferProductFromEvidence(evidence, fallback = '미확인') {
   if (/파인트/i.test(joined)) return { product: 'P', evidence: joined, ambiguous: false };
   if (/쫀득|멜론바|망고바/i.test(joined)) return { product: 'JD', evidence: joined, ambiguous: false };
   if (/듬뿍/i.test(joined)) return { product: 'DB', evidence: joined, ambiguous: false };
+  if (/크런치\s*봉봉|크봉/i.test(joined)) return { product: 'BB', evidence: joined, ambiguous: false };
   return { product: fallback, evidence: '', ambiguous: false };
 }
 

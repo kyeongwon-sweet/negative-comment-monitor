@@ -12,6 +12,8 @@ export function awarenessProductName(defaultProductName, campaignName = '', adTi
   const identity = `${String(campaignName || '')} ${String(adTitle || '')}`;
   if (/JD(?:복|그사)/i.test(`${fallback} ${identity}`)) return fallback;
   if (/블트하|제과|맛피아|감자스틱/i.test(identity)) return 'JG';
+  // 크런치봉봉(BB바·BB초·BB말, 별칭 크봉) 캠페인/소재 → 'BB'(productGroup 'bb', 11-25).
+  if (/크런치\s*봉봉|크봉|BB(?:바|초|말)/i.test(identity)) return 'BB';
   // 파인트 캠페인은 '파인트' 대신 상품 코드 'P팝'만 적히기도 한다(10-30 사용자 확인). 'P바치'(바치케)는 별개.
   return /파인트|(?:^|[^A-Za-z0-9가-힣])P팝/i.test(identity) ? 'P' : fallback;
 }
