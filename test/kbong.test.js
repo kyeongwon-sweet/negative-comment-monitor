@@ -6,7 +6,7 @@ import { inferOwnerVideoProduct } from '../src/youtube-owner-channel.js';
 import { inferProductFromEvidence } from '../src/august-product-restore.js';
 import { productFromAdCreative } from '../src/youtube-owner-public-audit.js';
 import { loadSlackAssignees } from '../src/config.js';
-import { assigneeForTarget } from '../src/slack.js';
+import { assigneeForTarget, buildAlertBlocks } from '../src/slack.js';
 
 // 11-25 사용자 지정: '크봉','BB바','BB말','BB초','봉봉','크런치봉봉'이 들어 있으면 무조건 크봉.
 const WORDS = ['크봉', 'BB바', 'BB말', 'BB초', '봉봉', '크런치봉봉', 'bb초'];
@@ -36,4 +36,23 @@ test('크봉 담당: 주담당 = SLACK_ASSIGNEE_BB_PRIMARY(이재원)', () => {
   for (const channelCategory of ['위성채널', '인지 광고', '협찬 (인플루언서)', '바이럴 (배너)', '온드미디어', '소유 YouTube']) {
     assert.equal(assigneeForTarget({ productName: kbongProductName('JD멜', '봉봉'), channelCategory }, a), 'U09RCJ1B9ML', channelCategory);
   }
+});
+
+test('11-26 크봉 협찬 = 김보나(SLACK_ASSIGNEE_BB_SPONSORSHIP), 그 외는 이재원', () => {
+  const a = loadSlackAssignees({
+    SLACK_ASSIGNEE_BB_PRIMARY: 'U_LEE', SLACK_ASSIGNEE_BB_SPONSORSHIP: 'U_KIMBONA',
+    SLACK_ASSIGNEE_SPONSORSHIP_CREATORS: '[{"creator":"떵개","product":"P바치","assignee":"U_YJ"}]',
+  });
+  for (const channelCategory of ['협찬 (인플루언서)', '협찬 (파워채널/먹스타)', '협찬 (파워채널/매거진)']) {
+    assert.equal(assigneeForTarget({ productName: 'BB바', channelCategory }, a), 'U_KIMBONA', channelCategory);
+    const blocks = buildAlertBlocks({ url: 'https://x', channelCategory, productName: 'BB바', channelName: '떵개' },
+      { id: 'c1', platform: 'youtube', text: '별로', risk: {} }, undefined, a);
+    assert.ok(blocks.some((x) => x.text?.text === '*담당자*\n<@U_KIMBONA>'), `card ${channelCategory}`);
+  }
+  for (const channelCategory of ['위성채널', '인지 광고', '바이럴 (영상)', '온드미디어', '소유 YouTube']) {
+    assert.equal(assigneeForTarget({ productName: 'BB바', channelCategory }, a), 'U_LEE', channelCategory);
+  }
+  // 협찬 담당이 비면 주담당으로.
+  const b = loadSlackAssignees({ SLACK_ASSIGNEE_BB_PRIMARY: 'U_LEE' });
+  assert.equal(assigneeForTarget({ productName: 'BB바', channelCategory: '협찬 (인플루언서)' }, b), 'U_LEE');
 });

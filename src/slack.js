@@ -182,7 +182,9 @@ export function assigneeForTarget(target, assignees = {}) {
     // 제과는 카테고리 구분 없이 모현진을 부모 스레드 대표 담당자로 쓴다.
     if (assignees.jg?.primary) return assignees.jg.primary;
   } else if (group === 'bb') {
-    // 크봉은 카테고리 구분 없이(위성·온드·인지광고 포함) 이재원이 부모 스레드 대표 담당(11-25 사용자 지정).
+    // 크봉: 협찬(인플루언서·파워채널 전부)=김보나(11-26 사용자 지정), 그 외 전 카테고리(위성·온드·인지광고·
+    // 바이럴·소유 YouTube 등)는 이재원(11-25). 협찬 담당이 비면 주담당으로.
+    if (isSponsorship && assignees.bb?.sponsorship) return assignees.bb.sponsorship;
     if (assignees.bb?.primary) return assignees.bb.primary;
   }
   // 온드미디어는 상품군 무관 전담(김바다). 위성채널은 상품군 무관 이세진(base satellite).

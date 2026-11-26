@@ -102,6 +102,8 @@ export function loadSlackAssignees(env = process.env, now = Date.now()) {
     // additional은 카드에만 함께 태그(현재 비어 있음). 부모 스레드는 주담당 1명만(제과 jg와 같은 규칙).
     bb: {
       primary: String(env.SLACK_ASSIGNEE_BB_PRIMARY || '').trim(),
+      // 크봉 협찬(인플루언서·파워채널/먹스타·파워채널/매거진) 담당(11-26: 김보나). 비면 primary.
+      sponsorship: String(env.SLACK_ASSIGNEE_BB_SPONSORSHIP || '').trim(),
       additional: String(env.SLACK_ASSIGNEE_BB_ADDITIONAL || '')
         .split(',').map((value) => value.trim()).filter(Boolean),
     },
